@@ -1,0 +1,25 @@
+sudo: required
+language: c
+group: bluezone
+git:
+  submodules: false
+services:
+  - docker
+os:
+  - linux-ppc64le
+dist: xenial
+env:
+    matrix:
+        - DISTRO='sle15sp1'
+        - DISTRO='sle12sp3'
+        - DISTRO='sle12sp4'
+
+script:
+  - REPO_URL="${REPO_URL:-sys-kernelbackport-kernelbackport-docker-local.artifactory.swg-devops.com}"
+  - docker login  ${REPO_URL} --username=${My_User} --password=${My_Password}
+  - docker pull ${REPO_URL}/${DISTRO}
+  - docker run -v $(pwd):/root/kernels -w /root/kernels/ -it ${REPO_URL}/${DISTRO} /root/kernels/update.sh -f "${FTP3_Credentials}" -d "${DISTRO}" -n "${My_Name}" -e "${My_Email}"
+
+
+notifications:
+  slack: ibm-systems:ABskLHaZCkLZgxsfknsYhcWA
