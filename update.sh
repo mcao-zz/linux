@@ -45,25 +45,30 @@ git fetch --all
 
 : Checking if the remote branch is already added
 if git branch          | grep "${ftp3[${DISTRO}]}" &>/dev/null; then
-	: Change to another branch
+	if git branch | grep "^\* ${ftp3[${DISTRO}]}" &>/dev/null; then
+		: Current branch
+	fi
+	: Change to another branch which already exist
 	git checkout ${ftp3[${DISTRO}]}
 elif ! git branch -avv | grep "remotes/origin/${ftp3[${DISTRO}]}" &>/dev/null; then
 	: Creating new branch
 	git checkout -b ${ftp3[${DISTRO}]} origin/master
 	git push -u origin ${ftp3[${DISTRO}]}
 else
-	git checkout -b ${ftp3[${DISTRO}]} origin/${ftp3[${DISTRO}]} || \
 	git checkout -b ${ftp3[${DISTRO}]} origin/master
+	git push -u origin ${ftp3[${DISTRO}]}
 fi
 
 ROOT="$(pwd)"
 RH_PASSPORT="${FTP3}" bash -x ./get_latest.sh ${ftp3[${DISTRO}]}
 
 : Looking for the latest downloaded file for build
-for i in $(find ${ROOT} -iname *.src.rpm);
+for i in $(find ${ROOT} -iname 'kernel*.src.rpm');
 do
 	KRN_SRC_Filename="${i}"
 done
+
+KRN_SRC_Filename="$(echo ${KRN_SRC_Filename} | rev | cut -d'/' -f1 | rev)"
 
 if [[ ! -n "${KRN_SRC_Filename}" ]]; then
 	echo "Kernel source was not found."
@@ -71,7 +76,7 @@ if [[ ! -n "${KRN_SRC_Filename}" ]]; then
 fi
 
 : Checking if package was already committed
-if git log --oneline  | grep $(echo ${KRN_SRC_Filename} | rev | cut -d'/' -f1 | rev) > /dev/null; then
+if git log --oneline  | grep "${KRN_SRC_Filename}" > /dev/null; then
 	echo "It's already added"
 	exit 0
 fi
@@ -100,6 +105,7 @@ else
 fi
 
 cd "${ROOT}"
+git add source
 git commit -s -a -m "[${ftp3[${DISTRO}]}] ${KRN_SRC_Filename}"
 git push
 
