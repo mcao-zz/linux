@@ -18,8 +18,8 @@ dist: xenial
 env:
     matrix:
         - DISTRO='sle15sp1'
-        - DISTRO='sle12sp3'
-        - DISTRO='sle12sp4'
+          #        - DISTRO='sle12sp3'
+          #        - DISTRO='sle12sp4'
 
 script:
   - REPO_URL="${REPO_URL:-sys-kernelbackport-kernelbackport-docker-local.artifactory.swg-devops.com}"
