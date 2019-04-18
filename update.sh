@@ -1,12 +1,9 @@
 #!/bin/bash
 
 set -e
-: Copying files from iKOTD project in the same 
-cd ~/iKOTD && git fetch --all && git reset --hard origin/master && \
-cd - && cp ~/iKOTD/get_latest.sh ~/iKOTD/mapping.sh .
 
 # Reading sources
-. mapping.sh
+. ./iKOTD/mapping.sh
 
 : Reading options
 while getopts 'd:n:e:f:' opt
@@ -60,7 +57,7 @@ else
 fi
 
 ROOT="$(pwd)"
-RH_PASSPORT="${FTP3}" bash -x ./get_latest.sh ${ftp3[${DISTRO}]}
+RH_PASSPORT="${FTP3}" bash -x ./iKOTD/get_latest.sh ${ftp3[${DISTRO}]}
 
 : Looking for the latest downloaded file for build
 for i in $(find ${ROOT} -iname 'kernel*.src.rpm');

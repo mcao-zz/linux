@@ -2,12 +2,19 @@ sudo: required
 language: c
 group: bluezone
 git:
-  submodules: false
+  submodules: true
 services:
   - docker
+
+cache:
+  directories:
+    - $HOME/cache/
+
 os:
   - linux-ppc64le
+
 dist: xenial
+
 env:
     matrix:
         - DISTRO='sle15sp1'
