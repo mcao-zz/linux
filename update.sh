@@ -42,12 +42,6 @@ fi
 git config --global user.email "${USEREmail}"
 git config --global user.name "${USERName}"
 
-: Updating all ref. of the remote branches
-git fetch --all
-
-: show all branchces
-git branch -avv
-
 : Checking if the remote branch is already added
 if git branch | grep "\* ${ftp3[${DISTRO}]}" &>/dev/null; then
 	: Current branch
@@ -60,7 +54,7 @@ elif git branch | grep "${ftp3[${DISTRO}]}" &>/dev/null; then
 	: Update it
 	git pull
 
-elif git branch -avv | grep "remotes/origin/${ftp3[${DISTRO}]}$" &>/dev/null; then
+elif git branch -avv | grep "remotes/origin/${ftp3[${DISTRO}]}" &>/dev/null; then
 	: Checkout to remote branch
 	git checkout -b ${ftp3[${DISTRO}]} origin/${ftp3[${DISTRO}]}
 
@@ -106,7 +100,7 @@ cd ${HOME}/rpmbuild/
 cd SOURCES
 if [[ "${DISTRO}" =~ .*rhel.* ]]; then
 	tar xf linux-*.tar.xz
-	mv 'linux-*/' ${ROOT}/source
+	mv "linux-*/" ${ROOT}/source
 else
 	./mkspec
 	mv kernel-default.spec ${HOME}/rpmbuild/SPECS

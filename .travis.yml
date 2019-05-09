@@ -4,6 +4,7 @@ group: bluezone
 
 git:
   submodules: false
+  depth: false
 
 services:
   - docker
@@ -17,6 +18,11 @@ env:
     matrix:
        - DISTRO='rhel8'
        - DISTRO='sle12sp4'
+
+install:
+  - git config remote.origin.fetch +refs/heads/*:refs/remotes/origin/*
+  - git fetch --all
+  - git branch -avv
 
 script:
   - REPO_URL="${REPO_URL:-sys-kernelbackport-kernelbackport-docker-local.artifactory.swg-devops.com}"
