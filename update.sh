@@ -3,7 +3,7 @@
 set -e
 
 : update the submodules
-git submodule init
+git submodule update --init --recursive
 
 :  Reading sources
 . ./iKOTD/mapping.sh
@@ -41,35 +41,50 @@ fi
 
 git config --global user.email "${USEREmail}"
 git config --global user.name "${USERName}"
+
+: Updating all ref. of the remote branches
 git fetch --all
 
+: show all branchces
+git branch -avv
+
 : Checking if the remote branch is already added
-if git branch         | grep -q "${ftp3[${DISTRO}]}" &>/dev/null; then
-	if git branch | grep -q "^\* ${ftp3[${DISTRO}]}" &>/dev/null; then
-		: Current branch
-	fi
+if git branch | grep "\* ${ftp3[${DISTRO}]}" &>/dev/null; then
+	: Current branch
+	: Update it
+	git pull
+
+elif git branch | grep "${ftp3[${DISTRO}]}" &>/dev/null; then
 	: Change to another branch which already exist
 	git checkout ${ftp3[${DISTRO}]}
+	: Update it
+	git pull
 
-elif ! git branch -avv | grep -q "remotes/origin/${ftp3[${DISTRO}]}" &>/dev/null; then
-	: Creating new branch
-	git checkout -b ${ftp3[${DISTRO}]} origin/master
-	: Push it to remote
-	git push -u origin ${ftp3[${DISTRO}]}
-else
+elif git branch -avv | grep "remotes/origin/${ftp3[${DISTRO}]}$" &>/dev/null; then
 	: Checkout to remote branch
 	git checkout -b ${ftp3[${DISTRO}]} origin/${ftp3[${DISTRO}]}
+
+else
+	: Creating new branch
+	git checkout -b ${ftp3[${DISTRO}]} origin/master
+	(git pull)
+	: Push it to remote
+	git push -u origin ${ftp3[${DISTRO}]}
 fi
 
+: Keep the ROOT address
 ROOT="$(pwd)"
+: Cleanup the older files of source
+[ -d "source" ] && rm -rf source
+
 RH_PASSPORT="${FTP3}" bash -x ./iKOTD/get_latest.sh ${ftp3[${DISTRO}]}
 
 : Looking for the latest downloaded file for build
-KRN_SRC_Filename="$(echo kernel.*src.rpm | sort -V | tail -n1)"
+KRN_SRC="$(ls kernel-*src.rpm | sort -V | tail -n1)"
 
-KRN_SRC_Filename="$(echo ${KRN_SRC_Filename} | rev | cut -d'/' -f1 | rev)"
+KRN_SRC_Filename="$(echo ${KRN_SRC} | rev | cut -d'/' -f1 | rev)"
 
-if [[ ! -e "${KRN_SRC_Filename}" ]]; then
+if [[ ! -e "${KRN_SRC}" ]]; then
 	echo "ERROR: Kernel source was not found."
 	exit 1
 fi
@@ -85,25 +100,24 @@ fi
 echo '%_topdir %(echo $HOME)/rpmbuild' >> ~/.rpmmacros
 
 : Install rpm source
-rpm -ivh ${KRN_SRC_Filename}
+rpm -ivh ${KRN_SRC}
 
 cd ${HOME}/rpmbuild/
 cd SOURCES
 if [[ "${DISTRO}" =~ .*rhel.* ]]; then
 	tar xf linux-*.tar.xz
-	mv linux-*/* ~/kernels/source/
+	mv 'linux-*/' ${ROOT}/source
 else
 	./mkspec
 	mv kernel-default.spec ${HOME}/rpmbuild/SPECS
 	cd ${HOME}/rpmbuild/SPECS
-	rpmbuild -bp kernel-default.spec
-	rm -rf ${ROOT}/source
-	mv ${HOME}/rpmbuild/BUILD/kernel-default-*/linux-*/ ${ROOT}/
-	cd ${ROOT}
-	mv linux-* source
+	: Redirect output of rpmbuild to tem log
+	rpmbuild -bp kernel-default.spec &> temp.log || tail -n500 temp.log
+	mv ${HOME}/rpmbuild/BUILD/kernel-default-*/linux-*/ ${ROOT}/source
 fi
 
 cd "${ROOT}"
+[ -e ".travis.yml" ] && (rm -f .travis.yml)
 git add source
 git commit -s -a -m "[${ftp3[${DISTRO}]}] ${KRN_SRC_Filename}"
 git push

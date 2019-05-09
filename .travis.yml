@@ -1,14 +1,12 @@
 sudo: required
 language: c
 group: bluezone
+
 git:
   submodules: false
+
 services:
   - docker
-
-cache:
-  directories:
-    - $HOME/cache/
 
 os:
   - linux-ppc64le
@@ -17,17 +15,14 @@ dist: xenial
 
 env:
     matrix:
-      - DISTRO='rhel8'
-      - DISTRO='rhel76'
-      #- DISTRO='sle15sp1'
-      #- DISTRO='sle12sp3'
-      #- DISTRO='sle12sp4'
+       - DISTRO='rhel8'
+       - DISTRO='sle12sp4'
 
 script:
   - REPO_URL="${REPO_URL:-sys-kernelbackport-kernelbackport-docker-local.artifactory.swg-devops.com}"
   - docker login  ${REPO_URL} --username=${My_User} --password=${My_Password}
-  - docker pull ${REPO_URL}/${DISTRO}
-  - docker run -v $(pwd):/root/kernels -w /root/kernels/ -it ${REPO_URL}/${DISTRO} /root/kernels/update.sh -f "${FTP3_Credentials}" -d "${DISTRO}" -n "${My_Name}" -e "${My_Email}"
+  - if [[ "${TRAVIS_BRANCH}" == "master" ]]; then docker pull ${REPO_URL}/${DISTRO}; fi
+  - if [[ "${TRAVIS_BRANCH}" == "master" ]]; then docker run -v $(pwd):/root/kernels -w /root/kernels/ -it ${REPO_URL}/${DISTRO} /root/kernels/update.sh -f "${FTP3_Credentials}" -d "${DISTRO}" -n "${My_Name}" -e "${My_Email}" ;fi
 
 
 notifications:
