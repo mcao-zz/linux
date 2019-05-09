@@ -88,11 +88,11 @@ echo '%_topdir %(echo $HOME)/rpmbuild' >> ~/.rpmmacros
 rpm -ivh ${KRN_SRC_Filename}
 
 cd ${HOME}/rpmbuild/
+cd SOURCES
 if [[ "${DISTRO}" =~ .*rhel.* ]]; then
-	cd ${HOME}/rpmbuild/SPECS
-	rpmbuild -bp kernel.spec
+	tar xf linux-*.tar.xz
+	mv linux-*/* ~/kernels/source/
 else
-	cd SOURCES
 	./mkspec
 	mv kernel-default.spec ${HOME}/rpmbuild/SPECS
 	cd ${HOME}/rpmbuild/SPECS
