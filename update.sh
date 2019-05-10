@@ -68,8 +68,6 @@ fi
 
 : Keep the ROOT address
 ROOT="$(pwd)"
-: Cleanup the older files of source
-[ -d "source" ] && rm -rf source
 
 RH_PASSPORT="${FTP3}" bash -x ./iKOTD/get_latest.sh ${ftp3[${DISTRO}]}
 
@@ -96,23 +94,29 @@ echo '%_topdir %(echo $HOME)/rpmbuild' >> ~/.rpmmacros
 : Install rpm source
 rpm -ivh ${KRN_SRC}
 
-cd ${HOME}/rpmbuild/
-cd SOURCES
+: Cleanup all files
+rm -rf *
+
+cd ${HOME}/rpmbuild/SOURCES
+
 if [[ "${DISTRO}" =~ .*rhel.* ]]; then
 	tar xf linux-*.tar.xz
-	mv "linux-*/" ${ROOT}/source
+	cp -rf linux-*/* ${ROOT}/
+
 else
 	./mkspec
 	mv kernel-default.spec ${HOME}/rpmbuild/SPECS
 	cd ${HOME}/rpmbuild/SPECS
 	: Redirect output of rpmbuild to tem log
 	rpmbuild -bp kernel-default.spec &> temp.log || tail -n500 temp.log
-	mv ${HOME}/rpmbuild/BUILD/kernel-default-*/linux-*/ ${ROOT}/source
+	cp -rf ${HOME}/rpmbuild/BUILD/kernel-default-*/linux-*/* ${ROOT}/
+	rm -rf ${ROOT}/linux-obj
 fi
 
 cd "${ROOT}"
 [ -e ".travis.yml" ] && (rm -f .travis.yml)
-git add source
+[ -e "update.sh" ] && (rm -f update.sh)
+git add -A &> temp.log || tail -n500 temp.log
 git commit -s -a -m "[${ftp3[${DISTRO}]}] ${KRN_SRC_Filename}"
 git push
 
