@@ -43,27 +43,27 @@ git config --global user.email "${USEREmail}"
 git config --global user.name "${USERName}"
 
 : Checking if the remote branch is already added
-if git branch | grep "\* ${ftp3[${DISTRO}]}" &>/dev/null; then
+if git branch | grep "\* ${gsa[${DISTRO}]}" &>/dev/null; then
 	: Current branch
 	: Update it
 	git pull
 
-elif git branch | grep "${ftp3[${DISTRO}]}" &>/dev/null; then
+elif git branch | grep "${gsa[${DISTRO}]}" &>/dev/null; then
 	: Change to another branch which already exist
-	git checkout ${ftp3[${DISTRO}]}
+	git checkout ${gsa[${DISTRO}]}
 	: Update it
 	git pull
 
-elif git branch -avv | grep "remotes/origin/${ftp3[${DISTRO}]}" &>/dev/null; then
+elif git branch -avv | grep "remotes/origin/${gsa[${DISTRO}]}" &>/dev/null; then
 	: Checkout to remote branch
-	git checkout -b ${ftp3[${DISTRO}]} origin/${ftp3[${DISTRO}]}
+	git checkout -b ${gsa[${DISTRO}]} origin/${gsa[${DISTRO}]}
 
 else
 	: Creating new branch
-	git checkout -b ${ftp3[${DISTRO}]} origin/master
+	git checkout -b ${gsa[${DISTRO}]} origin/master
 	(git pull)
 	: Push it to remote
-	git push -u origin ${ftp3[${DISTRO}]}
+	git push -u origin ${gsa[${DISTRO}]}
 fi
 
 : Keep the ROOT address

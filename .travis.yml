@@ -18,6 +18,7 @@ env:
     matrix:
        - DISTRO='rhel8'
        - DISTRO='rhel76'
+       - DISTRO='rhel77'
        - DISTRO='rhelalt76'
 
 install:
