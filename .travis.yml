@@ -16,6 +16,7 @@ dist: xenial
 
 env:
     matrix:
+       - DISTRO='rhel81'
        - DISTRO='rhel8'
        - DISTRO='rhel76'
        - DISTRO='rhel77'
