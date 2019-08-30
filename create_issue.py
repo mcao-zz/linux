@@ -1,0 +1,254 @@
+#!/usr/bin/env python3
+
+import sys, getopt,io,zipfile,subprocess,re,os
+from os.path import basename
+
+class color:
+       PURPLE = '\033[95m'
+       CYAN = '\033[96m'
+       DARKCYAN = '\033[36m'
+       BLUE = '\033[94m'
+       GREEN = '\033[92m'
+       YELLOW = '\033[93m'
+       RED = '\033[91m'
+       BOLD = '\033[1m'
+       UNDERLINE = '\033[4m'
+       END = '\033[0m'
+
+def usage():
+    return """
+{BOLD}NAME{END}
+    {var1} - Prepare buld.txt(YAML file) to include the set of patches to be
+    build in BTaaS.
+
+{BOLD}SYNOPSIS{END}
+    {UNDERLINE}{var1}{END} -b BRANCH_TARGET -e EMAIL
+                [-l LABEL]
+                [-k KABICHECK]
+                [-o BUILD_OPTIONS]
+                [[-u GSA_USER] [-p GSA_PATH] [-c GSA_CELL]]
+                [-t TEST]
+                [-y BUILD.TXT]
+                [-z PATCHES.ZIP]
+
+{BOLD}DESCRIPTION{END}
+    Create a zip files with patches between the given branch and the current
+    branch then can create a new build.txt or append.
+    All options available to be used in the build are available via line
+    command, as label, kabicheck, etc.
+
+{BOLD}OPTIONS{END}
+    -b <BRANCH_TARGET>
+    Required to compare to the current branch then create the list of patches.
+    The format is "rhel/RHEL-8.1", where "rhel" means the remote branch name and
+    RHEL-8.1 is the target to be compared and then create the patches.
+
+    -y <BUILD.TXT>
+    If you need to append in an yaml with "build:" root, just inform the file path.
+
+    -z <PATCHES.ZIP>
+
+    -e <EMAIL>
+    Required by build.txt.
+
+    -l <LABEL>
+    If not set the label will be INTERNAL_ plus the current date.
+
+    -o <BUILD_OPTIONS>
+    RPBMBUILD options for building.
+
+    -k <KABICHECK>
+    Accept True or False, True is default.
+
+    -t <TEST>
+    Accept True or name of a testing from the list:
+        host_cpu,host_fuzz, host_distro_sanity, host_generic, host_io,
+        host_io_fc, host_io_network, host_io_nvme, host_io_lsi3008, host_kernel,
+        host_memory, host_performance, host_sanity, host_toolchain,
+        guest_backport, host_distro_fvt, host_distro_reg, host_distro_sanity,
+        host_generic_stress, host_kernel_stress, host_memory,
+        host_memory_stress, host_perf_new, host_fs, host_em
+
+    -u <GSA_USER>, -p <GSA_PATH>, -c <GSA_CELL>
+    All parameters must be set together.
+
+    """.format(var1=sys.argv[0],BOLD=color.BOLD,END=color.END,UNDERLINE=color.UNDERLINE)
+
+
+def main(argv):
+    ERROR_MSG = ""
+    BRANCH_TARGET = False
+    BUILDTXT = "build.txt"
+    BUILDTXT_APPEND = False
+    PATCHESZIP = False
+    PATCHES_APPEND = False
+    EMAIL = False
+    LABEL = False
+    OPTIONS = False
+    KABICHECK = False
+    TEST = False
+    GSA = False
+    GSA_USER = False
+    GSA_PATH = False
+    GSA_CELL = False
+
+    try:
+        opts, args = getopt.getopt(argv,"b:y:z:e:l:o:k:t:u:p:c:")
+    except getopt.GetoptError:
+        print ("\t\t{BOLD}{RED}ERROR:{END} Pay attetion the usage:{END}".format(RED=color.RED,BOLD=color.BOLD,END=color.END))
+        print(usage())
+
+    for opt, arg in opts:
+        if opt == '-b':
+            BRANCH_TARGET = arg
+        elif opt == '-y':
+            BUILDTXT = arg
+            if not os.path.isfile(arg):
+                ERROR_MSG += "\n Error: " + arg + " does not exist."
+            BUILDTXT_APPEND = True
+        elif opt == '-z':
+            PATCHESZIP = arg
+            PATCHES_APPEND = True
+            if not os.path.isfile(arg):
+                ERROR_MSG += "\n Error: " + arg + " does not exist."
+        elif opt == '-e':
+            EMAIL = arg
+        elif opt == '-l':
+            LABEL = arg
+        elif opt == '-o':
+            OPTIONS = arg
+        elif opt == '-k':
+            KABICHECK = arg
+        elif opt == '-t':
+            TEST = arg
+        elif opt == '-u':
+            GSA = True
+            GSA_USER = arg
+        elif opt == '-p':
+            GSA = True
+            GSA_PATH = arg
+        elif opt == '-c':
+            GSA = True
+            GSA_CELL = arg
+        else:
+            ERROR_MSG += "\n Unknow parameter"
+
+    if GSA and (not GSA_USER or not GSA_PATH or not GSA_CELL):
+        ERROR_MSG += "\n Error: GSA needs all parameters."
+
+    if not BRANCH_TARGET:
+        ERROR_MSG += "\n Error: The branch name must be informed."
+
+    if not EMAIL:
+        ERROR_MSG += "\n Error: The email must be informed."
+
+    if len(argv)<1:
+        ERROR_MSG += "\n Please pay attention of usage:"
+
+    if not ERROR_MSG == "":
+        print(color.BOLD + color.RED+ERROR_MSG+color.END+color.END)
+        print(usage())
+        sys.exit(1)
+
+    # PROCESSING start
+    try:
+        DIR_DESTINY=subprocess.check_output(["mktemp","-d"]).decode("utf-8").split("\n")[0]
+
+        PATCHES_LIST = subprocess.check_output(
+                ["git",
+                    "format-patch",BRANCH_TARGET,
+                    "--output-directory=/"+DIR_DESTINY]).decode("utf-8").split("\n")
+        for p in PATCHES_LIST:
+            if len(basename(p))>1:
+                print("Extracting patches : "+ basename(p))
+
+    except Exception as e:
+        print(color.BOLD + color.RED)
+        print("Error: Git process failed.")
+        print('Failed: '+ str(e))
+        print(color.END+color.END)
+        sys.exit(1)
+
+    try:
+        if BRANCH_TARGET.count("/") > 0:
+            distro = (re.sub('[.,-]','',BRANCH_TARGET.split("/")[1])).lower()
+        else:
+            distro = (re.sub('[.,-]','',BRANCH_TARGET)).lower()
+    except Exception as e:
+        print(color.BOLD + color.RED)
+        print("Error: The Branch target is not a valid format.")
+        print('Failed: '+ str(e))
+        print(color.END+color.END)
+        sys.exit(1)
+
+    if not PATCHESZIP:
+        PATCHESZIP=distro+".zip"
+
+    try:
+        print("Creating zip file with patches: " + PATCHESZIP)
+        if PATCHES_APPEND:
+            zip_ = zipfile.ZipFile(PATCHESZIP,mode='a')
+            for file in PATCHES_LIST:
+                if not len(basename(file))<1:
+                    print("Adding patch :"+basename(file))
+                    zip_.write(file,basename(file))
+        else:
+            zip_ = zipfile.ZipFile(PATCHESZIP, mode='x')
+            for file in PATCHES_LIST:
+                if not len(basename(file))<1:
+                    print("Adding patch :"+basename(file))
+                    zip_.write(file,basename(file))
+        zip_.close()
+    except Exception as e:
+        print(color.BOLD + color.RED)
+        print("Error: Append the files has failed.")
+        print('Failed: '+ str(e))
+        print(color.END+color.END)
+        sys.exit(1)
+
+    print("Writing yaml file: "+BUILDTXT)
+    yaml_str  = ""
+    yaml_str += "  - "+distro+":"
+    yaml_str += "\n    - email: "+ EMAIL
+    yaml_str += "\n    - patch_file: "+PATCHESZIP
+    yaml_str += "\n    - patches:"
+    for pi in PATCHES_LIST:
+        if len(basename(pi)) >1:
+            yaml_str += "\n      - " + basename(pi)
+
+    if LABEL:
+        yaml_str+= "\n    - label: " + LABEL
+    if OPTIONS:
+        yaml_str+= "\n    - options: " + OPTIONS
+    if KABICHECK:
+        yaml_str+= "\n    - kabicheck: " + KABICHECK
+    if TEST:
+        yaml_str+= "\n    - tests: " + str(TEST)
+
+    if GSA:
+        yaml_str+= "\n    - gsa:"
+        yaml_str+= "\n      - user: " + GSA_USER
+        yaml_str+= "\n      - path: " + GSA_PATH
+        yaml_str+= "\n      - cell: " + GSA_CELL
+
+    try:
+        if not BUILDTXT_APPEND:
+            yaml_str="builds:\n" + yaml_str
+            yaml_txt = io.open(BUILDTXT,mode='x')
+        else:
+            yaml_txt = io.open(BUILDTXT,mode='a')
+        yaml_txt.write(yaml_str)
+        yaml_txt.close()
+
+    except:
+        print(color.BOLD + color.RED)
+        print("Error: The write method of the yaml file has failed.")
+        print(color.END+color.END)
+
+
+if __name__ == "__main__":
+    if len(sys.argv)>1:
+        main(sys.argv[1:])
+    else:
+        print(usage())
+
