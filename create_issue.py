@@ -1,8 +1,5 @@
 #!/usr/bin/env python3
 
-import sys, getopt,io,zipfile,subprocess,re,os
-from os.path import basename
-
 class color:
        PURPLE = '\033[95m'
        CYAN = '\033[96m'
@@ -14,6 +11,16 @@ class color:
        BOLD = '\033[1m'
        UNDERLINE = '\033[4m'
        END = '\033[0m'
+
+try:
+    import sys, getopt,io,zipfile,subprocess,re,os
+    from os.path import basename
+except Exception as e:
+    print(color.BOLD + color.RED)
+    print("Some python package are missing, please install.")
+    print(e)
+    print(color.END+color.END)
+    sys.exit(1)
 
 def usage():
     return """
