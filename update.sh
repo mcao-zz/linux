@@ -5,6 +5,12 @@ set -e
 : update the submodules
 git submodule update --init --recursive
 
+: Entering and setup the module with tag _btaa_
+cd iKOTD/
+git fetch --all --tags
+git reset --hard _btaas_
+cd -
+
 :  Reading sources
 . ./iKOTD/mapping.sh
 
@@ -116,6 +122,7 @@ fi
 cd "${ROOT}"
 [ -e ".travis.yml" ] && (rm -f .travis.yml)
 [ -e "update.sh" ] && (rm -f update.sh)
+[ ! -e "create_issue.py" ] && git checkout master -- create_issue.py
 git add -A &> temp.log || tail -n500 temp.log
 git commit -s -a -m "[${ftp3[${DISTRO}]}] ${KRN_SRC_Filename}"
 git push
