@@ -230,13 +230,15 @@ def main(argv):
     if KABICHECK:
         yaml_str+= "\n    - kabicheck: " + KABICHECK
     if TEST:
-        yaml_str+= "\n    - tests: " + str(TEST)
+        yaml_str+= "\n    - test: " + str(TEST)
 
     if GSA:
         yaml_str+= "\n    - gsa:"
         yaml_str+= "\n      - user: " + GSA_USER
         yaml_str+= "\n      - path: " + GSA_PATH
         yaml_str+= "\n      - cell: " + GSA_CELL
+
+    yaml_str+= "\n"
 
     try:
         if not BUILDTXT_APPEND:
