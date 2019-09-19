@@ -123,6 +123,7 @@ cd "${ROOT}"
 [ -e ".travis.yml" ] && (rm -f .travis.yml)
 [ -e "update.sh" ] && (rm -f update.sh)
 [ ! -e "create_issue.py" ] && git checkout master -- create_issue.py
+[ ! -e "make_btaas.py" ] && git checkout master -- make_btaas.py
 git add -A &> temp.log || tail -n500 temp.log
 git commit -s -a -m "[${ftp3[${DISTRO}]}] ${KRN_SRC_Filename}"
 git push
