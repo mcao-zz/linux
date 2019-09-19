@@ -1,0 +1,257 @@
+#!/usr/bin/env python3
+
+class color:
+       PURPLE = '\033[95m'
+       CYAN = '\033[96m'
+       BLUE = '\033[94m'
+       GREEN = '\033[92m'
+       YELLOW = '\033[93m'
+       RED = '\033[91m'
+       BOLD = '\033[1m'
+       UNDERLINE = '\033[4m'
+       END = '\033[0m'
+
+def print_w(msg):
+    print(color.BOLD + color.YELLOW +
+          msg +
+          color.END+color.END)
+
+
+def print_e(msg):
+    print(color.BOLD + color.RED +
+          msg +
+          color.END+color.END)
+
+def usage():
+    return """
+{BOLD}NAME{END}
+    {var1} - Prepare buld.txt(YAML file) to include the set of patches to be
+    build in BTaaS.
+
+{BOLD}SYNOPSIS{END}
+    {UNDERLINE}{var1}{END} -b BRANCH_TARGET -e EMAIL
+                [-l LABEL]
+                [-k KABICHECK]
+                [-o BUILD_OPTIONS]
+                [[-u GSA_USER] [-p GSA_PATH] [-c GSA_CELL]]
+                [-t TEST]
+
+{BOLD}DESCRIPTION{END}
+    Create a zip files with patches between the given branch and the current
+    branch then can create a new build.txt or append.
+    All options available to be used in the build are available via line
+    command, as label, kabicheck, etc.
+
+{BOLD}OPTIONS{END}
+    -b <BRANCH_TARGET>
+    Required to compare to the current branch then create the list of patches.
+    The format is "rhel/RHEL-8.1", where "rhel" means the remote branch name and
+    RHEL-8.1 is the target to be compared and then create the patches.
+
+    -e <EMAIL>
+    Required by build.txt.
+
+    -l <LABEL>
+    If not set the label will be INTERNAL_ plus the current date.
+
+    -o <BUILD_OPTIONS>
+    RPBMBUILD options for building.
+
+    -k <KABICHECK>
+    Accept True or False, True is default.
+
+    -t <TEST>
+    Accept True or name of a testing from the list:
+        host_cpu,host_fuzz, host_distro_sanity, host_generic, host_io,
+        host_io_fc, host_io_network, host_io_nvme, host_io_lsi3008, host_kernel,
+        host_memory, host_performance, host_sanity, host_toolchain,
+        guest_backport, host_distro_fvt, host_distro_reg, host_distro_sanity,
+        host_generic_stress, host_kernel_stress, host_memory,
+        host_memory_stress, host_perf_new, host_fs, host_em
+
+    -u <GSA_USER>, -p <GSA_PATH>, -c <GSA_CELL>
+    All parameters must be set together.
+
+    """.format(var1=sys.argv[0],BOLD=color.BOLD,END=color.END,UNDERLINE=color.UNDERLINE)
+
+try:
+    import sys, getopt,os,re
+    from github import Github
+    from git import Repo
+    from datetime import datetime
+except Exception as e:
+    print_e("Some python package are missing, please install.")
+    print_e(e)
+    sys.exit(1)
+
+# Global vars
+GITHUB_URL= "https://github.ibm.com/api/v3"
+REPO= "rhel-kernels"
+ORGANIZATION= "kernelbackports"
+TOKEN = "8ce9cd1c1f79ede3805fa097a136744f667565ad"
+
+REPO_UPSTREAM = False
+REPO_LOCAL = False
+MSG_TITLE = False
+MSG_BODY = False
+
+def setup(argv):
+    ERROR_MSG = ""
+    BRANCH_TARGET = False
+    EMAIL = False
+    LABEL = False
+    OPTIONS = False
+    KABICHECK = False
+    TEST = False
+    GSA = False
+    GSA_USER = False
+    GSA_PATH = False
+    GSA_CELL = False
+
+    BRANCH_TMP = False
+
+    try:
+        opts, args = getopt.getopt(argv,"b:e:l:o:k:t:u:p:c:")
+    except getopt.GetoptError:
+        print_e ("\t\tERROR: Pay attetion the usage")
+        print(usage())
+
+    for opt, arg in opts:
+        if opt == '-b':
+            BRANCH_TARGET = arg
+        elif opt == '-e':
+            EMAIL = arg
+        elif opt == '-l':
+            LABEL = arg
+        elif opt == '-o':
+            OPTIONS = arg
+        elif opt == '-k':
+            KABICHECK = arg
+        elif opt == '-t':
+            TEST = arg
+        elif opt == '-u':
+            GSA = True
+            GSA_USER = arg
+        elif opt == '-p':
+            GSA = True
+            GSA_PATH = arg
+        elif opt == '-c':
+            GSA = True
+            GSA_CELL = arg
+        else:
+            ERROR_MSG += "\n Unknow parameter"
+
+    if GSA and (not GSA_USER or not GSA_PATH or not GSA_CELL):
+        ERROR_MSG += "\n Error: GSA needs all parameters."
+
+    if not ERROR_MSG == "":
+        print_e(color.BOLD + color.RED+ERROR_MSG+color.END+color.END)
+        print(usage())
+        sys.exit(1)
+
+    _git = Github(base_url=GITHUB_URL,login_or_token=TOKEN)
+    _git.get_organization(ORGANIZATION).get_repo(REPO)
+
+    REPO_UPSTREAM = _git.get_organization(ORGANIZATION).get_repo(REPO)
+    REPO_LOCAL = Repo("./")
+
+
+    REPO_LOCAL_Name = REPO_LOCAL.active_branch.name
+
+    try:
+        if BRANCH_TARGET:
+            DISTRO = BRANCH_TARGET
+        else:
+            DISTRO = REPO_LOCAL.active_branch.tracking_branch().name.split('/')[1]
+
+        if not re.match("RHEL-.*",DISTRO, re.IGNORECASE):
+            print_e("  The current tracking branch is not properly part of " +
+                    REPO+ "\n  Tip: use $ git branch -u origin/<branch>")
+            sys.exit(1)
+    except:
+        print_e(" ! Tracking branch is missing, please use it as parameter.")
+        print(usage())
+        sys.exit(1)
+
+    if not BRANCH_TMP:
+        BRANCH_TMP = DISTRO + "_" + str(datetime.today().strftime("%Y%m%d%H%m%S"))
+
+    USER = (REPO_LOCAL.remotes.origin.url.
+                    split(":")[-1].
+                    split("/")[0])
+    USER_AND_BRANCH = USER + ":" + BRANCH_TMP
+
+    try:
+        print(" Creating a temporary branch "
+                + color.CYAN + BRANCH_TMP + color.END)
+        RP_new = REPO_LOCAL.create_head(BRANCH_TMP, REPO_LOCAL.heads[REPO_LOCAL_Name])
+        RP_new.set_tracking_branch(REPO_LOCAL.remotes.origin.refs[DISTRO])
+        RP_new.checkout()
+    except Exception as e:
+        print_e("Error during the setup of the temporary branch")
+        print_e(e)
+        sys.exit(1)
+
+    try:
+        print(" ↗ Pushing "+ color.CYAN + BRANCH_TMP + color.END +" to Github")
+        REPO_LOCAL.git.push('origin',BRANCH_TMP)
+    except Exception as e:
+        print_e("Pushing has failed.")
+        print_e(e)
+        sys.exit(1)
+
+    MSG_TITLE = USER + ":" + BRANCH_TMP
+    MSG_BODY = "builds:"
+    MSG_BODY+= "\n  - {distro}:".format(distro=DISTRO.
+                replace("-","").replace(".","").lower())
+    if LABEL:
+        MSG_BODY+= "\n    - label: {var}".format(var=LABEL)
+    if EMAIL:
+        MSG_BODY+= "\n    - email: {var}".format(var=EMAIL)
+    if KABICHECK:
+        MSG_BODY+= "\n    - kabicheck: {var}".format(var=KABICHECK)
+    if OPTIONS:
+        MSG_BODY+= "\n    - options: {var}".format(var=OPTIONS)
+    if GSA:
+        MSG_BODY+= "\n    - gsa:".format(var=GSA_USER)
+        MSG_BODY+= "\n      - user: {var}".format(var=GSA_USER)
+        MSG_BODY+= "\n      - path: {var}".format(var=GSA_PATH)
+        MSG_BODY+= "\n      - cell: {var}".format(var=GSA_CELL)
+    if TEST:
+        MSG_BODY+= "\n    - test: {var}".format(var=TEST)
+
+    PR = False
+    try:
+        print(" ⇪ Creating the pull request to " + color.BLUE + DISTRO + color.END)
+        PR = REPO_UPSTREAM.create_pull(title=MSG_TITLE,
+                              head=USER_AND_BRANCH,
+                              base=DISTRO,
+                              body=MSG_BODY)
+        if PR:
+            print(" The pull request \""+ color.CYAN + PR.title + color.END + "\""+\
+                  " was created with the number " + str(PR.number))
+        else:
+            raise ValueError("Please contact the repo maintainer.")
+    except Exception as e:
+        print_e(" Error while was creating the pull-request.")
+        for e_m in range(len(e.data['errors'])):
+            print_e("  ! " + e.data['errors'][e_m]['message'])
+
+    try:
+        if not REPO_LOCAL.active_branch.name == REPO_LOCAL_Name:
+            print(" ↩ Back to the branch "+REPO_LOCAL_Name)
+            REPO_LOCAL.heads[REPO_LOCAL_Name].checkout()
+    except Exception as e:
+        print_e(" Back to branch "+ REPO_LOCAL_Name + " has failed.")
+
+    try:
+        print(" 🧹 Removing temporary local branch.")
+        os.system("git branch -D " + BRANCH_TMP)
+        print(" 🧹 Removing temporary remote branch.")
+        os.system("git branch -D --remotes origin/" + BRANCH_TMP)
+    except Exception as e:
+        print_e("  Error when it was trying remove the temporary branch")
+        print_e(e)
+
+if __name__ == "__main__":
+    setup(sys.argv[1:])
