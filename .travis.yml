@@ -31,8 +31,8 @@ script:
   - REPO_URL="${REPO_URL:-sys-kernelbackport-kernelbackport-docker-local.artifactory.swg-devops.com}"
   - docker login  ${REPO_URL} --username=${My_User} --password=${My_Password}
   - if [[ "${TRAVIS_BRANCH}" == "master" ]]; then docker pull ${REPO_URL}/${DISTRO}; fi
-  - if [[ "${TRAVIS_BRANCH}" == "master" ]]; then docker run -v $(pwd):/root/kernels -w /root/kernels/ -it ${REPO_URL}/${DISTRO} /root/kernels/update.sh -f "${FTP3_Credentials}" -d "${DISTRO}" -n "${My_Name}" -e "${My_Email}" ;fi
+  - if [[ "${TRAVIS_BRANCH}" == "master" ]]; then docker run -v $(pwd):/root/kernels -w /root/kernels/ -it ${REPO_URL}/${DISTRO} /root/kernels/.update -f "${FTP3_Credentials}" -d "${DISTRO}" -n "${My_Name}" -e "${My_Email}" ;fi
 
 
 notifications:
-  slack: ibm-systems:ABskLHaZCkLZgxsfknsYhcWA
+  slack: ibm-systems:ABskLHaZCkLZgxsfknsYhcWA#btaas
