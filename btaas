@@ -29,7 +29,8 @@ def usage():
     build in BTaaS.
 
 {BOLD}SYNOPSIS{END}
-    {UNDERLINE}{var1}{END} -b BRANCH_TARGET -e EMAIL
+    {UNDERLINE}{var1}{END}  [-b BRANCH_TARGET]
+                [-e EMAIL]
                 [-l LABEL]
                 [-k KABICHECK]
                 [-o BUILD_OPTIONS]
@@ -88,7 +89,7 @@ except Exception as e:
 GITHUB_URL= "https://github.ibm.com/api/v3"
 REPO= "rhel-kernels"
 ORGANIZATION= "kernelbackports"
-TOKEN = "8ce9cd1c1f79ede3805fa097a136744f667565ad"
+TOKEN = "24dfbffb8ff3902436c68b036d742e0c6773204f"
 
 REPO_UPSTREAM = False
 REPO_LOCAL = False
@@ -111,13 +112,17 @@ def setup(argv):
     BRANCH_TMP = False
 
     try:
-        opts, args = getopt.getopt(argv,"b:e:l:o:k:t:u:p:c:")
+        opts, args = getopt.getopt(argv,"b:e:l:o:k:t:u:p:c:h")
     except getopt.GetoptError:
         print_e ("\t\tERROR: Pay attetion the usage")
         print(usage())
+        sys.exit(1)
 
     for opt, arg in opts:
-        if opt == '-b':
+        if opt == '-h':
+            print(usage())
+            sys.exit(0)
+        elif opt == '-b':
             BRANCH_TARGET = arg
         elif opt == '-e':
             EMAIL = arg
