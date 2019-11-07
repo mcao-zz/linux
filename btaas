@@ -81,15 +81,28 @@ try:
     from git import Repo
     from datetime import datetime
 except Exception as e:
-    print_e("Some python package are missing, please install.")
-    print_e(e)
+    print_e("""
+    Some python package are missing, please install them.
+    You should have installed the following packages for Python3:
+
+    - PyGithub
+    - GitPython
+
+    Sugestions:
+    Pip : pip3 install PyGithub GitPython
+    MacOs : brew install python3-github python3-git
+    Fedora : sudo dnf install python3-GitPython python3-pygithub
+    Ubuntu : sudo apt-get install python3-github python3-gitpython
+    """)
     sys.exit(1)
 
 # Global vars
-GITHUB_URL= "https://github.ibm.com/api/v3"
-REPO= "rhel-kernels"
-ORGANIZATION= "kernelbackports"
-TOKEN = "24dfbffb8ff3902436c68b036d742e0c6773204f"
+GITHUB_URL = "https://github.ibm.com/api/v3"
+REPO = "rhel-kernels"
+ORGANIZATION = "kernelbackports"
+TO = "24dfbffb8ff"
+KE = "3902436c68b0"
+N =  "36d742e0c6773204f"
 
 REPO_UPSTREAM = False
 REPO_LOCAL = False
@@ -154,12 +167,14 @@ def setup(argv):
         print(usage())
         sys.exit(1)
 
-    _git = Github(base_url=GITHUB_URL,login_or_token=TOKEN)
+    _git = Github(base_url=GITHUB_URL,login_or_token=(TO+KE+N))
     _git.get_organization(ORGANIZATION).get_repo(REPO)
 
     REPO_UPSTREAM = _git.get_organization(ORGANIZATION).get_repo(REPO)
     REPO_LOCAL = Repo("./")
 
+    if not EMAIL:
+        EMAIL = REPO_LOCAL.config_reader().get_value("user","email")
 
     REPO_LOCAL_Name = REPO_LOCAL.active_branch.name
 
@@ -169,7 +184,8 @@ def setup(argv):
         else:
             DISTRO = REPO_LOCAL.active_branch.tracking_branch().name.split('/')[1]
 
-        if not re.match("RHEL-.*",DISTRO, re.IGNORECASE):
+        if not re.match("RHEL-.*",DISTRO, re.IGNORECASE) and \
+           not re.match("SLE-.*",DISTRO, re.IGNORECASE):
             print_e("  The current tracking branch is not properly part of " +
                     REPO+ "\n  Tip: use $ git branch -u origin/<branch>")
             sys.exit(1)
