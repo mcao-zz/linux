@@ -37,6 +37,7 @@ def usage():
                 [-t TEST]
                 [-y BUILD.TXT]
                 [-z PATCHES.ZIP]
+    {UNDERLINE}{var1}{END} [ -h ]
 
 {BOLD}DESCRIPTION{END}
     Create a zip files with patches between the given branch and the current
@@ -79,6 +80,8 @@ def usage():
     -u <GSA_USER>, -p <GSA_PATH>, -c <GSA_CELL>
     All parameters must be set together.
 
+    -h
+    Help to show this message and how to use the btaas command.
     """.format(var1=sys.argv[0],BOLD=color.BOLD,END=color.END,UNDERLINE=color.UNDERLINE)
 
 
@@ -100,7 +103,7 @@ def main(argv):
     GSA_CELL = False
 
     try:
-        opts, args = getopt.getopt(argv,"b:y:z:e:l:o:k:t:u:p:c:")
+        opts, args = getopt.getopt(argv,"b:y:z:e:l:o:k:t:u:p:c:h")
     except getopt.GetoptError:
         print ("\t\t{BOLD}{RED}ERROR:{END} Pay attetion the usage:{END}".format(RED=color.RED,BOLD=color.BOLD,END=color.END))
         print(usage())
@@ -137,6 +140,9 @@ def main(argv):
         elif opt == '-c':
             GSA = True
             GSA_CELL = arg
+        elif opt == '-h':
+            print(usage())
+            sys.exit(0)
         else:
             ERROR_MSG += "\n Unknow parameter"
 

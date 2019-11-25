@@ -29,13 +29,14 @@ def usage():
     build in BTaaS.
 
 {BOLD}SYNOPSIS{END}
-    {UNDERLINE}{var1}{END}  [-b BRANCH_TARGET]
+    {UNDERLINE}{var1}{END} [ [-b BRANCH_TARGET]
                 [-e EMAIL]
                 [-l LABEL]
                 [-k KABICHECK]
                 [-o BUILD_OPTIONS]
                 [[-u GSA_USER] [-p GSA_PATH] [-c GSA_CELL]]
-                [-t TEST]
+                [-t TEST] ]
+    {UNDERLINE}{var1}{END} [ -h ]
 
 {BOLD}DESCRIPTION{END}
     Create a zip files with patches between the given branch and the current
@@ -44,6 +45,9 @@ def usage():
     command, as label, kabicheck, etc.
 
 {BOLD}OPTIONS{END}
+    -h
+    Help to show this message and how to use the btaas command.
+
     -b <BRANCH_TARGET>
     Required to compare to the current branch then create the list of patches.
     The format is "rhel/RHEL-8.1", where "rhel" means the remote branch name and
@@ -98,11 +102,10 @@ except Exception as e:
 
 # Global vars
 GITHUB_URL = "https://github.ibm.com/api/v3"
-REPO = "rhel-kernels"
+PR_URLS_BASE = "https://github.ibm.com/kernelbackports/"
+REPO_NAME = False
 ORGANIZATION = "kernelbackports"
-TO = "24dfbffb8ff"
-KE = "3902436c68b0"
-N =  "36d742e0c6773204f"
+USER_AUTH = False
 
 REPO_UPSTREAM = False
 REPO_LOCAL = False
@@ -162,21 +165,33 @@ def setup(argv):
     if GSA and (not GSA_USER or not GSA_PATH or not GSA_CELL):
         ERROR_MSG += "\n Error: GSA needs all parameters."
 
-    if not ERROR_MSG == "":
-        print_e(color.BOLD + color.RED+ERROR_MSG+color.END+color.END)
-        print(usage())
-        sys.exit(1)
-
-    _git = Github(base_url=GITHUB_URL,login_or_token=(TO+KE+N))
-    _git.get_organization(ORGANIZATION).get_repo(REPO)
-
-    REPO_UPSTREAM = _git.get_organization(ORGANIZATION).get_repo(REPO)
     REPO_LOCAL = Repo("./")
 
-    if not EMAIL:
-        EMAIL = REPO_LOCAL.config_reader().get_value("user","email")
+    try:
+        USER_AUTH = REPO_LOCAL.config_reader().get_value('user','btaas')
+        if not USER_AUTH:
+            ERROR_MSG += "\n The user authorization was not found into Git "
+            ERROR_MSG += "configuration, please check the how to use to setup."
+    except:
+        ERROR_MSG += "\n The user authorization was not found into Git "
+        ERROR_MSG += "configuration, please check the how to use to setup."
+
+    try:
+        if not EMAIL:
+            EMAIL = REPO_LOCAL.config_reader().get_value("user","email")
+    except:
+        ERROR_MSG += "\n Please check your git configuration, this script need"
+        ERROR_MSG += " user name, email and token authorization. Look for into"
+        ERROR_MSG += " FAQ section."
+
 
     REPO_LOCAL_Name = REPO_LOCAL.active_branch.name
+
+    if not ERROR_MSG == "":
+        print_e(color.BOLD + color.RED+" ERRORS: "+color.END+color.END)
+        print_e(color.BOLD + color.RED+ERROR_MSG+color.END+color.END)
+        print("\n  Please check the usage using -h parameter.")
+        sys.exit(1)
 
     try:
         if BRANCH_TARGET:
@@ -187,7 +202,9 @@ def setup(argv):
         if not re.match("RHEL-.*",DISTRO, re.IGNORECASE) and \
            not re.match("SLE-.*",DISTRO, re.IGNORECASE):
             print_e("  The current tracking branch is not properly part of " +
-                    REPO+ "\n  Tip: use $ git branch -u origin/<branch>")
+                    "project of kernels."+
+                    "\n  Tip: use $ git branch -u origin/<branch>"+
+                    "\n  Check the how to use.")
             sys.exit(1)
     except:
         print_e(" ! Tracking branch is missing, please use it as parameter.")
@@ -243,6 +260,12 @@ def setup(argv):
 
     PR = False
     try:
+        _git = Github(base_url=GITHUB_URL,login_or_token=(USER_AUTH))
+
+        REPO_NAME = Repo("./").remotes.origin.url.split('/')[1].split('.')[0]
+
+        REPO_UPSTREAM = _git.get_organization(ORGANIZATION).get_repo(REPO_NAME)
+
         print(" ⇪ Creating the pull request to " + color.BLUE + DISTRO + color.END)
         PR = REPO_UPSTREAM.create_pull(title=MSG_TITLE,
                               head=USER_AND_BRANCH,
@@ -251,12 +274,14 @@ def setup(argv):
         if PR:
             print(" The pull request \""+ color.CYAN + PR.title + color.END + "\""+\
                   " was created with the number " + str(PR.number))
+            print("   Link for pull request: " + color.CYAN + PR_URLS_BASE + REPO_NAME +
+                    "/pull/"+str(PR.number) + color.END)
         else:
             raise ValueError("Please contact the repo maintainer.")
     except Exception as e:
         print_e(" Error while was creating the pull-request.")
-        for e_m in range(len(e.data['errors'])):
-            print_e("  ! " + e.data['errors'][e_m]['message'])
+        print_e(" Look for into FAQ to solve this kind of problem.")
+        print_e(e)
 
     try:
         if not REPO_LOCAL.active_branch.name == REPO_LOCAL_Name:

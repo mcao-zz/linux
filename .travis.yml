@@ -4,7 +4,6 @@ group: bluezone
 
 git:
   submodules: false
-  depth: false
 
 services:
   - docker
@@ -35,5 +34,3 @@ script:
   - if [[ "${TRAVIS_BRANCH}" == "master" ]]; then docker run -v $(pwd):/root/kernels -w /root/kernels/ -it ${REPO_URL}/${DISTRO} /root/kernels/.update -f "${FTP3_Credentials}" -d "${DISTRO}" -n "${My_Name}" -e "${My_Email}" ;fi
 
 
-notifications:
-  slack: ibm-systems:ABskLHaZCkLZgxsfknsYhcWA#btaas
