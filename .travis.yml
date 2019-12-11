@@ -1,17 +1,15 @@
 sudo: required
-language: c
+language: shell
 group: bluezone
 
 git:
   submodules: false
-
+  depth: 10
 services:
   - docker
 
 os:
   - linux-ppc64le
-
-dist: xenial
 
 env:
     matrix:
@@ -28,9 +26,8 @@ install:
   - git branch -avv
 
 script:
-  - REPO_URL="${REPO_URL:-sys-kernelbackport-kernelbackport-docker-local.artifactory.swg-devops.com}"
-  - docker login  ${REPO_URL} --username=${My_User} --password=${My_Password}
-  - if [[ "${TRAVIS_BRANCH}" == "master" ]]; then docker pull ${REPO_URL}/${DISTRO}; fi
-  - if [[ "${TRAVIS_BRANCH}" == "master" ]]; then docker run -v $(pwd):/root/kernels -w /root/kernels/ -it ${REPO_URL}/${DISTRO} /root/kernels/.update -f "${FTP3_Credentials}" -d "${DISTRO}" -n "${My_Name}" -e "${My_Email}" ;fi
+  - if [[ "${TRAVIS_BRANCH}" == "master" ]]; then scp "glwalbon@hurgsa.ibm.com:/projects/b/btaas_images/${DISTRO}.tar.gz" . ; fi
+  - if [[ "${TRAVIS_BRANCH}" == "master" ]]; then zcat "${DISTRO}.tar.gz" | docker import - "${DISTRO}"; fi
+  - if [[ "${TRAVIS_BRANCH}" == "master" ]]; then docker run -v $(pwd):/root/kernels -w /root/kernels/ -it ${DISTRO} /root/kernels/.update -f "${FTP3_Credentials}" -d "${DISTRO}" -n "${My_Name}" -e "${My_Email}" ;fi
 
 

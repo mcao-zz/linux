@@ -121,7 +121,7 @@ fi
 
 cd "${ROOT}"
 [ -e ".travis.yml" ] && (rm -f .travis.yml)
-[ -e "update.sh" ] && (rm -f update.sh)
+[ -e ".update" ] && (rm -f .update)
 [ ! -e "btaas" ] && git checkout master -- btaas
 [ ! -e "btaas_files" ] && git checkout master -- btaas_files
 git add -A &> temp.log || tail -n500 temp.log
