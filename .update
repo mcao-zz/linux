@@ -1,6 +1,85 @@
 #!/bin/bash
 
-set -e
+set -x
+
+: Handle RHEL or SLES kernel
+kernelrpm() {
+
+	local RH_PASSPORT
+	RH_PASSPORT="${FTP3}" bash -x ./iKOTD/get_latest.sh "${ftp3[${DISTRO}]}"
+
+	: Looking for the latest downloaded file for build
+	local KRN_SRC
+	KRN_SRC="$(find . -iname "kernel-*src.rpm" | sort -V | tail -n1)"
+
+	KRN_SRC_Filename="$(echo "${KRN_SRC}" | rev | cut -d'/' -f1 | rev)"
+
+	if [[ ! -e "${KRN_SRC}" ]]; then
+		echo "ERROR: Kernel source was not found."
+		exit 1
+	fi
+
+	: Checking if package was already committed
+	if git log --oneline  | grep -q "${KRN_SRC_Filename}" > /dev/null; then
+		echo "FINISH: It's already added"
+		exit 0
+	fi
+
+	: Define the topdir for rpm
+	echo '%_topdir %(echo $HOME)/rpmbuild' >> ~/.rpmmacros
+
+	: Install rpm source
+	rpm -ivh "${KRN_SRC}"
+
+	: Cleanup all files
+	rm -rf *
+
+	cd "${HOME}"/rpmbuild/SOURCES
+
+	if [[ "${DISTRO}" =~ .*rhel.* ]]; then
+		tar xf linux-*.tar.xz
+		cp -rf linux-*/* "${ROOT}"/
+
+	else
+		./mkspec
+		mv kernel-default.spec "${HOME}"/rpmbuild/SPECS
+		cd "${HOME}"/rpmbuild/SPECS
+		: Redirect output of rpmbuild to tem log
+		rpmbuild -bp kernel-default.spec &> temp.log || tail -n500 temp.log
+		cp -rf "${HOME}"/rpmbuild/BUILD/kernel-default-*/linux-*/* "${ROOT}/"
+		rm -rf "${ROOT}/linux-obj"
+		cd -
+	fi
+	cd "${ROOT}"
+}
+
+: Handle Ubuntu kernel
+kerneldebian() {
+
+	: git clone from the ubuntu git tree
+	time git clone --depth=1 git://git.launchpad.net/~ubuntu-kernel/ubuntu/+source/linux/+git/"${ubuntu[${DISTRO}]}"
+
+	if [[ ! -e "${ubuntu[${DISTRO}]}" ]]; then
+		echo "ERROR: Kernel source was not found."
+		exit 1
+	fi
+
+	: Use linux-version from changelog as the file name
+	KRN_SRC_Filename=$(cat "${ubuntu[${DISTRO}]}"/debian.master/changelog |\
+			   head -n1 | cut -d ")" -f 1 | sed 's/linux (/linux-/')
+
+	: Checking if package was already committed
+	if git log --oneline  | grep -q "${KRN_SRC_Filename}" > /dev/null; then
+		echo "FINISH: It's already added"
+		exit 0
+	fi
+
+	: Copy all the source without git related files to current directory
+	cp -r "${ubuntu[${DISTRO}]}"/* "${ROOT}/"
+	: Then remove the cloned directory
+	rm -rf "${ubuntu[${DISTRO}]}"
+
+}
 
 : update the submodules
 git submodule update --init --recursive
@@ -14,10 +93,11 @@ cd -
 :  Reading sources
 . ./iKOTD/mapping.sh
 
+
 : Reading options
 while getopts 'd:n:e:f:' opt
 do
-	case ${opt} in
+	case "${opt}" in
 		d) DISTRO="${OPTARG}" ;;
 		n) USERName="${OPTARG}" ;;
 		e) USEREmail="${OPTARG}" ;;
@@ -28,25 +108,34 @@ done
 
 set -x
 
-if [[ ! -n "${DISTRO}" ]] ; then
-	echo "ERROR: Wrong -d was not set."
+if [[ -z "${DISTRO}" ]] ; then
+	echo "ERROR: -d was not set."
 	exit 1
 fi
-if [[ ! -n "${USERName}" ]]; then
-	echo "ERROR: Wrong -n was not set."
+if [[ -z "${USERName}" ]]; then
+	echo "ERROR: -n was not set."
 	exit 1
 fi
-if [[ ! -n "${USEREmail}" ]]; then
-	echo "ERROR: Wrong -e was not set."
+if [[ -z "${USEREmail}" ]]; then
+	echo "ERROR: -e was not set."
 	exit 1
 fi
-if [[ ! -n "${FTP3}" ]]; then
-	echo "ERROR: Wrong -f was not set."
+if [[ -z "${gsa[${DISTRO}]}" ]]; then
+	echo "ERROR: Distro not mapped."
+	exit 1
+fi
+
+: Only RHEL or SLE will need ftp3
+if [[ -z "${FTP3}" && "${DISTRO}" =~ .*(rhel|sle).* ]] ; then
+	echo "ERROR: -f was not set."
 	exit 1
 fi
 
 git config --global user.email "${USEREmail}"
 git config --global user.name "${USERName}"
+
+: Fetch a possible remote branch
+(git fetch origin "${gsa[${DISTRO}]}")
 
 : Checking if the remote branch is already added
 if git branch | grep "\* ${gsa[${DISTRO}]}" &>/dev/null; then
@@ -56,77 +145,43 @@ if git branch | grep "\* ${gsa[${DISTRO}]}" &>/dev/null; then
 
 elif git branch | grep "${gsa[${DISTRO}]}" &>/dev/null; then
 	: Change to another branch which already exist
-	git checkout ${gsa[${DISTRO}]}
+	git checkout "${gsa[${DISTRO}]}"
 	: Update it
 	git pull
 
 elif git branch -avv | grep "remotes/origin/${gsa[${DISTRO}]}" &>/dev/null; then
 	: Checkout to remote branch
-	git checkout -b ${gsa[${DISTRO}]} origin/${gsa[${DISTRO}]}
+	git checkout -b "${gsa[${DISTRO}]}" "origin/${gsa[${DISTRO}]}"
 
 else
 	: Creating new branch
-	git checkout -b ${gsa[${DISTRO}]} origin/master
+	git checkout -b "${gsa[${DISTRO}]}" origin/master
 	(git pull)
 	: Push it to remote
-	git push -u origin ${gsa[${DISTRO}]}
 fi
 
 : Keep the ROOT address
 ROOT="$(pwd)"
 
-RH_PASSPORT="${FTP3}" bash -x ./iKOTD/get_latest.sh ${ftp3[${DISTRO}]}
+: Initialize
+KRN_SRC_Filename=""
 
-: Looking for the latest downloaded file for build
-KRN_SRC="$(ls kernel-*src.rpm | sort -V | tail -n1)"
-
-KRN_SRC_Filename="$(echo ${KRN_SRC} | rev | cut -d'/' -f1 | rev)"
-
-if [[ ! -e "${KRN_SRC}" ]]; then
-	echo "ERROR: Kernel source was not found."
-	exit 1
-fi
-
-: Checking if package was already committed
-if git log --oneline  | grep -q "${KRN_SRC_Filename}" > /dev/null; then
-	echo "FINISH: It's already added"
-	exit 0
-fi
-
-
-: Define the topdir for rpm
-echo '%_topdir %(echo $HOME)/rpmbuild' >> ~/.rpmmacros
-
-: Install rpm source
-rpm -ivh ${KRN_SRC}
-
-: Cleanup all files
-rm -rf *
-
-cd ${HOME}/rpmbuild/SOURCES
-
-if [[ "${DISTRO}" =~ .*rhel.* ]]; then
-	tar xf linux-*.tar.xz
-	cp -rf linux-*/* ${ROOT}/
-
+if [[ "${DISTRO}" =~ ubu.* ]] ; then
+	kerneldebian
 else
-	./mkspec
-	mv kernel-default.spec ${HOME}/rpmbuild/SPECS
-	cd ${HOME}/rpmbuild/SPECS
-	: Redirect output of rpmbuild to tem log
-	rpmbuild -bp kernel-default.spec &> temp.log || tail -n500 temp.log
-	cp -rf ${HOME}/rpmbuild/BUILD/kernel-default-*/linux-*/* ${ROOT}/
-	rm -rf ${ROOT}/linux-obj
+	kernelrpm
 fi
 
-cd "${ROOT}"
 [ -e ".travis.yml" ] && (rm -f .travis.yml)
 [ -e ".update" ] && (rm -f .update)
-[ ! -e "btaas" ] && git checkout master -- btaas
-[ ! -e "btaas_files" ] && git checkout master -- btaas_files
+[ -d "iKOTD" ] && (rm -fr iKOTD)
+: Checkout the btaas files to latest version on master branch
+git checkout master -- btaas
+git checkout master -- btaas_files
 git add -A &> temp.log || tail -n500 temp.log
-git commit -s -a -m "[${ftp3[${DISTRO}]}] ${KRN_SRC_Filename}"
-git push
+git commit -s -a -m "[${ftp3[${DISTRO}]}] ${KRN_SRC_Filename}" \
+				&> temp.log || tail -n500 temp.log
+git push -u origin "${gsa[${DISTRO}]}"
 
 
 echo FINISH
