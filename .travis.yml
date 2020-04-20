@@ -19,6 +19,7 @@ env:
        - DISTRO='rhel76'
        - DISTRO='rhel77'
        - DISTRO='rhel78'
+       - DISTRO='rhel79'
        - DISTRO='rhelalt76'
 
 install:
