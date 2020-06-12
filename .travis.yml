@@ -13,6 +13,7 @@ os:
 
 env:
     matrix:
+       - DISTRO='rhel83'
        - DISTRO='rhel82'
        - DISTRO='rhel81'
        - DISTRO='rhel8'
