@@ -1,11 +1,14 @@
 #!/bin/bash
 
-set -x
+set -xe
 
 : Handle RHEL or SLES kernel
 kernelrpm() {
 
 	local RH_PASSPORT
+	cd iKOTD
+	./update_mapping.sh ${FTP3}
+	cd -
 	RH_PASSPORT="${FTP3}" bash -x ./iKOTD/get_latest.sh "${ftp3[${DISTRO}]}"
 
 	: Looking for the latest downloaded file for build
