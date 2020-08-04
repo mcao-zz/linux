@@ -15,6 +15,7 @@ env:
     matrix:
        - DISTRO='rhel83'
        - DISTRO='rhel79'
+       - DISTRO='rhelalt76'
 
 install:
   - git config remote.origin.fetch +refs/heads/*:refs/remotes/origin/*
