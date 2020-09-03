@@ -13,7 +13,7 @@ kernelrpm() {
 
 	: Looking for the latest downloaded file for build
 	local KRN_SRC
-	KRN_SRC="$(find . -iname "kernel-*src.rpm" | sort -V | tail -n1)"
+	KRN_SRC="$(find . -iname "kernel-[0-9].*src.rpm" | sort -V | tail -n1)"
 
 	KRN_SRC_Filename="$(echo "${KRN_SRC}" | rev | cut -d'/' -f1 | rev)"
 
