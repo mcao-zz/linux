@@ -8,6 +8,7 @@ kernelrpm() {
 	local RH_PASSPORT
 	cd iKOTD
 	./update_mapping.sh ${FTP3}
+	. ./mapping.sh
 	cd -
 	RH_PASSPORT="${FTP3}" bash -x ./iKOTD/get_latest.sh "${ftp3[${DISTRO}]}"
 
