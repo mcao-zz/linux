@@ -43,7 +43,9 @@ kernelrpm() {
 	if [[ "${DISTRO}" =~ .*rhel.* ]]; then
 		tar xf linux-*.tar.xz
 		cp -rf linux-*/* "${ROOT}"/
-
+		if [[ "${DISTRO}" =~ 'rhel83' ]]; then
+			sed -i  '/test_progs\*/d' "${ROOT}"/tools/testing/selftests/bpf/.gitignore
+		fi
 	else
 		./mkspec
 		mv kernel-default.spec "${HOME}"/rpmbuild/SPECS
