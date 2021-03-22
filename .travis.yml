@@ -18,6 +18,7 @@ env:
        - DISTRO='rhelalt76'
        - DISTRO='rhel84'
        - DISTRO='rhel84dev'
+       - DISTRO='rhel82'
 
 install:
   - git config remote.origin.fetch +refs/heads/*:refs/remotes/origin/*
