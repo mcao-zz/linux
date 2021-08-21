@@ -1,15 +1,12 @@
 sudo: required
 language: shell
-group: bluezone
-dist: xenial
+os: linux-ppc64le
+
 git:
   submodules: false
   depth: 10
 services:
   - docker
-
-os:
-  - linux-ppc64le
 
 env:
     matrix:
@@ -20,6 +17,7 @@ env:
        - DISTRO='rhel84dev'
        - DISTRO='rhel82'
        - DISTRO='rhel85'
+       - DISTRO='rhel90'
 
 install:
   - git config remote.origin.fetch +refs/heads/*:refs/remotes/origin/*
