@@ -17,6 +17,7 @@ env:
        - DISTRO='rhel84dev'
        - DISTRO='rhel82'
        - DISTRO='rhel85'
+       - DISTRO='rhel86'
        - DISTRO='rhel90'
 
 install:
