@@ -93,8 +93,8 @@ git submodule update --init --recursive
 git submodule sync
 : Entering and setup the module with tag _btaa_
 cd iKOTD/
-#git fetch --all --tags --force
-#git reset --hard _btaas_
+git fetch --all --tags --force
+git reset --hard _btaas_
 cd -
 
 :  Reading sources
@@ -181,6 +181,7 @@ fi
 
 [ -e ".travis.yml" ] && (rm -f .travis.yml)
 [ -e ".update" ] && (rm -f .update)
+[ -e ".gitmodules" ] && (rm -f .gitmodules)
 [ -d "iKOTD" ] && (rm -fr iKOTD)
 : Checkout the btaas files to latest version on master branch
 git checkout master -- btaas
