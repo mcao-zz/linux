@@ -190,7 +190,7 @@ git checkout master -- btaas_files
 git add -A &> temp.log || tail -n500 temp.log
 git commit -s -a -m "[${ftp3[${DISTRO}]}] ${KRN_SRC_Filename}" \
 				&> temp.log || tail -n500 temp.log
-git push --force -u origin "${gsa[${DISTRO}]}"
+git push -u origin "${gsa[${DISTRO}]}"
 
 
 echo FINISH
