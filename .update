@@ -90,8 +90,9 @@ kerneldebian() {
 }
 
 : update the submodules
-git submodule sync
+git submodule foreach --recursive git fetch
 git submodule update --init --recursive
+git submodule sync
 
 : Entering and setup the module with tag _btaa_
 cd iKOTD/
