@@ -89,6 +89,9 @@ kerneldebian() {
 
 }
 
+: Fetch a possible remote branch
+(git fetch origin "${gsa[${DISTRO}]}")
+
 : update the submodules
 git submodule update --init --recursive
 git submodule sync
@@ -142,9 +145,6 @@ fi
 
 git config --global user.email "${USEREmail}"
 git config --global user.name "${USERName}"
-
-: Fetch a possible remote branch
-(git fetch origin "${gsa[${DISTRO}]}")
 
 : Checking if the remote branch is already added
 if git branch | grep "\* ${gsa[${DISTRO}]}" &>/dev/null; then
