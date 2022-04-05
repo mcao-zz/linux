@@ -10,7 +10,7 @@ services:
 
 env:
     matrix:
-       - DISTRO=rhel90
+       - DISTRO=rhel86
 install:
   - git config remote.origin.fetch +refs/heads/*:refs/remotes/origin/*
 
