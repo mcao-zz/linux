@@ -10,14 +10,13 @@ services:
 
 env:
     matrix:
-       - DISTRO=rhel86
+       - DISTRO=rhel91
 install:
   - git config remote.origin.fetch +refs/heads/*:refs/remotes/origin/*
 
 branches:
   only:
     - master
-
 
 script:
   - sudo sed -i -- 's/#   StrictHostKeyChecking ask/StrictHostKeyChecking no/g' /etc/ssh/ssh_config
