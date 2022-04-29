@@ -7,7 +7,6 @@ git:
   depth: 10
 services:
   - docker
-
 env:
     matrix:
        - DISTRO=rhel84
