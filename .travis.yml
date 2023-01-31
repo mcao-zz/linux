@@ -18,7 +18,7 @@ branches:
     - master
 
 script:
-  - sudo sed -i -- 's/#   StrictHostKeyChecking ask/StrictHostKeyChecking no/g' /etc/ssh/ssh_config
-  - if [[ "${TRAVIS_BRANCH}" == "master" ]]; then scp "pkpandey@pokgsa.ibm.com:/projects/b/btaas_images/${DISTRO}.tar.gz" . ; fi
-  - if [[ "${TRAVIS_BRANCH}" == "master" ]]; then zcat "${DISTRO}.tar.gz" | docker import - "${DISTRO}" && rm -rf "${DISTRO}.tar.gz"; fi
-  - docker run -v $(pwd):/root/kernels -w /root/kernels/ -it ${DISTRO} /root/kernels/.update -f "${FTP3_Credentials}" -d "${DISTRO}" -n "${My_Name}" -e "${My_Email}"
+- REPO_URL="${REPO_URL:-sys-kernelbackport-kernelbackport-docker-local.artifactory.swg-devops.com}"
+- docker login  ${REPO_URL} --username=${My_User} --password=${My_Password}
+- docker pull ${REPO_URL}/${DISTRO}
+- docker run -v $(pwd):/root/kernels -w /root/kernels/ -it ${REPO_URL}/${DISTRO} /root/kernels/.update -f "${FTP3_Credentials}" -d "${DISTRO}" -n "${My_Name}" -e "${My_Email}"
