@@ -2,5 +2,6 @@
 "test" : "True",
 "label" : "",
 "kabicheck" : "yes",
-"email" : ""
+"email" : "",
+"powerserver" : "Power10"
 }
