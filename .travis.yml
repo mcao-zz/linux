@@ -1,6 +1,8 @@
 sudo: required
 language: shell
-os: linux-ppc64le
+os: linux
+arch: ppc64le
+group: power-kernel
 
 git:
   submodules: false
