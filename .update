@@ -43,7 +43,7 @@ kernelrpm() {
 	if [[ "${DISTRO}" =~ .*rhel.* ]]; then
 		tar xf linux-*.tar.xz
 		cp -rf linux-*/* "${ROOT}"/
-		if [[ "${DISTRO}" == rhel8* ]] || [[ "$(DISTRO)" == rhel9* ]]; then
+		if [[ "${DISTRO}" == rhel8* ]] || [[ "${DISTRO}" == rhel9* ]]; then
 			sed -i  '/test_progs\*/d' "${ROOT}"/tools/testing/selftests/bpf/.gitignore
 			sed -i '/plugins\//d' "${ROOT}"/tools/testing/selftests/tc-testing/.gitignore
 		fi
