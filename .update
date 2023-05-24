@@ -24,10 +24,10 @@ kernelrpm() {
 	fi
 
 	: Checking if package was already committed
-	#if git log --oneline  | grep -q "${KRN_SRC_Filename}" > /dev/null; then
-	#	echo "FINISH: It's already added"
-	#	exit 0
-	#fi
+	if git log --oneline  | grep -q "${KRN_SRC_Filename}" > /dev/null; then
+		echo "FINISH: It's already added"
+		exit 0
+	fi
 
 	: Define the topdir for rpm
 	echo '%_topdir %(echo $HOME)/rpmbuild' >> ~/.rpmmacros
