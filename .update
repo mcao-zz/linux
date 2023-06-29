@@ -91,10 +91,12 @@ kerneldebian() {
 }
 
 : update the submodules
+git config --global --add safe.directory /root/kernels
 git submodule update --init --recursive
 git submodule sync
 : Entering and setup the module with tag _btaa_
 cd iKOTD/
+git config --global --add safe.directory /root/kernels/iKOTD
 git fetch --all --tags --force
 git reset --hard _btaas_
 cd -
