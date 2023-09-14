@@ -2,5 +2,6 @@
 "test" : "true",
 "label" : "",
 "kabicheck" : "yes",
-"email" : "",
+"email" : "", 
+"kernel_param" : "",
 }
