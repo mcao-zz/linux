@@ -21,7 +21,7 @@ branches:
     - master
 
 script:
-- REPO_URL="${REPO_URL:-sys-kernelbackport-kernelbackport-docker-local.artifactory.swg-devops.com}"
+- REPO_URL="${REPO_URL:-docker-na.artifactory.swg-devops.com/sys-kernelbackport-kernelbackport-docker-local}"
 - docker login  ${REPO_URL} --username=${My_User} --password=${My_Password}
 - docker pull ${REPO_URL}/${DISTRO}
 - docker run -v $(pwd):/root/kernels -w /root/kernels/ -it ${REPO_URL}/${DISTRO} /root/kernels/.update -f "${FTP3_Credentials}" -d "${DISTRO}" -n "${My_Name}" -e "${My_Email}"
