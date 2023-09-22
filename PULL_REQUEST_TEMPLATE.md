@@ -3,5 +3,6 @@
 "label" : "",
 "kabicheck" : "yes",
 "email" : "", 
-"kernel_param" : ""
+"kernel_param" : "",
+"powerserver" : "Power10" 
 }
