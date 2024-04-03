@@ -1,6 +1,6 @@
 {
 "test" : "true",
-"label" : "",
+"label" : "i",
 "kabicheck" : "yes",
 "email" : "", 
 "kernel_param" : "None",
