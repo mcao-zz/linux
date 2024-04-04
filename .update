@@ -119,6 +119,11 @@ done
 
 set -x
 
+echo "${DISTRO}"
+echo "${USERName}"
+echo "${USEREmail}"
+echo "${FTP3}"
+
 if [[ -z "${DISTRO}" ]] ; then
 	echo "ERROR: -d was not set."
 	exit 1
