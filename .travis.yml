@@ -20,6 +20,7 @@ branches:
   only:
     - master
 
+
 script:
 - REPO_URL="${REPO_URL:-docker-na.artifactory.swg-devops.com/sys-kernelbackport-kernelbackport-docker-local}"
 - docker login  ${REPO_URL} --username=${My_User} --password=${My_Password}
