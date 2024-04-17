@@ -41,7 +41,7 @@ kernelrpm() {
 	cd "${HOME}"/rpmbuild/SOURCES
 
 	if [[ "${DISTRO}" =~ .*rhel.* ]]; then
-		tar xf linux-*.tar.xz --no-overwrite-dir
+		tar --no-overwrite-dir -xvf linux-*.tar.xz
 		cp -rf linux-*/* "${ROOT}"/
 		if [[ "${DISTRO}" == rhel8* ]] || [[ "${DISTRO}" == rhel9* ]] || [[ "${DISTRO}" == rhel10* ]]; then
 			sed -i  '/test_progs\*/d' "${ROOT}"/tools/testing/selftests/bpf/.gitignore
