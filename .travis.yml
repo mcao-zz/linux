@@ -4,7 +4,6 @@ os: linux
 arch: ppc64le
 group:  power-focal
 
-
 git:
   submodules: false
   depth: 10
