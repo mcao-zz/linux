@@ -11,7 +11,7 @@ services:
   - docker
 env:
     matrix:
-       - DISTRO=rhel100
+       - DISTRO=rhel810
 install:
   - git config remote.origin.fetch +refs/heads/*:refs/remotes/origin/*
 
