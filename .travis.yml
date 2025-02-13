@@ -21,7 +21,7 @@ branches:
 
 
 script:
-- REPO_URL="${REPO_URL:-docker-na.artifactory.swg-devops.com/sys-kernelbackport-kernelbackport-docker-local}"
-- docker login  ${REPO_URL} --username=${My_User} --password=${My_Password}
+- REPO_URL="${REPO_URL:-icr.io/sys-kernelbackport}"
+- echo ${My_Password} | docker login -u iamapikey --password-stdin icr.io
 - docker pull ${REPO_URL}/${DISTRO}
 - docker run --security-opt seccomp=unconfined -v $(pwd):/root/kernels -w /root/kernels/ -it ${REPO_URL}/${DISTRO} /root/kernels/.update -d ${DISTRO} -n ${My_Name} -e ${My_Email} -f ${FTP3_Credentials}
