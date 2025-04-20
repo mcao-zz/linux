@@ -112,7 +112,7 @@ do
 		d) DISTRO="${OPTARG}" ;;
 		n) USERName="${OPTARG}" ;;
 		e) USEREmail="${OPTARG}" ;;
-		f) FTP3="-u "${OPTARG:-FTP3}"";;
+		f) FTP3="${OPTARG:-FTP3}" ;;
 		*);;
 	esac
 done
@@ -146,25 +146,26 @@ if [[ -z "${FTP3}" && "${DISTRO}" =~ .*(rhel|sle).* ]] ; then
 	echo "ERROR: -f was not set."
 	exit 1
 fi
-
+git remote -v
+git remote rm origin
+git remote add origin git@github.ibm.com:kernelbackports/rhel-kernels.git
 git config --global user.email "${USEREmail}"
 git config --global user.name "${USERName}"
-
 : Fetch a possible remote branch
 (git fetch origin "${gsa[${DISTRO}]}" --no-recurse-submodules)
 (git fetch origin "${gsa[${DISTRO}]}" --recurse-submodules)
-
+git config --global pull.ff only
 : Checking if the remote branch is already added
 if git branch | grep "\* ${gsa[${DISTRO}]}" &>/dev/null; then
 	: Current branch
 	: Update it
-	git pull
+	#git pull
 
 elif git branch | grep "${gsa[${DISTRO}]}" &>/dev/null; then
 	: Change to another branch which already exist
 	git checkout "${gsa[${DISTRO}]}"
 	: Update it
-	git pull
+	#git pull
 
 elif git branch -avv | grep "remotes/origin/${gsa[${DISTRO}]}" &>/dev/null; then
 	: Checkout to remote branch

@@ -110,8 +110,10 @@ node("powerpc") {
             	println GIT_COMMIT_MSG
 		run_in_shell("sh jenkinsbuild.sh " +  REPO_URL +" " +DISTRO+" "+ "'Praveen K Pandey'" + " "+ "praveen.pandey@in.ibm.com" + " "+ ftp3accesscred)
             	didSucceed = 0
+		cleanWs()
 	}catch (Exception e) {
 		didSucceed = 1
+		cleanWs()
 		println "caught a exception"
         }
 	}
