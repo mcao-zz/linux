@@ -112,7 +112,7 @@ do
 		d) DISTRO="${OPTARG}" ;;
 		n) USERName="${OPTARG}" ;;
 		e) USEREmail="${OPTARG}" ;;
-		f) FTP3="${OPTARG:-FTP3}" ;;
+		f) FTP3="-u "${OPTARG:-FTP3}"" ;;
 		*);;
 	esac
 done
