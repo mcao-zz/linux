@@ -195,8 +195,6 @@ fi
 [ -e ".gitmodules" ] && (rm -f .gitmodules)
 [ -d "iKOTD" ] && (rm -fr iKOTD)
 : Checkout the btaas files to latest version on master branch
-git checkout master -- btaas
-git checkout master -- btaas_files
 git add -A &> temp.log || tail -n500 temp.log
 git commit -s -a -m "[${ftp3[${DISTRO}]}] ${KRN_SRC_Filename}" \
 				&> temp.log || tail -n500 temp.log
