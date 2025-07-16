@@ -25,6 +25,7 @@ def didSucceed = 1
 def GIT_COMMIT_MSG= ''
 def DISTRO='rhel97'
 
+
 def run_in_shell(String cmd, pipefail=true, debug=false){
   if (pipefail) {
       println "==============================\n" +
