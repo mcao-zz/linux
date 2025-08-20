@@ -23,7 +23,7 @@ def githubusercred = ''
 def cloudkey = ''
 def didSucceed = 1
 def GIT_COMMIT_MSG= ''
-def DISTRO='rhel97'
+def DISTRO='rhel101'
 
 
 def run_in_shell(String cmd, pipefail=true, debug=false){
