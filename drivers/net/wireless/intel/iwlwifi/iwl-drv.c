@@ -236,10 +236,9 @@ const char *iwl_drv_get_fwname_pre(struct iwl_trans *trans, char *buf)
 		mac = "sc";
 		break;
 	case IWL_CFG_MAC_TYPE_SC2:
-		mac = "sc2";
-		break;
+	/* Uses the same firmware as SC2 */
 	case IWL_CFG_MAC_TYPE_SC2F:
-		mac = "sc2f";
+		mac = "sc2";
 		break;
 	case IWL_CFG_MAC_TYPE_BR:
 		mac = "br";
@@ -301,13 +300,17 @@ static void iwl_get_ucode_api_versions(struct iwl_trans *trans,
 	const struct iwl_family_base_params *base = trans->mac_cfg->base;
 	const struct iwl_rf_cfg *cfg = trans->cfg;
 
-	if (!base->ucode_api_max) {
+	/* if the MAC doesn't have range or if its range it higher than the RF's */
+	if (!base->ucode_api_max ||
+	    (cfg->ucode_api_max && base->ucode_api_min > cfg->ucode_api_max)) {
 		*api_min = cfg->ucode_api_min;
 		*api_max = cfg->ucode_api_max;
 		return;
 	}
 
-	if (!cfg->ucode_api_max) {
+	/* if the RF doesn't have range or if its range it higher than the MAC's */
+	if (!cfg->ucode_api_max ||
+	    (base->ucode_api_max && cfg->ucode_api_min > base->ucode_api_max)) {
 		*api_min = base->ucode_api_min;
 		*api_max = base->ucode_api_max;
 		return;
@@ -1541,7 +1544,7 @@ _iwl_op_mode_start(struct iwl_drv *drv, struct iwlwifi_opmode_table *op)
 		if (!IS_ERR(op_mode))
 			return op_mode;
 
-		if (test_bit(STATUS_TRANS_DEAD, &drv->trans->status))
+		if (iwl_trans_is_dead(drv->trans))
 			break;
 
 #ifdef CONFIG_IWLWIFI_DEBUGFS

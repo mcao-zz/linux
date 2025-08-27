@@ -148,12 +148,20 @@ function create_dynamic_target() {
 # Generate the command line argument for netconsole following:
 #  netconsole=[+][src-port]@[src-ip]/[<dev>],[tgt-port]@<tgt-ip>/[tgt-macaddr]
 function create_cmdline_str() {
+	local BINDMODE=${1:-"ifname"}
+	if [ "${BINDMODE}" == "ifname" ]
+	then
+		SRCDEV=${SRCIF}
+	else
+		SRCDEV=$(mac_get "${SRCIF}")
+	fi
+
 	DSTMAC=$(ip netns exec "${NAMESPACE}" \
 		 ip link show "${DSTIF}" | awk '/ether/ {print $2}')
 	SRCPORT="1514"
 	TGTPORT="6666"
 
-	echo "netconsole=\"+${SRCPORT}@${SRCIP}/${SRCIF},${TGTPORT}@${DSTIP}/${DSTMAC}\""
+	echo "netconsole=\"+${SRCPORT}@${SRCIP}/${SRCDEV},${TGTPORT}@${DSTIP}/${DSTMAC}\""
 }
 
 # Do not append the release to the header of the message
@@ -278,6 +286,11 @@ function check_for_dependencies() {
 
 	if ! which udevadm > /dev/null ; then
 		echo "SKIP: udevadm(1) is not available" >&2
+		exit "${ksft_skip}"
+	fi
+
+	if [ ! -f /proc/net/if_inet6 ]; then
+		echo "SKIP: IPv6 not configured. Check if CONFIG_IPV6 is enabled" >&2
 		exit "${ksft_skip}"
 	fi
 

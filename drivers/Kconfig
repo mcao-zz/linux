@@ -10,6 +10,12 @@ source "drivers/cxl/Kconfig"
 source "drivers/pcmcia/Kconfig"
 source "drivers/rapidio/Kconfig"
 
+config PC104
+	bool "PC/104 support" if EXPERT
+	help
+	  Expose PC/104 form factor device drivers and options available for
+	  selection and configuration. Enable this option if your target
+	  machine has a PC/104 bus.
 
 source "drivers/base/Kconfig"
 
@@ -210,8 +216,6 @@ source "drivers/ras/Kconfig"
 source "drivers/thunderbolt/Kconfig"
 
 source "drivers/android/Kconfig"
-
-source "drivers/gpu/trace/Kconfig"
 
 source "drivers/nvdimm/Kconfig"
 

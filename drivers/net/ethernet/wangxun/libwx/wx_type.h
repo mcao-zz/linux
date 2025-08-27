@@ -10,6 +10,7 @@
 #include <linux/netdevice.h>
 #include <linux/if_vlan.h>
 #include <linux/phylink.h>
+#include <linux/dim.h>
 #include <net/ip.h>
 
 #define WX_NCSI_SUP                             0x8000
@@ -914,7 +915,6 @@ enum wx_reset_type {
 struct wx_cb {
 	dma_addr_t dma;
 	u16     append_cnt;      /* number of skb's appended */
-	bool    page_released;
 	bool    dma_released;
 };
 
@@ -1003,7 +1003,6 @@ struct wx_tx_buffer {
 struct wx_rx_buffer {
 	struct sk_buff *skb;
 	dma_addr_t dma;
-	dma_addr_t page_dma;
 	struct page *page;
 	unsigned int page_offset;
 };
@@ -1035,6 +1034,7 @@ struct wx_ring_container {
 	unsigned int total_packets;     /* total packets processed this int */
 	u8 count;                       /* total number of rings in vector */
 	u8 itr;                         /* current ITR setting for ring */
+	struct dim dim;                 /* data for net_dim algorithm */
 };
 struct wx_ring {
 	struct wx_ring *next;           /* pointer to next ring in q_vector */
@@ -1090,6 +1090,8 @@ struct wx_q_vector {
 	struct wx_ring_container rx, tx;
 	struct napi_struct napi;
 	struct rcu_head rcu;    /* to avoid race with update stats on free */
+
+	u16 total_events;       /* number of interrupts processed */
 
 	char name[IFNAMSIZ + 17];
 
@@ -1270,6 +1272,7 @@ struct wx {
 	int num_rx_queues;
 	u16 rx_itr_setting;
 	u16 rx_work_limit;
+	bool adaptive_itr;
 
 	int num_q_vectors;      /* current number of q_vectors for device */
 	int max_q_vectors;      /* upper limit of q_vectors for device */

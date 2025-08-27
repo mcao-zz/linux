@@ -419,7 +419,10 @@ void iwl_trans_op_mode_leave(struct iwl_trans *trans)
 {
 	might_sleep();
 
-	iwl_trans_pcie_op_mode_leave(trans);
+	if (trans->mac_cfg->gen2)
+		iwl_trans_pcie_gen2_op_mode_leave(trans);
+	else
+		iwl_trans_pcie_op_mode_leave(trans);
 
 	cancel_delayed_work_sync(&trans->restart.wk);
 
@@ -434,31 +437,26 @@ void iwl_trans_write8(struct iwl_trans *trans, u32 ofs, u8 val)
 {
 	iwl_trans_pcie_write8(trans, ofs, val);
 }
-IWL_EXPORT_SYMBOL(iwl_trans_write8);
 
 void iwl_trans_write32(struct iwl_trans *trans, u32 ofs, u32 val)
 {
 	iwl_trans_pcie_write32(trans, ofs, val);
 }
-IWL_EXPORT_SYMBOL(iwl_trans_write32);
 
 u32 iwl_trans_read32(struct iwl_trans *trans, u32 ofs)
 {
 	return iwl_trans_pcie_read32(trans, ofs);
 }
-IWL_EXPORT_SYMBOL(iwl_trans_read32);
 
 u32 iwl_trans_read_prph(struct iwl_trans *trans, u32 ofs)
 {
 	return iwl_trans_pcie_read_prph(trans, ofs);
 }
-IWL_EXPORT_SYMBOL(iwl_trans_read_prph);
 
 void iwl_trans_write_prph(struct iwl_trans *trans, u32 ofs, u32 val)
 {
 	return iwl_trans_pcie_write_prph(trans, ofs, val);
 }
-IWL_EXPORT_SYMBOL(iwl_trans_write_prph);
 
 int iwl_trans_read_mem(struct iwl_trans *trans, u32 addr,
 		       void *buf, int dwords)
@@ -495,11 +493,10 @@ void iwl_trans_set_pmi(struct iwl_trans *trans, bool state)
 }
 IWL_EXPORT_SYMBOL(iwl_trans_set_pmi);
 
-int iwl_trans_sw_reset(struct iwl_trans *trans, bool retake_ownership)
+int iwl_trans_sw_reset(struct iwl_trans *trans)
 {
-	return iwl_trans_pcie_sw_reset(trans, retake_ownership);
+	return iwl_trans_pcie_sw_reset(trans, true);
 }
-IWL_EXPORT_SYMBOL(iwl_trans_sw_reset);
 
 struct iwl_trans_dump_data *
 iwl_trans_dump_data(struct iwl_trans *trans, u32 dump_mask,
@@ -509,7 +506,6 @@ iwl_trans_dump_data(struct iwl_trans *trans, u32 dump_mask,
 	return iwl_trans_pcie_dump_data(trans, dump_mask,
 					sanitize_ops, sanitize_ctx);
 }
-IWL_EXPORT_SYMBOL(iwl_trans_dump_data);
 
 int iwl_trans_d3_suspend(struct iwl_trans *trans, bool test, bool reset)
 {
@@ -545,20 +541,17 @@ void iwl_trans_interrupts(struct iwl_trans *trans, bool enable)
 {
 	iwl_trans_pci_interrupts(trans, enable);
 }
-IWL_EXPORT_SYMBOL(iwl_trans_interrupts);
 
 void iwl_trans_sync_nmi(struct iwl_trans *trans)
 {
 	iwl_trans_pcie_sync_nmi(trans);
 }
-IWL_EXPORT_SYMBOL(iwl_trans_sync_nmi);
 
 int iwl_trans_write_imr_mem(struct iwl_trans *trans, u32 dst_addr,
 			    u64 src_addr, u32 byte_cnt)
 {
 	return iwl_trans_pcie_copy_imr(trans, dst_addr, src_addr, byte_cnt);
 }
-IWL_EXPORT_SYMBOL(iwl_trans_write_imr_mem);
 
 void iwl_trans_set_bits_mask(struct iwl_trans *trans, u32 reg,
 			     u32 mask, u32 value)
@@ -572,7 +565,6 @@ int iwl_trans_read_config32(struct iwl_trans *trans, u32 ofs,
 {
 	return iwl_trans_pcie_read_config32(trans, ofs, val);
 }
-IWL_EXPORT_SYMBOL(iwl_trans_read_config32);
 
 bool _iwl_trans_grab_nic_access(struct iwl_trans *trans)
 {
@@ -768,7 +760,6 @@ void iwl_trans_debugfs_cleanup(struct iwl_trans *trans)
 {
 	iwl_trans_pcie_debugfs_cleanup(trans);
 }
-IWL_EXPORT_SYMBOL(iwl_trans_debugfs_cleanup);
 #endif
 
 void iwl_trans_set_q_ptrs(struct iwl_trans *trans, int queue, int ptr)
@@ -806,7 +797,6 @@ int iwl_trans_get_rxq_dma_data(struct iwl_trans *trans, int queue,
 {
 	return iwl_trans_pcie_rxq_dma_data(trans, queue, data);
 }
-IWL_EXPORT_SYMBOL(iwl_trans_get_rxq_dma_data);
 
 int iwl_trans_load_pnvm(struct iwl_trans *trans,
 			const struct iwl_pnvm_image *pnvm_data,
@@ -821,7 +811,6 @@ void iwl_trans_set_pnvm(struct iwl_trans *trans,
 {
 	iwl_trans_pcie_ctx_info_v2_set_pnvm(trans, capa);
 }
-IWL_EXPORT_SYMBOL(iwl_trans_set_pnvm);
 
 int iwl_trans_load_reduce_power(struct iwl_trans *trans,
 				const struct iwl_pnvm_image *payloads,
@@ -830,11 +819,9 @@ int iwl_trans_load_reduce_power(struct iwl_trans *trans,
 	return iwl_trans_pcie_ctx_info_v2_load_reduce_power(trans, payloads,
 							      capa);
 }
-IWL_EXPORT_SYMBOL(iwl_trans_load_reduce_power);
 
 void iwl_trans_set_reduce_power(struct iwl_trans *trans,
 				const struct iwl_ucode_capabilities *capa)
 {
 	iwl_trans_pcie_ctx_info_v2_set_reduce_power(trans, capa);
 }
-IWL_EXPORT_SYMBOL(iwl_trans_set_reduce_power);

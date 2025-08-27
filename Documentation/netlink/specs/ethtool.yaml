@@ -159,6 +159,26 @@ definitions:
         name: pse-event-sw-pw-control-error
         doc: PSE faced an error managing the power control from software
   -
+    name: input-xfrm
+    doc: RSS hash function transformations.
+    type: flags
+    enum-name:
+    name-prefix: rxh-xfrm-
+    header: linux/ethtool.h
+    entries:
+      -
+        name: sym-xor
+        doc: >-
+          XOR the corresponding source and destination fields of each specified
+          protocol. Both copies of the XOR'ed fields are fed into the RSS and
+          RXHASH calculation. Note that this XORing reduces the input set
+          entropy and could be exploited to reduce the RSS queue spread.
+      -
+        name: sym-or-xor
+        doc: >-
+          Similar to SYM_XOR, except that one copy of the XOR'ed fields is
+          replaced by an OR of the same fields.
+  -
     name: rxfh-fields
     name-prefix: rxh-
     enum-name:
@@ -184,6 +204,9 @@ definitions:
         doc: dst port in case of TCP/UDP/SCTP
       -
         name: gtp-teid
+      -
+        name: ip6-fl
+        doc: IPv6 Flow Label
       -
         name: discard
         value: 31
@@ -1621,6 +1644,7 @@ attribute-sets:
       -
         name: input-xfrm
         type: u32
+        enum: input-xfrm
       -
         name: start-context
         type: u32
@@ -2323,14 +2347,14 @@ operations:
         request:
           attributes:
             - header
-        reply:
-          attributes:
-            - header
             - offset
             - length
             - page
             - bank
             - i2c-address
+        reply:
+          attributes:
+            - header
             - data
       dump: *module-eeprom-get-op
     -
@@ -2644,12 +2668,65 @@ operations:
           - header
           - events
     -
+      name: rss-set
+      doc: Set RSS params.
+
+      attribute-set: rss
+
+      do:
+        request:
+          attributes:
+            - header
+            - context
+            - hfunc
+            - indir
+            - hkey
+            - input-xfrm
+            - flow-hash
+    -
       name: rss-ntf
       doc: |
         Notification for change in RSS configuration.
-        For additional contexts only modifications are modified, not creation
-        or removal of the contexts.
+        For additional contexts only modifications use this notification,
+        creation and deletion have dedicated messages.
       notify: rss-get
+    -
+      name: rss-create-act
+      doc: Create an RSS context.
+      attribute-set: rss
+      do:
+        request: &rss-create-attrs
+          attributes:
+            - header
+            - context
+            - hfunc
+            - indir
+            - hkey
+            - input-xfrm
+        reply: *rss-create-attrs
+    -
+      name: rss-create-ntf
+      doc: |
+        Notification for creation of an additional RSS context.
+      notify: rss-create-act
+    -
+      name: rss-delete-act
+      doc: Delete an RSS context.
+      attribute-set: rss
+      do:
+        request:
+          attributes:
+            - header
+            - context
+    -
+      name: rss-delete-ntf
+      doc: |
+        Notification for deletion of an additional RSS context.
+      attribute-set: rss
+      event:
+        attributes:
+          - header
+          - context
 
 mcast-groups:
   list:

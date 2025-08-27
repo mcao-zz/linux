@@ -20,6 +20,7 @@ config LIBWX
 	tristate
 	depends on PTP_1588_CLOCK_OPTIONAL
 	select PAGE_POOL
+	select DIMLIB
 	help
 	Common library for Wangxun(R) Ethernet drivers.
 
@@ -68,6 +69,7 @@ config TXGBEVF
 	tristate "Wangxun(R) 10/25/40G Virtual Function Ethernet support"
 	depends on PCI
 	depends on PCI_MSI
+	depends on PTP_1588_CLOCK_OPTIONAL
 	select LIBWX
 	select PHYLINK
 	help
@@ -85,6 +87,7 @@ config TXGBEVF
 config NGBEVF
 	tristate "Wangxun(R) GbE Virtual Function Ethernet support"
 	depends on PCI_MSI
+	depends on PTP_1588_CLOCK_OPTIONAL
 	select LIBWX
 	help
 	  This driver supports virtual functions for WX1860, WX1860AL.
