@@ -18,6 +18,7 @@
 #include <linux/kernel.h>
 #include <linux/netdevice.h>
 #include <linux/etherdevice.h>
+#include <linux/u64_stats_sync.h>
 #include <linux/skbuff.h>
 #include <linux/init.h>
 #include <linux/interrupt.h>
@@ -1222,7 +1223,7 @@ static int ibmveth_is_packet_unsupported(struct sk_buff *skb,
 
 	if (ether_addr_equal(ether_header->h_dest, netdev->dev_addr)) {
 		netdev_dbg(netdev, "veth doesn't support loopback packets, dropping packet.\n");
-		netdev->stats.tx_dropped++;
+		dev_dstats_tx_dropped(netdev);
 		ret = -EOPNOTSUPP;
 	}
 
@@ -1249,7 +1250,7 @@ static netdev_tx_t ibmveth_start_xmit(struct sk_buff *skb,
 	    skb_checksum_help(skb)) {
 
 		netdev_err(netdev, "tx: failed to checksum packet\n");
-		netdev->stats.tx_dropped++;
+		dev_dstats_tx_dropped(netdev);
 		goto out;
 	}
 
@@ -1289,7 +1290,7 @@ static netdev_tx_t ibmveth_start_xmit(struct sk_buff *skb,
 	if (unlikely(skb->len > adapter->tx_ltb_size)) {
 		netdev_err(adapter->netdev, "tx: packet size (%u) exceeds ltb (%u)\n",
 			   skb->len, adapter->tx_ltb_size);
-		netdev->stats.tx_dropped++;
+		dev_dstats_tx_dropped(netdev);
 		goto out;
 	}
 	memcpy(adapter->tx_ltb_ptr[queue_num], skb->data, skb_headlen(skb));
@@ -1306,7 +1307,7 @@ static netdev_tx_t ibmveth_start_xmit(struct sk_buff *skb,
 	if (unlikely(total_bytes != skb->len)) {
 		netdev_err(adapter->netdev, "tx: incorrect packet len copied into ltb (%u != %u)\n",
 			   skb->len, total_bytes);
-		netdev->stats.tx_dropped++;
+		dev_dstats_tx_dropped(netdev);
 		goto out;
 	}
 	desc.fields.flags_len = desc_flags | skb->len;
@@ -1316,10 +1317,9 @@ static netdev_tx_t ibmveth_start_xmit(struct sk_buff *skb,
 
 	if (ibmveth_send(adapter, desc.desc, mss)) {
 		adapter->tx_send_failed++;
-		netdev->stats.tx_dropped++;
+		dev_dstats_tx_dropped(netdev);
 	} else {
-		netdev->stats.tx_packets++;
-		netdev->stats.tx_bytes += skb->len;
+		dev_dstats_tx_add(netdev, skb->len);
 	}
 
 out:
@@ -1534,8 +1534,7 @@ restart_poll:
 
 			napi_gro_receive(napi, skb);	/* send it up */
 
-			netdev->stats.rx_packets++;
-			netdev->stats.rx_bytes += length;
+			dev_dstats_rx_add(netdev, length);
 			frames_processed++;
 		}
 	}
@@ -1756,6 +1755,36 @@ static int ibmveth_set_mac_addr(struct net_device *dev, void *p)
 	return 0;
 }
 
+static void ibmveth_get_stats64(struct net_device *dev,
+				struct rtnl_link_stats64 *stats)
+{
+	int cpu, i = 0;
+
+	for_each_online_cpu(cpu) {
+		struct pcpu_dstats *p = per_cpu_ptr(dev->dstats, cpu);
+		u64 tpkts, tbytes, tdrops;
+		u64 rpkts, rbytes, rdrops;
+		unsigned int start;
+
+		do {
+			start = u64_stats_fetch_begin(&p->syncp);
+			tpkts  = (u64)(p->tx_packets);
+			tbytes = (u64)(p->tx_bytes);
+			tdrops = (u64)(p->tx_drops);
+			rpkts  = (u64)(p->rx_packets);
+			rbytes = (u64)(p->rx_bytes);
+			rdrops = (u64)(p->rx_drops);
+		} while (u64_stats_fetch_retry(&p->syncp, start));
+
+		stats->tx_packets += tpkts;
+		stats->tx_bytes   += tbytes;
+		stats->tx_dropped += tdrops;
+		stats->rx_packets += rpkts;
+		stats->rx_bytes   += rbytes;
+		stats->rx_dropped += rdrops;
+	}
+}
+
 static const struct net_device_ops ibmveth_netdev_ops = {
 	.ndo_open		= ibmveth_open,
 	.ndo_stop		= ibmveth_close,
@@ -1763,6 +1792,7 @@ static const struct net_device_ops ibmveth_netdev_ops = {
 	.ndo_set_rx_mode	= ibmveth_set_multicast_list,
 	.ndo_eth_ioctl		= ibmveth_ioctl,
 	.ndo_change_mtu		= ibmveth_change_mtu,
+	.ndo_get_stats64	= ibmveth_get_stats64,
 	.ndo_fix_features	= ibmveth_fix_features,
 	.ndo_set_features	= ibmveth_set_features,
 	.ndo_validate_addr	= eth_validate_addr,
@@ -1899,6 +1929,13 @@ static int ibmveth_probe(struct vio_dev *dev, const struct vio_device_id *id)
 	adapter->tx_ltb_size = PAGE_ALIGN(IBMVETH_MAX_TX_BUF_SIZE);
 	for (i = 0; i < IBMVETH_MAX_QUEUES; i++)
 		adapter->tx_ltb_ptr[i] = NULL;
+
+	/* Use generic per-CPU dstats for rx/tx packets, bytes, drops.
+	 * Core netdev handles alloc/free; driver just call helper
+	 * functions to bump counters.
+	 */
+
+	netdev->pcpu_stat_type = NETDEV_PCPU_STAT_DSTATS;
 
 	netdev_dbg(netdev, "adapter @ 0x%p\n", adapter);
 	netdev_dbg(netdev, "registering netdev...\n");
