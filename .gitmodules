@@ -1,3 +1,0 @@
-[submodule "iKOTD"]
-	path = iKOTD
-	url = git@github.ibm.com:kernelbackports/iKOTD.git
