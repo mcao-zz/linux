@@ -115,11 +115,19 @@ static void aca_smu_bank_dump(struct amdgpu_device *adev, int idx, int total, st
 	u64 event_id = qctx ? qctx->evid.event_id : RAS_EVENT_INVALID_ID;
 	int i;
 
+	if (adev->debug_disable_ce_logs &&
+	    bank->smu_err_type == ACA_SMU_TYPE_CE &&
+	    !ACA_BANK_ERR_IS_DEFFERED(bank))
+		return;
+
 	RAS_EVENT_LOG(adev, event_id, HW_ERR "Accelerator Check Architecture events logged\n");
 	/* plus 1 for output format, e.g: ACA[08/08]: xxxx */
 	for (i = 0; i < ARRAY_SIZE(aca_regs); i++)
 		RAS_EVENT_LOG(adev, event_id, HW_ERR "ACA[%02d/%02d].%s=0x%016llx\n",
 			      idx + 1, total, aca_regs[i].name, bank->regs[aca_regs[i].reg_idx]);
+
+	if (ACA_REG__STATUS__SCRUB(bank->regs[ACA_REG_IDX_STATUS]))
+		RAS_EVENT_LOG(adev, event_id, HW_ERR "hardware error logged by the scrubber\n");
 }
 
 static int aca_smu_get_valid_aca_banks(struct amdgpu_device *adev, enum aca_smu_type type,

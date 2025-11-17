@@ -21,6 +21,13 @@ $(obj)/generated/%_wa_oob.c $(obj)/generated/%_wa_oob.h: $(obj)/xe_gen_wa_oob \
 		 $(src)/xe_wa_oob.rules
 	$(call cmd,wa_oob)
 
+generated_device_oob := $(obj)/generated/xe_device_wa_oob.c $(obj)/generated/xe_device_wa_oob.h
+quiet_cmd_device_wa_oob = GEN	$(notdir $(generated_device_oob))
+      cmd_device_wa_oob = mkdir -p $(@D); $^ $(generated_device_oob)
+$(obj)/generated/%_device_wa_oob.c $(obj)/generated/%_device_wa_oob.h: $(obj)/xe_gen_wa_oob \
+		 $(src)/xe_device_wa_oob.rules
+	$(call cmd,device_wa_oob)
+
 # Please keep these build lists sorted!
 
 # core driver code
@@ -124,13 +131,15 @@ xe-y += xe_bb.o \
 	xe_wait_user_fence.o \
 	xe_wopcm.o
 
+xe-$(CONFIG_I2C)	+= xe_i2c.o
 xe-$(CONFIG_HMM_MIRROR) += xe_hmm.o
-xe-$(CONFIG_DRM_GPUSVM) += xe_svm.o
+xe-$(CONFIG_DRM_XE_GPUSVM) += xe_svm.o
 
 # graphics hardware monitoring (HWMON) support
 xe-$(CONFIG_HWMON) += xe_hwmon.o
 
 xe-$(CONFIG_PERF_EVENTS) += xe_pmu.o
+xe-$(CONFIG_CONFIGFS_FS) += xe_configfs.o
 
 # graphics virtualization (SR-IOV) support
 xe-y += \
@@ -138,7 +147,8 @@ xe-y += \
 	xe_guc_relay.o \
 	xe_memirq.o \
 	xe_sriov.o \
-	xe_sriov_vf.o
+	xe_sriov_vf.o \
+	xe_tile_sriov_vf.o
 
 xe-$(CONFIG_PCI_IOV) += \
 	xe_gt_sriov_pf.o \
@@ -152,7 +162,8 @@ xe-$(CONFIG_PCI_IOV) += \
 	xe_lmtt_2l.o \
 	xe_lmtt_ml.o \
 	xe_pci_sriov.o \
-	xe_sriov_pf.o
+	xe_sriov_pf.o \
+	xe_sriov_pf_service.o
 
 # include helpers for tests even when XE is built-in
 ifdef CONFIG_DRM_XE_KUNIT_TEST
@@ -185,7 +196,7 @@ xe-$(CONFIG_DRM_XE_DISPLAY) += \
 	display/intel_fbdev_fb.o \
 	display/xe_display.o \
 	display/xe_display_misc.o \
-	display/xe_display_rps.o \
+	display/xe_display_rpm.o \
 	display/xe_display_wa.o \
 	display/xe_dsb_buffer.o \
 	display/xe_fb_pin.o \
@@ -196,7 +207,6 @@ xe-$(CONFIG_DRM_XE_DISPLAY) += \
 # SOC code shared with i915
 xe-$(CONFIG_DRM_XE_DISPLAY) += \
 	i915-soc/intel_dram.o \
-	i915-soc/intel_pch.o \
 	i915-soc/intel_rom.o
 
 # Display code shared with i915
@@ -204,7 +214,6 @@ xe-$(CONFIG_DRM_XE_DISPLAY) += \
 	i915-display/icl_dsi.o \
 	i915-display/intel_alpm.o \
 	i915-display/intel_atomic.o \
-	i915-display/intel_atomic_plane.o \
 	i915-display/intel_audio.o \
 	i915-display/intel_backlight.o \
 	i915-display/intel_bios.o \
@@ -254,6 +263,7 @@ xe-$(CONFIG_DRM_XE_DISPLAY) += \
 	i915-display/intel_fbc.o \
 	i915-display/intel_fdi.o \
 	i915-display/intel_fifo_underrun.o \
+	i915-display/intel_flipq.o \
 	i915-display/intel_frontbuffer.o \
 	i915-display/intel_global_state.o \
 	i915-display/intel_gmbus.o \
@@ -270,7 +280,9 @@ xe-$(CONFIG_DRM_XE_DISPLAY) += \
 	i915-display/intel_modeset_verify.o \
 	i915-display/intel_panel.o \
 	i915-display/intel_pfit.o \
+	i915-display/intel_plane.o \
 	i915-display/intel_pmdemand.o \
+	i915-display/intel_pch.o \
 	i915-display/intel_pps.o \
 	i915-display/intel_psr.o \
 	i915-display/intel_qp_tables.o \
@@ -336,4 +348,4 @@ $(obj)/%.hdrtest: $(src)/%.h FORCE
 	$(call if_changed_dep,hdrtest)
 
 uses_generated_oob := $(addprefix $(obj)/, $(xe-y))
-$(uses_generated_oob): $(obj)/generated/xe_wa_oob.h
+$(uses_generated_oob): $(obj)/generated/xe_wa_oob.h $(obj)/generated/xe_device_wa_oob.h

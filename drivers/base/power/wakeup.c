@@ -337,7 +337,7 @@ int device_wakeup_enable(struct device *dev)
 	if (!dev || !dev->power.can_wakeup)
 		return -EINVAL;
 
-	if (pm_suspend_target_state != PM_SUSPEND_ON)
+	if (pm_suspend_in_progress())
 		dev_dbg(dev, "Suspicious %s() during system transition!\n", __func__);
 
 	ws = wakeup_source_register(dev, dev_name(dev));
@@ -451,16 +451,15 @@ static struct wakeup_source *device_wakeup_detach(struct device *dev)
  * Detach the @dev's wakeup source object from it, unregister this wakeup source
  * object and destroy it.
  */
-int device_wakeup_disable(struct device *dev)
+void device_wakeup_disable(struct device *dev)
 {
 	struct wakeup_source *ws;
 
 	if (!dev || !dev->power.can_wakeup)
-		return -EINVAL;
+		return;
 
 	ws = device_wakeup_detach(dev);
 	wakeup_source_unregister(ws);
-	return 0;
 }
 EXPORT_SYMBOL_GPL(device_wakeup_disable);
 
@@ -502,7 +501,11 @@ EXPORT_SYMBOL_GPL(device_set_wakeup_capable);
  */
 int device_set_wakeup_enable(struct device *dev, bool enable)
 {
-	return enable ? device_wakeup_enable(dev) : device_wakeup_disable(dev);
+	if (enable)
+		return device_wakeup_enable(dev);
+
+	device_wakeup_disable(dev);
+	return 0;
 }
 EXPORT_SYMBOL_GPL(device_set_wakeup_enable);
 

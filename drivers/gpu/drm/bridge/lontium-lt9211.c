@@ -100,11 +100,12 @@ static struct lt9211 *bridge_to_lt9211(struct drm_bridge *bridge)
 }
 
 static int lt9211_attach(struct drm_bridge *bridge,
+			 struct drm_encoder *encoder,
 			 enum drm_bridge_attach_flags flags)
 {
 	struct lt9211 *ctx = bridge_to_lt9211(bridge);
 
-	return drm_bridge_attach(bridge->encoder, ctx->panel_bridge,
+	return drm_bridge_attach(encoder, ctx->panel_bridge,
 				 &ctx->bridge, flags);
 }
 
@@ -727,9 +728,9 @@ static int lt9211_probe(struct i2c_client *client)
 	struct lt9211 *ctx;
 	int ret;
 
-	ctx = devm_kzalloc(dev, sizeof(*ctx), GFP_KERNEL);
-	if (!ctx)
-		return -ENOMEM;
+	ctx = devm_drm_bridge_alloc(dev, struct lt9211, bridge, &lt9211_funcs);
+	if (IS_ERR(ctx))
+		return PTR_ERR(ctx);
 
 	ctx->dev = dev;
 
@@ -755,7 +756,6 @@ static int lt9211_probe(struct i2c_client *client)
 	dev_set_drvdata(dev, ctx);
 	i2c_set_clientdata(client, ctx);
 
-	ctx->bridge.funcs = &lt9211_funcs;
 	ctx->bridge.of_node = dev->of_node;
 	drm_bridge_add(&ctx->bridge);
 

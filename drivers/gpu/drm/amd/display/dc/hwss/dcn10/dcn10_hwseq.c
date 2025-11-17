@@ -94,6 +94,128 @@ static void print_microsec(struct dc_context *dc_ctx,
 			us_x10 % frac);
 }
 
+/*
+ * Delay until we passed busy-until-point to which we can
+ * do necessary locking/programming on consecutive full updates
+ */
+void dcn10_wait_for_pipe_update_if_needed(struct dc *dc, struct pipe_ctx *pipe_ctx, bool is_surface_update_only)
+{
+	struct crtc_position position;
+	struct dc_stream_state *stream = pipe_ctx->stream;
+	unsigned int vpos, frame_count;
+	uint32_t vupdate_start, vupdate_end, vblank_start;
+	unsigned int lines_to_vupdate, us_to_vupdate;
+	unsigned int us_per_line, us_vupdate;
+
+	if (!pipe_ctx->stream ||
+		!pipe_ctx->stream_res.tg ||
+		!pipe_ctx->stream_res.stream_enc)
+		return;
+
+	if (pipe_ctx->prev_odm_pipe &&
+				pipe_ctx->stream)
+		return;
+
+	if (!pipe_ctx->wait_is_required)
+		return;
+
+	struct timing_generator *tg = pipe_ctx->stream_res.tg;
+
+	if (tg->funcs->is_tg_enabled && !tg->funcs->is_tg_enabled(tg))
+		return;
+
+	dc->hwss.calc_vupdate_position(dc, pipe_ctx, &vupdate_start,
+						&vupdate_end);
+
+	dc->hwss.get_position(&pipe_ctx, 1, &position);
+	vpos = position.vertical_count;
+
+	frame_count = tg->funcs->get_frame_count(tg);
+
+	if (frame_count - pipe_ctx->wait_frame_count > 2)
+		return;
+
+	vblank_start = pipe_ctx->pipe_dlg_param.vblank_start;
+
+	if (vpos >= vupdate_start && vupdate_start >= vblank_start)
+		lines_to_vupdate = stream->timing.v_total - vpos + vupdate_start;
+	else
+		lines_to_vupdate = vupdate_start - vpos;
+
+	us_per_line =
+		stream->timing.h_total * 10000u / stream->timing.pix_clk_100hz;
+	us_to_vupdate = lines_to_vupdate * us_per_line;
+
+	if (vupdate_end < vupdate_start)
+		vupdate_end += stream->timing.v_total;
+
+	if (lines_to_vupdate > stream->timing.v_total - vupdate_end + vupdate_start)
+		us_to_vupdate = 0;
+
+	us_vupdate = (vupdate_end - vupdate_start + 1) * us_per_line;
+
+	if (is_surface_update_only && us_to_vupdate + us_vupdate > 200) {
+		//surface updates come in at high irql
+		pipe_ctx->wait_is_required = true;
+		return;
+	}
+
+	fsleep(us_to_vupdate + us_vupdate);
+
+	//clear
+	pipe_ctx->next_vupdate = 0;
+	pipe_ctx->wait_frame_count = 0;
+	pipe_ctx->wait_is_required = false;
+}
+
+/*
+ * On pipe unlock and programming, indicate pipe will be busy
+ * until some frame and line (vupdate), this is required for consecutive
+ * full updates, need to wait for updates
+ * to latch to try and program the next update
+ */
+void dcn10_set_wait_for_update_needed_for_pipe(struct dc *dc, struct pipe_ctx *pipe_ctx)
+{
+	uint32_t vupdate_start, vupdate_end;
+	struct crtc_position position;
+	unsigned int vpos, cur_frame;
+
+	if (!pipe_ctx->stream ||
+		!pipe_ctx->stream_res.tg ||
+		!pipe_ctx->stream_res.stream_enc)
+		return;
+
+	dc->hwss.get_position(&pipe_ctx, 1, &position);
+	vpos = position.vertical_count;
+
+	dc->hwss.calc_vupdate_position(dc, pipe_ctx, &vupdate_start,
+						&vupdate_end);
+
+	struct timing_generator *tg = pipe_ctx->stream_res.tg;
+
+	struct optc *optc1 = DCN10TG_FROM_TG(tg);
+
+	ASSERT(optc1->max_frame_count != 0);
+
+	if (tg->funcs->is_tg_enabled && !tg->funcs->is_tg_enabled(tg))
+		return;
+
+	pipe_ctx->next_vupdate = vupdate_start;
+
+	cur_frame = tg->funcs->get_frame_count(tg);
+
+	if (vpos < vupdate_start) {
+		pipe_ctx->wait_frame_count = cur_frame;
+	} else {
+		if (cur_frame + 1 > optc1->max_frame_count)
+			pipe_ctx->wait_frame_count = cur_frame + 1 - optc1->max_frame_count;
+		else
+			pipe_ctx->wait_frame_count = cur_frame + 1;
+	}
+
+	pipe_ctx->wait_is_required = true;
+}
+
 void dcn10_lock_all_pipes(struct dc *dc,
 	struct dc_state *context,
 	bool lock)
@@ -201,6 +323,35 @@ static void dcn10_log_hubp_states(struct dc *dc, void *log_ctx)
 			DTN_INFO_MICRO_SEC(s->min_ttu_vblank);
 			DTN_INFO_MICRO_SEC(s->qos_level_low_wm);
 			DTN_INFO_MICRO_SEC(s->qos_level_high_wm);
+			DTN_INFO("\n");
+		}
+	}
+
+	DTN_INFO("\n=======HUBP FL======\n");
+	DTN_INFO(
+		"HUBP FL:  Enabled  Done  adr_mode  width  tmz  xbar_sel_R  xbar_sel_G  xbar_sel_B  adr_hi  adr_low  REFCYC  Bias   Scale       Mode      Format\n");
+	for (i = 0; i < pool->pipe_count; i++) {
+		struct dcn_hubp_state *s = &(TO_DCN10_HUBP(pool->hubps[i])->state);
+		struct dcn_fl_regs_st *fl_regs = &s->fl_regs;
+
+		if (!s->blank_en) {
+			DTN_INFO("[%2d]:  %5xh  %6xh  %5d  %6d  %8xh  %2xh  %6xh  %6d  %8d  %8d  %7d  %8xh %5x %5x %5x",
+					pool->hubps[i]->inst,
+					fl_regs->lut_enable,
+					fl_regs->lut_done,
+					fl_regs->lut_addr_mode,
+					fl_regs->lut_width,
+					fl_regs->lut_tmz,
+					fl_regs->lut_crossbar_sel_r,
+					fl_regs->lut_crossbar_sel_g,
+					fl_regs->lut_crossbar_sel_b,
+					fl_regs->lut_addr_hi,
+					fl_regs->lut_addr_lo,
+					fl_regs->refcyc_3dlut_group,
+					fl_regs->lut_fl_bias,
+					fl_regs->lut_fl_scale,
+					fl_regs->lut_fl_mode,
+					fl_regs->lut_fl_format);
 			DTN_INFO("\n");
 		}
 	}
@@ -389,6 +540,36 @@ static void dcn10_log_color_state(struct dc *dc,
 		 dc->caps.color.mpc.num_3dluts,
 		 dc->caps.color.mpc.ogam_ram,
 		 dc->caps.color.mpc.ocsc);
+	DTN_INFO("===== MPC RMCM 3DLUT =====\n");
+	DTN_INFO("MPCC:  SIZE  MODE  MODE_CUR  RD_SEL  30BIT_EN  WR_EN_MASK  RAM_SEL  OUT_NORM_FACTOR	FL_SEL	OUT_OFFSET	OUT_SCALE	FL_DONE	SOFT_UNDERFLOW	HARD_UNDERFLOW MEM_PWR_ST	FORCE	DIS	MODE\n");
+	for (i = 0; i < pool->mpcc_count; i++) {
+		struct mpcc_state s = {0};
+
+		pool->mpc->funcs->read_mpcc_state(pool->mpc, i, &s);
+		if (s.opp_id != 0xf)
+			DTN_INFO("[%2d]:  %4xh  %4xh  %6xh  %4x  %4x  %4x  %4x  %4x %4xh  %4xh  %6xh  %4x  %4x  %4x  %4x  %4x  %4x  %4x\n",
+				i, s.rmcm_regs.rmcm_3dlut_size, s.rmcm_regs.rmcm_3dlut_mode, s.rmcm_regs.rmcm_3dlut_mode_cur,
+				s.rmcm_regs.rmcm_3dlut_read_sel, s.rmcm_regs.rmcm_3dlut_30bit_en, s.rmcm_regs.rmcm_3dlut_wr_en_mask,
+				s.rmcm_regs.rmcm_3dlut_ram_sel, s.rmcm_regs.rmcm_3dlut_out_norm_factor, s.rmcm_regs.rmcm_3dlut_fl_sel,
+				s.rmcm_regs.rmcm_3dlut_out_offset_r, s.rmcm_regs.rmcm_3dlut_out_scale_r, s.rmcm_regs.rmcm_3dlut_fl_done,
+				s.rmcm_regs.rmcm_3dlut_fl_soft_underflow, s.rmcm_regs.rmcm_3dlut_fl_hard_underflow, s.rmcm_regs.rmcm_3dlut_mem_pwr_state,
+				s.rmcm_regs.rmcm_3dlut_mem_pwr_force, s.rmcm_regs.rmcm_3dlut_mem_pwr_dis, s.rmcm_regs.rmcm_3dlut_mem_pwr_mode);
+	}
+	DTN_INFO("\n");
+	DTN_INFO("===== MPC RMCM Shaper =====\n");
+	DTN_INFO("MPCC:  CNTL  LUT_MODE  MODE_CUR  WR_EN_MASK  WR_SEL  OFFSET  SCALE  START_B	START_SEG_B	END_B	END_BASE_B	MEM_PWR_ST	FORCE	DIS	MODE\n");
+	for (i = 0; i < pool->mpcc_count; i++) {
+		struct mpcc_state s = {0};
+
+		pool->mpc->funcs->read_mpcc_state(pool->mpc, i, &s);
+		if (s.opp_id != 0xf)
+			DTN_INFO("[%2d]:  %4xh  %4xh  %6xh  %4x  %4x  %4x  %4x  %4x %4xh  %4xh  %6xh  %4x  %4x  %4x  %4x\n",
+				i, s.rmcm_regs.rmcm_cntl, s.rmcm_regs.rmcm_shaper_lut_mode, s.rmcm_regs.rmcm_shaper_mode_cur,
+				s.rmcm_regs.rmcm_shaper_lut_write_en_mask, s.rmcm_regs.rmcm_shaper_lut_write_sel, s.rmcm_regs.rmcm_shaper_offset_b,
+				s.rmcm_regs.rmcm_shaper_scale_b, s.rmcm_regs.rmcm_shaper_rama_exp_region_start_b, s.rmcm_regs.rmcm_shaper_rama_exp_region_start_seg_b,
+				s.rmcm_regs.rmcm_shaper_rama_exp_region_end_b, s.rmcm_regs.rmcm_shaper_rama_exp_region_end_base_b, s.rmcm_regs.rmcm_shaper_mem_pwr_state,
+				s.rmcm_regs.rmcm_shaper_mem_pwr_force, s.rmcm_regs.rmcm_shaper_mem_pwr_dis, s.rmcm_regs.rmcm_shaper_mem_pwr_mode);
+	}
 }
 
 void dcn10_log_hw_state(struct dc *dc,
@@ -2664,7 +2845,6 @@ void dcn10_update_visual_confirm_color(struct dc *dc,
 	struct mpc *mpc = dc->res_pool->mpc;
 
 	if (mpc->funcs->set_bg_color) {
-		memcpy(&pipe_ctx->plane_state->visual_confirm_color, &(pipe_ctx->visual_confirm_color), sizeof(struct tg_color));
 		mpc->funcs->set_bg_color(mpc, &(pipe_ctx->visual_confirm_color), mpcc_id);
 	}
 }

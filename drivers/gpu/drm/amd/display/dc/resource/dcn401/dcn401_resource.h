@@ -22,9 +22,9 @@ struct resource_pool *dcn401_create_resource_pool(
 
 enum dc_status dcn401_patch_unknown_plane_state(struct dc_plane_state *plane_state);
 
-bool dcn401_validate_bandwidth(struct dc *dc,
+enum dc_status dcn401_validate_bandwidth(struct dc *dc,
 		struct dc_state *context,
-		bool fast_validate);
+		enum dc_validate_mode validate_mode);
 
 void dcn401_prepare_mcache_programming(struct dc *dc, struct dc_state *context);
 

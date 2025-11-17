@@ -840,7 +840,7 @@ panthor_queue_put_syncwait_obj(struct panthor_queue *queue)
 	if (queue->syncwait.kmap) {
 		struct iosys_map map = IOSYS_MAP_INIT_VADDR(queue->syncwait.kmap);
 
-		drm_gem_vunmap_unlocked(queue->syncwait.obj, &map);
+		drm_gem_vunmap(queue->syncwait.obj, &map);
 		queue->syncwait.kmap = NULL;
 	}
 
@@ -866,7 +866,7 @@ panthor_queue_get_syncwait_obj(struct panthor_group *group, struct panthor_queue
 		goto err_put_syncwait_obj;
 
 	queue->syncwait.obj = &bo->base.base;
-	ret = drm_gem_vmap_unlocked(queue->syncwait.obj, &map);
+	ret = drm_gem_vmap(queue->syncwait.obj, &map);
 	if (drm_WARN_ON(&ptdev->base, ret))
 		goto err_put_syncwait_obj;
 
@@ -886,8 +886,7 @@ static void group_free_queue(struct panthor_group *group, struct panthor_queue *
 	if (IS_ERR_OR_NULL(queue))
 		return;
 
-	if (queue->entity.fence_context)
-		drm_sched_entity_destroy(&queue->entity);
+	drm_sched_entity_destroy(&queue->entity);
 
 	if (queue->scheduler.ops)
 		drm_sched_fini(&queue->scheduler);
@@ -3241,7 +3240,7 @@ queue_timedout_job(struct drm_sched_job *sched_job)
 
 	queue_start(queue);
 
-	return DRM_GPU_SCHED_STAT_NOMINAL;
+	return DRM_GPU_SCHED_STAT_RESET;
 }
 
 static void queue_free_job(struct drm_sched_job *sched_job)
@@ -3332,7 +3331,8 @@ group_create_queue(struct panthor_group *group,
 						  DRM_PANTHOR_BO_NO_MMAP,
 						  DRM_PANTHOR_VM_BIND_OP_MAP_NOEXEC |
 						  DRM_PANTHOR_VM_BIND_OP_MAP_UNCACHED,
-						  PANTHOR_VM_KERNEL_AUTO_VA);
+						  PANTHOR_VM_KERNEL_AUTO_VA,
+						  "CS ring buffer");
 	if (IS_ERR(queue->ringbuf)) {
 		ret = PTR_ERR(queue->ringbuf);
 		goto err_free_queue;
@@ -3362,7 +3362,8 @@ group_create_queue(struct panthor_group *group,
 					 DRM_PANTHOR_BO_NO_MMAP,
 					 DRM_PANTHOR_VM_BIND_OP_MAP_NOEXEC |
 					 DRM_PANTHOR_VM_BIND_OP_MAP_UNCACHED,
-					 PANTHOR_VM_KERNEL_AUTO_VA);
+					 PANTHOR_VM_KERNEL_AUTO_VA,
+					 "Group job stats");
 
 	if (IS_ERR(queue->profiling.slots)) {
 		ret = PTR_ERR(queue->profiling.slots);
@@ -3493,7 +3494,8 @@ int panthor_group_create(struct panthor_file *pfile,
 						   DRM_PANTHOR_BO_NO_MMAP,
 						   DRM_PANTHOR_VM_BIND_OP_MAP_NOEXEC |
 						   DRM_PANTHOR_VM_BIND_OP_MAP_UNCACHED,
-						   PANTHOR_VM_KERNEL_AUTO_VA);
+						   PANTHOR_VM_KERNEL_AUTO_VA,
+						   "Group sync objects");
 	if (IS_ERR(group->syncobjs)) {
 		ret = PTR_ERR(group->syncobjs);
 		goto err_put_group;
@@ -3554,11 +3556,6 @@ int panthor_group_destroy(struct panthor_file *pfile, u32 group_handle)
 	group = xa_erase(&gpool->xa, group_handle);
 	if (!group)
 		return -EINVAL;
-
-	for (u32 i = 0; i < group->queue_count; i++) {
-		if (group->queues[i])
-			drm_sched_entity_destroy(&group->queues[i]->entity);
-	}
 
 	mutex_lock(&sched->reset.lock);
 	mutex_lock(&sched->lock);
@@ -3729,7 +3726,8 @@ struct panthor_vm *panthor_job_vm(struct drm_sched_job *sched_job)
 struct drm_sched_job *
 panthor_job_create(struct panthor_file *pfile,
 		   u16 group_handle,
-		   const struct drm_panthor_queue_submit *qsubmit)
+		   const struct drm_panthor_queue_submit *qsubmit,
+		   u64 drm_client_id)
 {
 	struct panthor_group_pool *gpool = pfile->groups;
 	struct panthor_job *job;
@@ -3801,7 +3799,7 @@ panthor_job_create(struct panthor_file *pfile,
 
 	ret = drm_sched_job_init(&job->base,
 				 &job->group->queues[job->queue_idx]->entity,
-				 credits, job->group);
+				 credits, job->group, drm_client_id);
 	if (ret)
 		goto err_put_job;
 

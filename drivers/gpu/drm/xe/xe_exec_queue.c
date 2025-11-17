@@ -114,7 +114,6 @@ static struct xe_exec_queue *__xe_exec_queue_alloc(struct xe_device *xe,
 
 static int __xe_exec_queue_init(struct xe_exec_queue *q)
 {
-	struct xe_vm *vm = q->vm;
 	int i, err;
 	u32 flags = 0;
 
@@ -132,22 +131,13 @@ static int __xe_exec_queue_init(struct xe_exec_queue *q)
 			flags |= XE_LRC_CREATE_RUNALONE;
 	}
 
-	if (vm) {
-		err = xe_vm_lock(vm, true);
-		if (err)
-			return err;
-	}
-
 	for (i = 0; i < q->width; ++i) {
 		q->lrc[i] = xe_lrc_create(q->hwe, q->vm, SZ_16K, q->msix_vec, flags);
 		if (IS_ERR(q->lrc[i])) {
 			err = PTR_ERR(q->lrc[i]);
-			goto err_unlock;
+			goto err_lrc;
 		}
 	}
-
-	if (vm)
-		xe_vm_unlock(vm);
 
 	err = q->ops->init(q);
 	if (err)
@@ -155,13 +145,20 @@ static int __xe_exec_queue_init(struct xe_exec_queue *q)
 
 	return 0;
 
-err_unlock:
-	if (vm)
-		xe_vm_unlock(vm);
 err_lrc:
 	for (i = i - 1; i >= 0; --i)
 		xe_lrc_put(q->lrc[i]);
 	return err;
+}
+
+static void __xe_exec_queue_fini(struct xe_exec_queue *q)
+{
+	int i;
+
+	q->ops->fini(q);
+
+	for (i = 0; i < q->width; ++i)
+		xe_lrc_put(q->lrc[i]);
 }
 
 struct xe_exec_queue *xe_exec_queue_create(struct xe_device *xe, struct xe_vm *vm,
@@ -194,11 +191,13 @@ struct xe_exec_queue *xe_exec_queue_create(struct xe_device *xe, struct xe_vm *v
 	if (xe_exec_queue_uses_pxp(q)) {
 		err = xe_pxp_exec_queue_add(xe->pxp, q);
 		if (err)
-			goto err_post_alloc;
+			goto err_post_init;
 	}
 
 	return q;
 
+err_post_init:
+	__xe_exec_queue_fini(q);
 err_post_alloc:
 	__xe_exec_queue_free(q);
 	return ERR_PTR(err);
@@ -296,13 +295,11 @@ void xe_exec_queue_destroy(struct kref *ref)
 			xe_exec_queue_put(eq);
 	}
 
-	q->ops->fini(q);
+	q->ops->destroy(q);
 }
 
 void xe_exec_queue_fini(struct xe_exec_queue *q)
 {
-	int i;
-
 	/*
 	 * Before releasing our ref to lrc and xef, accumulate our run ticks
 	 * and wakeup any waiters.
@@ -311,9 +308,7 @@ void xe_exec_queue_fini(struct xe_exec_queue *q)
 	if (q->xef && atomic_dec_and_test(&q->xef->exec_queue.pending_removal))
 		wake_up_var(&q->xef->exec_queue.pending_removal);
 
-	for (i = 0; i < q->width; ++i)
-		xe_lrc_put(q->lrc[i]);
-
+	__xe_exec_queue_fini(q);
 	__xe_exec_queue_free(q);
 }
 
@@ -623,7 +618,7 @@ int xe_exec_queue_create_ioctl(struct drm_device *dev, void *data,
 	if (XE_IOCTL_DBG(xe, err))
 		return -EFAULT;
 
-	if (XE_IOCTL_DBG(xe, eci[0].gt_id >= xe->info.gt_count))
+	if (XE_IOCTL_DBG(xe, !xe_device_get_gt(xe, eci[0].gt_id)))
 		return -EINVAL;
 
 	if (args->flags & DRM_XE_EXEC_QUEUE_LOW_LATENCY_HINT)

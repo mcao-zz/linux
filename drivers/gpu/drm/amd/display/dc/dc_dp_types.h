@@ -159,6 +159,16 @@ struct dc_link_settings {
 	uint8_t link_rate_set;
 };
 
+struct dc_tunnel_settings {
+	bool should_enable_dp_tunneling;
+	bool should_use_dp_bw_allocation;
+	uint8_t cm_id;
+	uint8_t group_id;
+	uint32_t bw_granularity;
+	uint32_t estimated_bw;
+	uint32_t allocated_bw;
+};
+
 union dc_dp_ffe_preset {
 	struct {
 		uint8_t level		: 4;
@@ -943,10 +953,30 @@ union dpia_info {
 	uint8_t raw;
 };
 
+/* DPCD[0xE0020] USB4_DRIVER_BW_CAPABILITY register. */
+union usb4_driver_bw_cap {
+	struct {
+		uint8_t rsvd :7;
+		uint8_t driver_bw_alloc_support :1;
+	} bits;
+	uint8_t raw;
+};
+
+/* DPCD[0xE0021] DP_IN_ADAPTER_TUNNEL_INFORMATION register. */
+union dpia_tunnel_info {
+	struct {
+		uint8_t group_id :3;
+		uint8_t rsvd :5;
+	} bits;
+	uint8_t raw;
+};
+
 /* DP Tunneling over USB4 */
 struct dpcd_usb4_dp_tunneling_info {
 	union dp_tun_cap_support dp_tun_cap;
 	union dpia_info dpia_info;
+	union usb4_driver_bw_cap driver_bw_cap;
+	union dpia_tunnel_info dpia_tunnel_info;
 	uint8_t usb4_driver_id;
 	uint8_t usb4_topology_id[DPCD_USB4_TOPOLOGY_ID_LEN];
 };
@@ -1485,6 +1515,12 @@ struct dp_trace {
 # endif
 # ifndef DP_TUNNELING_BW_ALLOC_CAP_CHANGED
 # define DP_TUNNELING_BW_ALLOC_CAP_CHANGED		(1 << 3)
+# endif
+# ifndef DPTX_BW_ALLOC_UNMASK_IRQ
+# define DPTX_BW_ALLOC_UNMASK_IRQ			(1 << 6)
+# endif
+# ifndef DPTX_BW_ALLOC_MODE_ENABLE
+# define DPTX_BW_ALLOC_MODE_ENABLE			(1 << 7)
 # endif
 
 #endif /* DC_DP_TYPES_H */

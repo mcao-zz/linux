@@ -14,20 +14,28 @@
 #include <linux/random.h>
 
 #include <drm/display/drm_hdcp_helper.h>
+#include <drm/drm_print.h>
 #include <drm/intel/i915_component.h>
 
-#include "i915_drv.h"
 #include "i915_reg.h"
+#include "i915_utils.h"
 #include "intel_connector.h"
 #include "intel_de.h"
 #include "intel_display_power.h"
 #include "intel_display_power_well.h"
+#include "intel_display_regs.h"
+#include "intel_display_rpm.h"
 #include "intel_display_types.h"
+#include "intel_dp_mst.h"
 #include "intel_hdcp.h"
 #include "intel_hdcp_gsc.h"
+#include "intel_hdcp_gsc_message.h"
 #include "intel_hdcp_regs.h"
 #include "intel_hdcp_shim.h"
 #include "intel_pcode.h"
+#include "intel_step.h"
+
+#define USE_HDCP_GSC(__display)		(DISPLAY_VER(__display) >= 14)
 
 #define KEY_LOAD_TRIES	5
 #define HDCP2_LC_RETRY_CNT			3
@@ -136,7 +144,7 @@ intel_hdcp_required_content_stream(struct intel_atomic_state *state,
 		data->k++;
 
 		/* if there is only one active stream */
-		if (dig_port->dp.mst.active_links <= 1)
+		if (intel_dp_mst_active_streams(&dig_port->dp) <= 1)
 			break;
 	}
 	drm_connector_list_iter_end(&conn_iter);
@@ -248,8 +256,8 @@ static bool intel_hdcp2_prerequisite(struct intel_connector *connector)
 		return false;
 
 	/* If MTL+ make sure gsc is loaded and proxy is setup */
-	if (intel_hdcp_gsc_cs_required(display)) {
-		if (!intel_hdcp_gsc_check_status(display))
+	if (USE_HDCP_GSC(display)) {
+		if (!intel_hdcp_gsc_check_status(display->drm))
 			return false;
 	}
 
@@ -334,9 +342,7 @@ static int intel_hdcp_poll_ksv_fifo(struct intel_digital_port *dig_port,
 
 static bool hdcp_key_loadable(struct intel_display *display)
 {
-	struct drm_i915_private *i915 = to_i915(display->drm);
 	enum i915_power_well_id id;
-	intel_wakeref_t wakeref;
 	bool enabled = false;
 
 	/*
@@ -349,7 +355,7 @@ static bool hdcp_key_loadable(struct intel_display *display)
 		id = SKL_DISP_PW_1;
 
 	/* PG1 (power well #1) needs to be enabled */
-	with_intel_runtime_pm(&i915->runtime_pm, wakeref)
+	with_intel_display_rpm(display)
 		enabled = intel_display_power_well_is_enabled(display, id);
 
 	/*
@@ -370,7 +376,6 @@ static void intel_hdcp_clear_keys(struct intel_display *display)
 
 static int intel_hdcp_load_keys(struct intel_display *display)
 {
-	struct drm_i915_private *i915 = to_i915(display->drm);
 	int ret;
 	u32 val;
 
@@ -395,7 +400,7 @@ static int intel_hdcp_load_keys(struct intel_display *display)
 	 * Mailbox interface.
 	 */
 	if (DISPLAY_VER(display) == 9 && !display->platform.broxton) {
-		ret = snb_pcode_write(&i915->uncore, SKL_PCODE_LOAD_HDCP_KEYS, 1);
+		ret = intel_pcode_write(display->drm, SKL_PCODE_LOAD_HDCP_KEYS, 1);
 		if (ret) {
 			drm_err(display->drm,
 				"Failed to initiate HDCP key load (%d)\n",
@@ -1085,7 +1090,6 @@ static void intel_hdcp_update_value(struct intel_connector *connector,
 				    u64 value, bool update_property)
 {
 	struct intel_display *display = to_intel_display(connector);
-	struct drm_i915_private *i915 = to_i915(display->drm);
 	struct intel_digital_port *dig_port = intel_attached_dig_port(connector);
 	struct intel_hdcp *hdcp = &connector->hdcp;
 
@@ -1106,7 +1110,7 @@ static void intel_hdcp_update_value(struct intel_connector *connector,
 	hdcp->value = value;
 	if (update_property) {
 		drm_connector_get(&connector->base);
-		if (!queue_work(i915->unordered_wq, &hdcp->prop_work))
+		if (!queue_work(display->wq.unordered, &hdcp->prop_work))
 			drm_connector_put(&connector->base);
 	}
 }
@@ -2233,16 +2237,15 @@ static void intel_hdcp_check_work(struct work_struct *work)
 					       check_work);
 	struct intel_connector *connector = intel_hdcp_to_connector(hdcp);
 	struct intel_display *display = to_intel_display(connector);
-	struct drm_i915_private *i915 = to_i915(display->drm);
 
 	if (drm_connector_is_unregistered(&connector->base))
 		return;
 
 	if (!intel_hdcp2_check_link(connector))
-		queue_delayed_work(i915->unordered_wq, &hdcp->check_work,
+		queue_delayed_work(display->wq.unordered, &hdcp->check_work,
 				   DRM_HDCP2_CHECK_PERIOD_MS);
 	else if (!intel_hdcp_check_link(connector))
-		queue_delayed_work(i915->unordered_wq, &hdcp->check_work,
+		queue_delayed_work(display->wq.unordered, &hdcp->check_work,
 				   DRM_HDCP_CHECK_PERIOD_MS);
 }
 
@@ -2339,7 +2342,7 @@ static int initialize_hdcp_port_data(struct intel_connector *connector,
 
 static bool is_hdcp2_supported(struct intel_display *display)
 {
-	if (intel_hdcp_gsc_cs_required(display))
+	if (USE_HDCP_GSC(display))
 		return true;
 
 	if (!IS_ENABLED(CONFIG_INTEL_MEI_HDCP))
@@ -2363,7 +2366,7 @@ void intel_hdcp_component_init(struct intel_display *display)
 
 	display->hdcp.comp_added = true;
 	mutex_unlock(&display->hdcp.hdcp_mutex);
-	if (intel_hdcp_gsc_cs_required(display))
+	if (USE_HDCP_GSC(display))
 		ret = intel_hdcp_gsc_init(display);
 	else
 		ret = component_add_typed(display->drm->dev, &i915_hdcp_ops,
@@ -2433,7 +2436,6 @@ static int _intel_hdcp_enable(struct intel_atomic_state *state,
 			      const struct drm_connector_state *conn_state)
 {
 	struct intel_display *display = to_intel_display(encoder);
-	struct drm_i915_private *i915 = to_i915(display->drm);
 	struct intel_connector *connector =
 		to_intel_connector(conn_state->connector);
 	struct intel_digital_port *dig_port = intel_attached_dig_port(connector);
@@ -2492,7 +2494,7 @@ static int _intel_hdcp_enable(struct intel_atomic_state *state,
 	}
 
 	if (!ret) {
-		queue_delayed_work(i915->unordered_wq, &hdcp->check_work,
+		queue_delayed_work(display->wq.unordered, &hdcp->check_work,
 				   check_link_interval);
 		intel_hdcp_update_value(connector,
 					DRM_MODE_CONTENT_PROTECTION_ENABLED,
@@ -2563,7 +2565,7 @@ void intel_hdcp_update_pipe(struct intel_atomic_state *state,
 				to_intel_connector(conn_state->connector);
 	struct intel_hdcp *hdcp = &connector->hdcp;
 	bool content_protection_type_changed, desired_and_not_enabled = false;
-	struct drm_i915_private *i915 = to_i915(connector->base.dev);
+	struct intel_display *display = to_intel_display(connector);
 
 	if (!connector->hdcp.shim)
 		return;
@@ -2590,7 +2592,7 @@ void intel_hdcp_update_pipe(struct intel_atomic_state *state,
 		mutex_lock(&hdcp->mutex);
 		hdcp->value = DRM_MODE_CONTENT_PROTECTION_DESIRED;
 		drm_connector_get(&connector->base);
-		if (!queue_work(i915->unordered_wq, &hdcp->prop_work))
+		if (!queue_work(display->wq.unordered, &hdcp->prop_work))
 			drm_connector_put(&connector->base);
 		mutex_unlock(&hdcp->mutex);
 	}
@@ -2608,7 +2610,7 @@ void intel_hdcp_update_pipe(struct intel_atomic_state *state,
 		 */
 		if (!desired_and_not_enabled && !content_protection_type_changed) {
 			drm_connector_get(&connector->base);
-			if (!queue_work(i915->unordered_wq, &hdcp->prop_work))
+			if (!queue_work(display->wq.unordered, &hdcp->prop_work))
 				drm_connector_put(&connector->base);
 
 		}
@@ -2638,7 +2640,7 @@ void intel_hdcp_component_fini(struct intel_display *display)
 	display->hdcp.comp_added = false;
 	mutex_unlock(&display->hdcp.hdcp_mutex);
 
-	if (intel_hdcp_gsc_cs_required(display))
+	if (USE_HDCP_GSC(display))
 		intel_hdcp_gsc_fini(display);
 	else
 		component_del(display->drm->dev, &i915_hdcp_ops);
@@ -2732,7 +2734,6 @@ void intel_hdcp_handle_cp_irq(struct intel_connector *connector)
 {
 	struct intel_hdcp *hdcp = &connector->hdcp;
 	struct intel_display *display = to_intel_display(connector);
-	struct drm_i915_private *i915 = to_i915(display->drm);
 
 	if (!hdcp->shim)
 		return;
@@ -2740,7 +2741,7 @@ void intel_hdcp_handle_cp_irq(struct intel_connector *connector)
 	atomic_inc(&connector->hdcp.cp_irq_count);
 	wake_up_all(&connector->hdcp.cp_irq_queue);
 
-	queue_delayed_work(i915->unordered_wq, &hdcp->check_work, 0);
+	queue_delayed_work(display->wq.unordered, &hdcp->check_work, 0);
 }
 
 static void __intel_hdcp_info(struct seq_file *m, struct intel_connector *connector,

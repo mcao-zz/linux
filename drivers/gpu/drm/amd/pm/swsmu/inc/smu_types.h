@@ -277,6 +277,7 @@
 	__SMU_DUMMY_MAP(MALLPowerController), \
 	__SMU_DUMMY_MAP(MALLPowerState), \
 	__SMU_DUMMY_MAP(ResetSDMA), \
+	__SMU_DUMMY_MAP(ResetVCN), \
 	__SMU_DUMMY_MAP(GetStaticMetricsTable),
 
 #undef __SMU_DUMMY_MAP
@@ -304,6 +305,8 @@ enum smu_clk_type {
 	SMU_MCLK,
 	SMU_PCIE,
 	SMU_LCLK,
+	SMU_ISPICLK,
+	SMU_ISPXCLK,
 	SMU_OD_CCLK,
 	SMU_OD_SCLK,
 	SMU_OD_MCLK,

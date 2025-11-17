@@ -2,6 +2,8 @@
 //
 // Copyright 2024 Advanced Micro Devices, Inc.
 
+
+#include "os_types.h"
 #include "dm_services.h"
 #include "basics/dc_common.h"
 #include "dm_helpers.h"
@@ -49,7 +51,7 @@
 #define FN(reg_name, field_name) \
 	hws->shifts->field_name, hws->masks->field_name
 
-static void dcn401_initialize_min_clocks(struct dc *dc)
+void dcn401_initialize_min_clocks(struct dc *dc)
 {
 	struct dc_clocks *clocks = &dc->current_state->bw_ctx.bw.dcn.clk;
 
@@ -143,13 +145,8 @@ void dcn401_init_hw(struct dc *dc)
 		dc->clk_mgr->funcs->init_clocks(dc->clk_mgr);
 
 		// mark dcmode limits present if any clock has distinct AC and DC values from SMU
-		dc->caps.dcmode_power_limits_present =
-				(dc->clk_mgr->bw_params->clk_table.num_entries_per_clk.num_dcfclk_levels && dc->clk_mgr->bw_params->dc_mode_limit.dcfclk_mhz) ||
-				(dc->clk_mgr->bw_params->clk_table.num_entries_per_clk.num_dispclk_levels && dc->clk_mgr->bw_params->dc_mode_limit.dispclk_mhz) ||
-				(dc->clk_mgr->bw_params->clk_table.num_entries_per_clk.num_dtbclk_levels && dc->clk_mgr->bw_params->dc_mode_limit.dtbclk_mhz) ||
-				(dc->clk_mgr->bw_params->clk_table.num_entries_per_clk.num_fclk_levels && dc->clk_mgr->bw_params->dc_mode_limit.fclk_mhz) ||
-				(dc->clk_mgr->bw_params->clk_table.num_entries_per_clk.num_memclk_levels && dc->clk_mgr->bw_params->dc_mode_limit.memclk_mhz) ||
-				(dc->clk_mgr->bw_params->clk_table.num_entries_per_clk.num_socclk_levels && dc->clk_mgr->bw_params->dc_mode_limit.socclk_mhz);
+		dc->caps.dcmode_power_limits_present = dc->clk_mgr->funcs->is_dc_mode_present &&
+				dc->clk_mgr->funcs->is_dc_mode_present(dc->clk_mgr);
 	}
 
 	// Initialize the dccg
@@ -407,17 +404,16 @@ void dcn401_populate_mcm_luts(struct dc *dc,
 	struct mpc *mpc = dc->res_pool->mpc;
 	union mcm_lut_params m_lut_params;
 	enum dc_cm2_transfer_func_source lut3d_src = mcm_luts.lut3d_data.lut3d_src;
-	enum hubp_3dlut_fl_format format;
+	enum hubp_3dlut_fl_format format = 0;
 	enum hubp_3dlut_fl_mode mode;
-	enum hubp_3dlut_fl_width width;
+	enum hubp_3dlut_fl_width width = 0;
 	enum hubp_3dlut_fl_addressing_mode addr_mode;
-	enum hubp_3dlut_fl_crossbar_bit_slice crossbar_bit_slice_y_g;
-	enum hubp_3dlut_fl_crossbar_bit_slice crossbar_bit_slice_cb_b;
-	enum hubp_3dlut_fl_crossbar_bit_slice crossbar_bit_slice_cr_r;
+	enum hubp_3dlut_fl_crossbar_bit_slice crossbar_bit_slice_y_g = 0;
+	enum hubp_3dlut_fl_crossbar_bit_slice crossbar_bit_slice_cb_b = 0;
+	enum hubp_3dlut_fl_crossbar_bit_slice crossbar_bit_slice_cr_r = 0;
 	enum MCM_LUT_XABLE shaper_xable = MCM_LUT_DISABLE;
 	enum MCM_LUT_XABLE lut3d_xable = MCM_LUT_DISABLE;
 	enum MCM_LUT_XABLE lut1d_xable = MCM_LUT_DISABLE;
-	bool is_17x17x17 = true;
 	bool rval;
 
 	dcn401_get_mcm_lut_xable_from_pipe_ctx(dc, pipe_ctx, &shaper_xable, &lut3d_xable, &lut1d_xable);
@@ -442,7 +438,7 @@ void dcn401_populate_mcm_luts(struct dc *dc,
 	}
 
 	/* Shaper */
-	if (mcm_luts.shaper) {
+	if (mcm_luts.shaper && mcm_luts.lut3d_data.mpc_3dlut_enable) {
 		memset(&m_lut_params, 0, sizeof(m_lut_params));
 		if (mcm_luts.shaper->type == TF_TYPE_HWPWL)
 			m_lut_params.pwl = &mcm_luts.shaper->pwl;
@@ -454,11 +450,11 @@ void dcn401_populate_mcm_luts(struct dc *dc,
 			m_lut_params.pwl = rval ? &dpp_base->regamma_params : NULL;
 		}
 		if (m_lut_params.pwl) {
-			if (mpc->funcs->populate_lut)
-				mpc->funcs->populate_lut(mpc, MCM_LUT_SHAPER, m_lut_params, lut_bank_a, mpcc_id);
+			if (mpc->funcs->mcm.populate_lut)
+				mpc->funcs->mcm.populate_lut(mpc, m_lut_params, lut_bank_a, mpcc_id);
+			if (mpc->funcs->program_lut_mode)
+				mpc->funcs->program_lut_mode(mpc, MCM_LUT_SHAPER, MCM_LUT_ENABLE, lut_bank_a, mpcc_id);
 		}
-		if (mpc->funcs->program_lut_mode)
-			mpc->funcs->program_lut_mode(mpc, MCM_LUT_SHAPER, shaper_xable, lut_bank_a, mpcc_id);
 	}
 
 	/* 3DLUT */
@@ -467,6 +463,7 @@ void dcn401_populate_mcm_luts(struct dc *dc,
 		memset(&m_lut_params, 0, sizeof(m_lut_params));
 		if (hubp->funcs->hubp_enable_3dlut_fl)
 			hubp->funcs->hubp_enable_3dlut_fl(hubp, false);
+
 		if (mcm_luts.lut3d_data.lut3d_func && mcm_luts.lut3d_data.lut3d_func->state.bits.initialized) {
 			m_lut_params.lut3d = &mcm_luts.lut3d_data.lut3d_func->lut_3d;
 			if (mpc->funcs->populate_lut)
@@ -476,16 +473,35 @@ void dcn401_populate_mcm_luts(struct dc *dc,
 						mpcc_id);
 		}
 		break;
-	case DC_CM2_TRANSFER_FUNC_SOURCE_VIDMEM:
+		case DC_CM2_TRANSFER_FUNC_SOURCE_VIDMEM:
+		switch (mcm_luts.lut3d_data.gpu_mem_params.size) {
+		case DC_CM2_GPU_MEM_SIZE_171717:
+			width = hubp_3dlut_fl_width_17;
+			break;
+		case DC_CM2_GPU_MEM_SIZE_TRANSFORMED:
+			width = hubp_3dlut_fl_width_transformed;
+			break;
+		default:
+			//TODO: handle default case
+			break;
+		}
+
+		//check for support
+		if (mpc->funcs->mcm.is_config_supported &&
+			!mpc->funcs->mcm.is_config_supported(width))
+			break;
 
 		if (mpc->funcs->program_lut_read_write_control)
 			mpc->funcs->program_lut_read_write_control(mpc, MCM_LUT_3DLUT, lut_bank_a, mpcc_id);
 		if (mpc->funcs->program_lut_mode)
 			mpc->funcs->program_lut_mode(mpc, MCM_LUT_3DLUT, lut3d_xable, lut_bank_a, mpcc_id);
-		if (mpc->funcs->program_3dlut_size)
-			mpc->funcs->program_3dlut_size(mpc, is_17x17x17, mpcc_id);
+
 		if (hubp->funcs->hubp_program_3dlut_fl_addr)
 			hubp->funcs->hubp_program_3dlut_fl_addr(hubp, mcm_luts.lut3d_data.gpu_mem_params.addr);
+
+		if (mpc->funcs->mcm.program_bit_depth)
+			mpc->funcs->mcm.program_bit_depth(mpc, mcm_luts.lut3d_data.gpu_mem_params.bit_depth, mpcc_id);
+
 		switch (mcm_luts.lut3d_data.gpu_mem_params.layout) {
 		case DC_CM2_GPU_MEM_LAYOUT_3D_SWIZZLE_LINEAR_RGB:
 			mode = hubp_3dlut_fl_mode_native_1;
@@ -512,7 +528,6 @@ void dcn401_populate_mcm_luts(struct dc *dc,
 
 		switch (mcm_luts.lut3d_data.gpu_mem_params.format_params.format) {
 		case DC_CM2_GPU_MEM_FORMAT_16161616_UNORM_12MSB:
-		default:
 			format = hubp_3dlut_fl_format_unorm_12msb_bitslice;
 			break;
 		case DC_CM2_GPU_MEM_FORMAT_16161616_UNORM_12LSB:
@@ -524,11 +539,19 @@ void dcn401_populate_mcm_luts(struct dc *dc,
 		}
 		if (hubp->funcs->hubp_program_3dlut_fl_format)
 			hubp->funcs->hubp_program_3dlut_fl_format(hubp, format);
-		if (hubp->funcs->hubp_update_3dlut_fl_bias_scale)
+		if (hubp->funcs->hubp_update_3dlut_fl_bias_scale &&
+				mpc->funcs->mcm.program_bias_scale) {
+			mpc->funcs->mcm.program_bias_scale(mpc,
+				mcm_luts.lut3d_data.gpu_mem_params.format_params.float_params.bias,
+				mcm_luts.lut3d_data.gpu_mem_params.format_params.float_params.scale,
+				mpcc_id);
 			hubp->funcs->hubp_update_3dlut_fl_bias_scale(hubp,
-					mcm_luts.lut3d_data.gpu_mem_params.format_params.float_params.bias,
-					mcm_luts.lut3d_data.gpu_mem_params.format_params.float_params.scale);
+						mcm_luts.lut3d_data.gpu_mem_params.format_params.float_params.bias,
+						mcm_luts.lut3d_data.gpu_mem_params.format_params.float_params.scale);
+		}
 
+		//navi 4x has a bug and r and blue are swapped and need to be worked around here in
+		//TODO: need to make a method for get_xbar per asic OR do the workaround in program_crossbar for 4x
 		switch (mcm_luts.lut3d_data.gpu_mem_params.component_order) {
 		case DC_CM2_GPU_MEM_PIXEL_COMPONENT_ORDER_RGBA:
 		default:
@@ -540,21 +563,16 @@ void dcn401_populate_mcm_luts(struct dc *dc,
 
 		if (hubp->funcs->hubp_program_3dlut_fl_crossbar)
 			hubp->funcs->hubp_program_3dlut_fl_crossbar(hubp,
+					crossbar_bit_slice_cr_r,
 					crossbar_bit_slice_y_g,
-					crossbar_bit_slice_cb_b,
-					crossbar_bit_slice_cr_r);
+					crossbar_bit_slice_cb_b);
 
-		switch (mcm_luts.lut3d_data.gpu_mem_params.size) {
-		case DC_CM2_GPU_MEM_SIZE_171717:
-		default:
-			width = hubp_3dlut_fl_width_17;
-			break;
-		case DC_CM2_GPU_MEM_SIZE_TRANSFORMED:
-			width = hubp_3dlut_fl_width_transformed;
-			break;
-		}
-		if (hubp->funcs->hubp_program_3dlut_fl_width)
-			hubp->funcs->hubp_program_3dlut_fl_width(hubp, width);
+		if (mpc->funcs->mcm.program_lut_read_write_control)
+			mpc->funcs->mcm.program_lut_read_write_control(mpc, MCM_LUT_3DLUT, lut_bank_a, true, mpcc_id);
+
+		if (mpc->funcs->mcm.program_3dlut_size)
+			mpc->funcs->mcm.program_3dlut_size(mpc, width, mpcc_id);
+
 		if (mpc->funcs->update_3dlut_fast_load_select)
 			mpc->funcs->update_3dlut_fast_load_select(mpc, mpcc_id, hubp->inst);
 
@@ -1989,14 +2007,6 @@ void dcn401_program_pipe(
 		pipe_ctx->plane_state->update_flags.bits.hdr_mult))
 		hws->funcs.set_hdr_multiplier(pipe_ctx);
 
-	if (hws->funcs.populate_mcm_luts) {
-		if (pipe_ctx->plane_state) {
-			hws->funcs.populate_mcm_luts(dc, pipe_ctx, pipe_ctx->plane_state->mcm_luts,
-				pipe_ctx->plane_state->lut_bank_a);
-			pipe_ctx->plane_state->lut_bank_a = !pipe_ctx->plane_state->lut_bank_a;
-		}
-	}
-
 	if (pipe_ctx->plane_state &&
 		(pipe_ctx->plane_state->update_flags.bits.in_transfer_func_change ||
 			pipe_ctx->plane_state->update_flags.bits.gamma_change ||
@@ -2009,10 +2019,8 @@ void dcn401_program_pipe(
 	 * updating on slave planes
 	 */
 	if (pipe_ctx->update_flags.bits.enable ||
-		pipe_ctx->update_flags.bits.plane_changed ||
-		pipe_ctx->stream->update_flags.bits.out_tf ||
-		(pipe_ctx->plane_state &&
-			pipe_ctx->plane_state->update_flags.bits.output_tf_change))
+	    pipe_ctx->update_flags.bits.plane_changed ||
+	    pipe_ctx->stream->update_flags.bits.out_tf)
 		hws->funcs.set_output_transfer_func(dc, pipe_ctx, pipe_ctx->stream);
 
 	/* If the pipe has been enabled or has a different opp, we
@@ -2081,7 +2089,7 @@ void dcn401_program_front_end_for_ctx(
 		for (i = 0; i < dc->res_pool->pipe_count; i++) {
 			pipe = &context->res_ctx.pipe_ctx[i];
 
-			if (!pipe->top_pipe && !pipe->prev_odm_pipe && pipe->plane_state) {
+			if (pipe->plane_state) {
 				if (pipe->plane_state->triplebuffer_flips)
 					BREAK_TO_DEBUGGER();
 
@@ -2371,7 +2379,7 @@ bool dcn401_update_bandwidth(
 	struct dce_hwseq *hws = dc->hwseq;
 
 	/* recalculate DML parameters */
-	if (!dc->res_pool->funcs->validate_bandwidth(dc, context, false))
+	if (dc->res_pool->funcs->validate_bandwidth(dc, context, DC_VALIDATE_MODE_AND_PROGRAMMING) != DC_OK)
 		return false;
 
 	/* apply updated bandwidth parameters */
@@ -2622,10 +2630,12 @@ void dcn401_plane_atomic_power_down(struct dc *dc,
 
 	DC_LOGGER_INIT(dc->ctx->logger);
 
-	REG_GET(DC_IP_REQUEST_CNTL, IP_REQUEST_EN, &org_ip_request_cntl);
-	if (org_ip_request_cntl == 0)
-		REG_SET(DC_IP_REQUEST_CNTL, 0,
-			IP_REQUEST_EN, 1);
+	if (REG(DC_IP_REQUEST_CNTL)) {
+		REG_GET(DC_IP_REQUEST_CNTL, IP_REQUEST_EN, &org_ip_request_cntl);
+		if (org_ip_request_cntl == 0)
+			REG_SET(DC_IP_REQUEST_CNTL, 0,
+				IP_REQUEST_EN, 1);
+	}
 
 	if (hws->funcs.dpp_pg_control)
 		hws->funcs.dpp_pg_control(hws, dpp->inst, false);
@@ -2636,7 +2646,7 @@ void dcn401_plane_atomic_power_down(struct dc *dc,
 	hubp->funcs->hubp_reset(hubp);
 	dpp->funcs->dpp_reset(dpp);
 
-	if (org_ip_request_cntl == 0)
+	if (org_ip_request_cntl == 0 && REG(DC_IP_REQUEST_CNTL))
 		REG_SET(DC_IP_REQUEST_CNTL, 0,
 			IP_REQUEST_EN, 0);
 

@@ -634,6 +634,7 @@ static bool rcar_lvds_mode_fixup(struct drm_bridge *bridge,
 }
 
 static int rcar_lvds_attach(struct drm_bridge *bridge,
+			    struct drm_encoder *encoder,
 			    enum drm_bridge_attach_flags flags)
 {
 	struct rcar_lvds *lvds = bridge_to_rcar_lvds(bridge);
@@ -641,7 +642,7 @@ static int rcar_lvds_attach(struct drm_bridge *bridge,
 	if (!lvds->next_bridge)
 		return 0;
 
-	return drm_bridge_attach(bridge->encoder, lvds->next_bridge, bridge,
+	return drm_bridge_attach(encoder, lvds->next_bridge, bridge,
 				 flags);
 }
 
@@ -877,9 +878,10 @@ static int rcar_lvds_probe(struct platform_device *pdev)
 	struct rcar_lvds *lvds;
 	int ret;
 
-	lvds = devm_kzalloc(&pdev->dev, sizeof(*lvds), GFP_KERNEL);
-	if (lvds == NULL)
-		return -ENOMEM;
+	lvds = devm_drm_bridge_alloc(&pdev->dev, struct rcar_lvds, bridge,
+				     &rcar_lvds_bridge_ops);
+	if (IS_ERR(lvds))
+		return PTR_ERR(lvds);
 
 	platform_set_drvdata(pdev, lvds);
 
@@ -894,7 +896,6 @@ static int rcar_lvds_probe(struct platform_device *pdev)
 	if (ret < 0)
 		return ret;
 
-	lvds->bridge.funcs = &rcar_lvds_bridge_ops;
 	lvds->bridge.of_node = pdev->dev.of_node;
 
 	lvds->mmio = devm_platform_ioremap_resource(pdev, 0);

@@ -134,10 +134,7 @@ static int gmc_v11_0_process_interrupt(struct amdgpu_device *adev,
 			entry->src_id, entry->ring_id, entry->vmid, entry->pasid);
 		task_info = amdgpu_vm_get_task_info_pasid(adev, entry->pasid);
 		if (task_info) {
-			dev_err(adev->dev,
-				" in process %s pid %d thread %s pid %d)\n",
-				task_info->process_name, task_info->tgid,
-				task_info->task_name, task_info->pid);
+			amdgpu_vm_print_task_info(adev, task_info);
 			amdgpu_vm_put_task_info(task_info);
 		}
 
@@ -392,10 +389,6 @@ static void gmc_v11_0_emit_pasid_mapping(struct amdgpu_ring *ring, unsigned int 
 {
 	struct amdgpu_device *adev = ring->adev;
 	uint32_t reg;
-
-	/* MES fw manages IH_VMID_x_LUT updating */
-	if (ring->is_mes_queue)
-		return;
 
 	if (ring->vm_hub == AMDGPU_GFXHUB(0))
 		reg = SOC15_REG_OFFSET(OSSSYS, 0, regIH_VMID_0_LUT) + vmid;
@@ -844,7 +837,7 @@ static int gmc_v11_0_sw_init(struct amdgpu_ip_block *ip_block)
 	 * amdgpu graphics/compute will use VMIDs 1-7
 	 * amdkfd will use VMIDs 8-15
 	 */
-	adev->vm_manager.first_kfd_vmid = 8;
+	adev->vm_manager.first_kfd_vmid = adev->gfx.disable_kq ? 1 : 8;
 
 	amdgpu_vm_manager_init(adev);
 

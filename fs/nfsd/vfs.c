@@ -468,7 +468,15 @@ static int __nfsd_setattr(struct dentry *dentry, struct iattr *iap)
 	if (!iap->ia_valid)
 		return 0;
 
-	iap->ia_valid |= ATTR_CTIME;
+	/*
+	 * If ATTR_DELEG is set, then this is an update from a client that
+	 * holds a delegation. If this is an update for only the atime, the
+	 * ctime should not be changed. If the update contains the mtime
+	 * too, then ATTR_CTIME should already be set.
+	 */
+	if (!(iap->ia_valid & ATTR_DELEG))
+		iap->ia_valid |= ATTR_CTIME;
+
 	return notify_change(&nop_mnt_idmap, dentry, iap, NULL);
 }
 
@@ -709,8 +717,8 @@ ssize_t nfsd_copy_file_range(struct file *src, u64 src_pos, struct file *dst,
 	ret = vfs_copy_file_range(src, src_pos, dst, dst_pos, count, 0);
 
 	if (ret == -EOPNOTSUPP || ret == -EXDEV)
-		ret = generic_copy_file_range(src, src_pos, dst, dst_pos,
-					      count, 0);
+		ret = vfs_copy_file_range(src, src_pos, dst, dst_pos, count,
+					  COPY_FILE_SPLICE);
 	return ret;
 }
 

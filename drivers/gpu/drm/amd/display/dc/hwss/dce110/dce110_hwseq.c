@@ -1186,8 +1186,10 @@ void dce110_disable_stream(struct pipe_ctx *pipe_ctx)
 		if (dccg) {
 			dccg->funcs->disable_symclk32_se(dccg, dp_hpo_inst);
 			dccg->funcs->set_dpstreamclk(dccg, REFCLK, tg->inst, dp_hpo_inst);
-			if (dccg && dccg->funcs->set_dtbclk_dto)
-				dccg->funcs->set_dtbclk_dto(dccg, &dto_params);
+			if (!(dc->ctx->dce_version >= DCN_VERSION_3_5)) {
+				if (dccg && dccg->funcs->set_dtbclk_dto)
+					dccg->funcs->set_dtbclk_dto(dccg, &dto_params);
+			}
 		}
 	} else if (dccg && dccg->funcs->disable_symclk_se) {
 		dccg->funcs->disable_symclk_se(dccg, stream_enc->stream_enc_inst,
@@ -1220,6 +1222,9 @@ void dce110_blank_stream(struct pipe_ctx *pipe_ctx)
 	struct dc_stream_state *stream = pipe_ctx->stream;
 	struct dc_link *link = stream->link;
 	struct dce_hwseq *hws = link->dc->hwseq;
+
+	if (hws && hws->wa_state.skip_blank_stream)
+		return;
 
 	if (link->local_sink && link->local_sink->sink_signal == SIGNAL_TYPE_EDP) {
 		if (!link->skip_implict_edp_power_control && hws)
@@ -1376,7 +1381,7 @@ static void populate_audio_dp_link_info(
 	}
 }
 
-static void build_audio_output(
+void build_audio_output(
 	struct dc_state *state,
 	const struct pipe_ctx *pipe_ctx,
 	struct audio_output *audio_output)
@@ -1681,6 +1686,19 @@ enum dc_status dce110_apply_single_controller_ctx_to_hw(
 	if (dc_is_dp_signal(pipe_ctx->stream->signal))
 		dc->link_srv->dp_trace_source_sequence(link, DPCD_SOURCE_SEQ_AFTER_CONNECT_DIG_FE_OTG);
 
+	/* Temporary workaround to perform DSC programming ahead of stream enablement
+	 * for smartmux/SPRS
+	 * TODO: Remove SmartMux/SPRS checks once movement of DSC programming is generalized
+	 */
+	if (pipe_ctx->stream->timing.flags.DSC) {
+		if ((pipe_ctx->stream->signal == SIGNAL_TYPE_EDP &&
+			((link->dc->config.smart_mux_version && link->dc->is_switch_in_progress_dest)
+			|| link->is_dds || link->skip_implict_edp_power_control)) &&
+			(dc_is_dp_signal(pipe_ctx->stream->signal) ||
+			dc_is_virtual_signal(pipe_ctx->stream->signal)))
+			dc->link_srv->set_dsc_enable(pipe_ctx, true);
+	}
+
 	if (!stream->dpms_off)
 		dc->link_srv->set_dpms_on(context, pipe_ctx);
 
@@ -1922,6 +1940,13 @@ void dce110_enable_accelerated_mode(struct dc *dc, struct dc_state *context)
 
 				can_apply_edp_fast_boot = dc_validate_boot_timing(dc,
 					edp_stream->sink, &edp_stream->timing);
+
+				// For Mux-platform, the default value is false.
+				// Disable fast boot during mux switching.
+				// The flag would be clean after switching done.
+				if (dc->is_switch_in_progress_dest && edp_link->is_dds)
+					can_apply_edp_fast_boot = false;
+
 				edp_stream->apply_edp_fast_boot_optimization = can_apply_edp_fast_boot;
 				if (can_apply_edp_fast_boot) {
 					DC_LOG_EVENT_LINK_TRAINING("eDP fast boot Enable\n");
@@ -1964,6 +1989,10 @@ void dce110_enable_accelerated_mode(struct dc *dc, struct dc_state *context)
 	 */
 	if (edp_with_sink_num)
 		edp_link_with_sink = edp_links_with_sink[0];
+
+	// During a mux switch, powering down the HW blocks and then enabling
+	// the link via a DPCD SET_POWER write causes a brief flash
+	keep_edp_vdd_on |= dc->is_switch_in_progress_dest;
 
 	if (!can_apply_edp_fast_boot && !can_apply_seamless_boot) {
 		if (edp_link_with_sink && !keep_edp_vdd_on) {
@@ -2764,12 +2793,12 @@ static void dce110_enable_per_frame_crtc_position_reset(
 
 }
 
-static void init_pipes(struct dc *dc, struct dc_state *context)
+static void dce110_init_pipes(struct dc *dc, struct dc_state *context)
 {
 	// Do nothing
 }
 
-static void init_hw(struct dc *dc)
+static void dce110_init_hw(struct dc *dc)
 {
 	int i;
 	struct dc_bios *bp;
@@ -3328,7 +3357,7 @@ void dce110_disable_link_output(struct dc_link *link,
 static const struct hw_sequencer_funcs dce110_funcs = {
 	.program_gamut_remap = program_gamut_remap,
 	.program_output_csc = program_output_csc,
-	.init_hw = init_hw,
+	.init_hw = dce110_init_hw,
 	.apply_ctx_to_hw = dce110_apply_ctx_to_hw,
 	.apply_ctx_for_surface = dce110_apply_ctx_for_surface,
 	.post_unlock_program_front_end = dce110_post_unlock_program_front_end,
@@ -3372,7 +3401,7 @@ static const struct hw_sequencer_funcs dce110_funcs = {
 };
 
 static const struct hwseq_private_funcs dce110_private_funcs = {
-	.init_pipes = init_pipes,
+	.init_pipes = dce110_init_pipes,
 	.set_input_transfer_func = dce110_set_input_transfer_func,
 	.set_output_transfer_func = dce110_set_output_transfer_func,
 	.power_down = dce110_power_down,

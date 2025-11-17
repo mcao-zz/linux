@@ -1576,8 +1576,9 @@ static int allocate_sdma_queue(struct device_queue_manager *dqm,
 	int bit;
 
 	if (q->properties.type == KFD_QUEUE_TYPE_SDMA) {
-		if (bitmap_empty(dqm->sdma_bitmap, KFD_MAX_SDMA_QUEUES)) {
-			dev_err(dev, "No more SDMA queue to allocate\n");
+		if (bitmap_empty(dqm->sdma_bitmap, get_num_sdma_queues(dqm))) {
+			dev_warn(dev, "No more SDMA queue to allocate (%d total queues)\n",
+				 get_num_sdma_queues(dqm));
 			return -ENOMEM;
 		}
 
@@ -1602,8 +1603,9 @@ static int allocate_sdma_queue(struct device_queue_manager *dqm,
 		q->properties.sdma_queue_id = q->sdma_id /
 				kfd_get_num_sdma_engines(dqm->dev);
 	} else if (q->properties.type == KFD_QUEUE_TYPE_SDMA_XGMI) {
-		if (bitmap_empty(dqm->xgmi_sdma_bitmap, KFD_MAX_SDMA_QUEUES)) {
-			dev_err(dev, "No more XGMI SDMA queue to allocate\n");
+		if (bitmap_empty(dqm->xgmi_sdma_bitmap, get_num_xgmi_sdma_queues(dqm))) {
+			dev_warn(dev, "No more XGMI SDMA queue to allocate (%d total queues)\n",
+				 get_num_xgmi_sdma_queues(dqm));
 			return -ENOMEM;
 		}
 		if (restore_sdma_id) {
@@ -1662,8 +1664,8 @@ static int allocate_sdma_queue(struct device_queue_manager *dqm,
 		}
 
 		if (!free_bit_found) {
-			dev_err(dev, "No more SDMA queue to allocate for target ID %i\n",
-				q->properties.sdma_engine_id);
+			dev_warn(dev, "No more SDMA queue to allocate for target ID %i (%d total queues)\n",
+				 q->properties.sdma_engine_id, num_queues);
 			return -ENOMEM;
 		}
 	}
@@ -2310,7 +2312,7 @@ static int reset_hung_queues_sdma(struct device_queue_manager *dqm)
 				continue;
 
 			/* Reset engine and check. */
-			if (amdgpu_sdma_reset_engine(dqm->dev->adev, i) ||
+			if (amdgpu_sdma_reset_engine(dqm->dev->adev, i, false) ||
 			    dqm->dev->kfd2kgd->hqd_sdma_get_doorbell(dqm->dev->adev, i, j) ||
 			    !set_sdma_queue_as_reset(dqm, doorbell_off)) {
 				r = -ENOTRECOVERABLE;
@@ -2337,9 +2339,18 @@ reset_fail:
 
 static int reset_queues_on_hws_hang(struct device_queue_manager *dqm, bool is_sdma)
 {
+	struct amdgpu_device *adev = dqm->dev->adev;
+
 	while (halt_if_hws_hang)
 		schedule();
 
+	if (adev->debug_disable_gpu_ring_reset) {
+		dev_info_once(adev->dev,
+			      "%s queue hung, but ring reset disabled",
+			      is_sdma ? "sdma" : "compute");
+
+		return -EPERM;
+	}
 	if (!amdgpu_gpu_recovery)
 		return -ENOTRECOVERABLE;
 
@@ -2714,7 +2725,7 @@ static void get_queue_checkpoint_info(struct device_queue_manager *dqm,
 
 	dqm_lock(dqm);
 	mqd_mgr = dqm->mqd_mgrs[mqd_type];
-	*mqd_size = mqd_mgr->mqd_size;
+	*mqd_size = mqd_mgr->mqd_size * NUM_XCC(mqd_mgr->dev->xcc_mask);
 	*ctl_stack_size = 0;
 
 	if (q->properties.type == KFD_QUEUE_TYPE_COMPUTE && mqd_mgr->get_checkpoint_info)

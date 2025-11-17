@@ -39,19 +39,22 @@
 #define XE_BO_FLAG_NEEDS_64K		BIT(15)
 #define XE_BO_FLAG_NEEDS_2M		BIT(16)
 #define XE_BO_FLAG_GGTT_INVALIDATE	BIT(17)
-#define XE_BO_FLAG_GGTT0                BIT(18)
-#define XE_BO_FLAG_GGTT1                BIT(19)
-#define XE_BO_FLAG_GGTT2                BIT(20)
-#define XE_BO_FLAG_GGTT3                BIT(21)
-#define XE_BO_FLAG_GGTT_ALL             (XE_BO_FLAG_GGTT0 | \
-					 XE_BO_FLAG_GGTT1 | \
-					 XE_BO_FLAG_GGTT2 | \
-					 XE_BO_FLAG_GGTT3)
-#define XE_BO_FLAG_CPU_ADDR_MIRROR	BIT(22)
+#define XE_BO_FLAG_PINNED_NORESTORE	BIT(18)
+#define XE_BO_FLAG_PINNED_LATE_RESTORE	BIT(19)
+#define XE_BO_FLAG_GGTT0		BIT(20)
+#define XE_BO_FLAG_GGTT1		BIT(21)
+#define XE_BO_FLAG_GGTT2		BIT(22)
+#define XE_BO_FLAG_GGTT3		BIT(23)
+#define XE_BO_FLAG_CPU_ADDR_MIRROR	BIT(24)
 
 /* this one is trigger internally only */
 #define XE_BO_FLAG_INTERNAL_TEST	BIT(30)
 #define XE_BO_FLAG_INTERNAL_64K		BIT(31)
+
+#define XE_BO_FLAG_GGTT_ALL		(XE_BO_FLAG_GGTT0 | \
+					 XE_BO_FLAG_GGTT1 | \
+					 XE_BO_FLAG_GGTT2 | \
+					 XE_BO_FLAG_GGTT3)
 
 #define XE_BO_FLAG_GGTTx(tile) \
 	(XE_BO_FLAG_GGTT0 << (tile)->id)
@@ -115,9 +118,6 @@ struct xe_bo *xe_bo_create_pin_map_at_aligned(struct xe_device *xe,
 					      size_t size, u64 offset,
 					      enum ttm_bo_type type, u32 flags,
 					      u64 alignment);
-struct xe_bo *xe_bo_create_from_data(struct xe_device *xe, struct xe_tile *tile,
-				     const void *data, size_t size,
-				     enum ttm_bo_type type, u32 flags);
 struct xe_bo *xe_managed_bo_create_pin_map(struct xe_device *xe, struct xe_tile *tile,
 					   size_t size, u32 flags);
 struct xe_bo *xe_managed_bo_create_from_data(struct xe_device *xe, struct xe_tile *tile,
@@ -198,7 +198,7 @@ static inline void xe_bo_unlock_vm_held(struct xe_bo *bo)
 	}
 }
 
-int xe_bo_pin_external(struct xe_bo *bo);
+int xe_bo_pin_external(struct xe_bo *bo, bool in_place);
 int xe_bo_pin(struct xe_bo *bo);
 void xe_bo_unpin_external(struct xe_bo *bo);
 void xe_bo_unpin(struct xe_bo *bo);
@@ -235,6 +235,19 @@ xe_bo_main_addr(struct xe_bo *bo, size_t page_size)
 	return xe_bo_addr(bo, 0, page_size);
 }
 
+/**
+ * xe_bo_size() - Xe BO size
+ * @bo: The bo object.
+ *
+ * Simple helper to return Xe BO's size.
+ *
+ * Return: Xe BO's size
+ */
+static inline size_t xe_bo_size(struct xe_bo *bo)
+{
+	return bo->ttm.base.size;
+}
+
 static inline u32
 __xe_bo_ggtt_addr(struct xe_bo *bo, u8 tile_id)
 {
@@ -243,7 +256,7 @@ __xe_bo_ggtt_addr(struct xe_bo *bo, u8 tile_id)
 	if (XE_WARN_ON(!ggtt_node))
 		return 0;
 
-	XE_WARN_ON(ggtt_node->base.size > bo->size);
+	XE_WARN_ON(ggtt_node->base.size > xe_bo_size(bo));
 	XE_WARN_ON(ggtt_node->base.start + ggtt_node->base.size > (1ull << 32));
 	return ggtt_node->base.start;
 }
@@ -271,10 +284,14 @@ uint64_t vram_region_gpu_offset(struct ttm_resource *res);
 bool xe_bo_can_migrate(struct xe_bo *bo, u32 mem_type);
 
 int xe_bo_migrate(struct xe_bo *bo, u32 mem_type);
-int xe_bo_evict(struct xe_bo *bo, bool force_alloc);
+int xe_bo_evict(struct xe_bo *bo);
 
 int xe_bo_evict_pinned(struct xe_bo *bo);
+int xe_bo_notifier_prepare_pinned(struct xe_bo *bo);
+int xe_bo_notifier_unprepare_pinned(struct xe_bo *bo);
 int xe_bo_restore_pinned(struct xe_bo *bo);
+
+int xe_bo_dma_unmap_pinned(struct xe_bo *bo);
 
 extern const struct ttm_device_funcs xe_ttm_funcs;
 extern const char *const xe_mem_type_to_name[];
@@ -293,7 +310,7 @@ bool xe_bo_needs_ccs_pages(struct xe_bo *bo);
 
 static inline size_t xe_bo_ccs_pages_start(struct xe_bo *bo)
 {
-	return PAGE_ALIGN(bo->ttm.base.size);
+	return PAGE_ALIGN(xe_bo_size(bo));
 }
 
 static inline bool xe_bo_has_pages(struct xe_bo *bo)

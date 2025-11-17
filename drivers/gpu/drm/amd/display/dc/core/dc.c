@@ -36,7 +36,9 @@
 #include "resource.h"
 #include "dc_state.h"
 #include "dc_state_priv.h"
+#include "dc_plane.h"
 #include "dc_plane_priv.h"
+#include "dc_stream_priv.h"
 
 #include "gpio_service_interface.h"
 #include "clk_mgr.h"
@@ -215,10 +217,23 @@ static bool create_links(
 		connectors_num,
 		num_virtual_links);
 
-	// condition loop on link_count to allow skipping invalid indices
+	/* When getting the number of connectors, the VBIOS reports the number of valid indices,
+	 * but it doesn't say which indices are valid, and not every index has an actual connector.
+	 * So, if we don't find a connector on an index, that is not an error.
+	 *
+	 * - There is no guarantee that the first N indices will be valid
+	 * - VBIOS may report a higher amount of valid indices than there are actual connectors
+	 * - Some VBIOS have valid configurations for more connectors than there actually are
+	 *   on the card. This may be because the manufacturer used the same VBIOS for different
+	 *   variants of the same card.
+	 */
 	for (i = 0; dc->link_count < connectors_num && i < MAX_LINKS; i++) {
+		struct graphics_object_id connector_id = bios->funcs->get_connector_id(bios, i);
 		struct link_init_data link_init_params = {0};
 		struct dc_link *link;
+
+		if (connector_id.id == CONNECTOR_ID_UNKNOWN)
+			continue;
 
 		DC_LOG_DC("BIOS object table - printing link object info for connector number: %d, link_index: %d", i, dc->link_count);
 
@@ -936,17 +951,18 @@ static void dc_destruct(struct dc *dc)
 	if (dc->link_srv)
 		link_destroy_link_service(&dc->link_srv);
 
-	if (dc->ctx->gpio_service)
-		dal_gpio_service_destroy(&dc->ctx->gpio_service);
+	if (dc->ctx) {
+		if (dc->ctx->gpio_service)
+			dal_gpio_service_destroy(&dc->ctx->gpio_service);
 
-	if (dc->ctx->created_bios)
-		dal_bios_parser_destroy(&dc->ctx->dc_bios);
+		if (dc->ctx->created_bios)
+			dal_bios_parser_destroy(&dc->ctx->dc_bios);
+		kfree(dc->ctx->logger);
+		dc_perf_trace_destroy(&dc->ctx->perf_trace);
 
-	kfree(dc->ctx->logger);
-	dc_perf_trace_destroy(&dc->ctx->perf_trace);
-
-	kfree(dc->ctx);
-	dc->ctx = NULL;
+		kfree(dc->ctx);
+		dc->ctx = NULL;
+	}
 
 	kfree(dc->bw_vbios);
 	dc->bw_vbios = NULL;
@@ -973,6 +989,8 @@ static bool dc_construct_ctx(struct dc *dc,
 	dc_ctx = kzalloc(sizeof(*dc_ctx), GFP_KERNEL);
 	if (!dc_ctx)
 		return false;
+
+	dc_stream_init_rmcm_3dlut(dc);
 
 	dc_ctx->cgs_device = init_params->cgs_device;
 	dc_ctx->driver_context = init_params->driver;
@@ -1199,6 +1217,12 @@ static void apply_ctx_interdependent_lock(struct dc *dc,
 
 static void dc_update_visual_confirm_color(struct dc *dc, struct dc_state *context, struct pipe_ctx *pipe_ctx)
 {
+	if (dc->debug.visual_confirm & VISUAL_CONFIRM_EXPLICIT) {
+		memcpy(&pipe_ctx->visual_confirm_color, &pipe_ctx->plane_state->visual_confirm_color,
+		sizeof(pipe_ctx->visual_confirm_color));
+		return;
+	}
+
 	if (dc->ctx->dce_version >= DCN_VERSION_1_0) {
 		memset(&pipe_ctx->visual_confirm_color, 0, sizeof(struct tg_color));
 
@@ -1228,6 +1252,51 @@ static void dc_update_visual_confirm_color(struct dc *dc, struct dc_state *conte
 				get_fams2_visual_confirm_color(dc, context, pipe_ctx, &(pipe_ctx->visual_confirm_color));
 			else if (dc->debug.visual_confirm == VISUAL_CONFIRM_VABC)
 				get_vabc_visual_confirm_color(pipe_ctx, &(pipe_ctx->visual_confirm_color));
+		}
+	}
+}
+
+void dc_get_visual_confirm_for_stream(
+	struct dc *dc,
+	struct dc_stream_state *stream_state,
+	struct tg_color *color)
+{
+	struct dc_stream_status *stream_status = dc_stream_get_status(stream_state);
+	struct pipe_ctx *pipe_ctx;
+	int i;
+	struct dc_plane_state *plane_state = NULL;
+
+	if (!stream_status)
+		return;
+
+	switch (dc->debug.visual_confirm) {
+	case VISUAL_CONFIRM_DISABLE:
+		return;
+	case VISUAL_CONFIRM_PSR:
+	case VISUAL_CONFIRM_FAMS:
+		pipe_ctx = dc_stream_get_pipe_ctx(stream_state);
+		if (!pipe_ctx)
+			return;
+		dc_dmub_srv_get_visual_confirm_color_cmd(dc, pipe_ctx);
+		memcpy(color, &dc->ctx->dmub_srv->dmub->visual_confirm_color, sizeof(struct tg_color));
+		return;
+
+	default:
+		/* find plane with highest layer_index */
+		for (i = 0; i < stream_status->plane_count; i++) {
+			if (stream_status->plane_states[i]->visible)
+				plane_state = stream_status->plane_states[i];
+		}
+		if (!plane_state)
+			return;
+		/* find pipe that contains plane with highest layer index */
+		for (i = 0; i < MAX_PIPES; i++) {
+			struct pipe_ctx *pipe = &dc->current_state->res_ctx.pipe_ctx[i];
+
+			if (pipe->plane_state == plane_state) {
+				memcpy(color, &pipe->visual_confirm_color, sizeof(struct tg_color));
+				return;
+			}
 		}
 	}
 }
@@ -2060,6 +2129,18 @@ static enum dc_status dc_commit_state_no_check(struct dc *dc, struct dc_state *c
 		dc->hwss.enable_accelerated_mode(dc, context);
 	}
 
+	if (dc->hwseq->funcs.wait_for_pipe_update_if_needed) {
+		for (i = 0; i < dc->res_pool->pipe_count; i++) {
+			pipe = &context->res_ctx.pipe_ctx[i];
+			//Only delay otg master for a given config
+			if (resource_is_pipe_type(pipe, OTG_MASTER)) {
+				//dc_commit_state_no_check is always a full update
+				dc->hwseq->funcs.wait_for_pipe_update_if_needed(dc, pipe, false);
+				break;
+			}
+		}
+	}
+
 	if (context->stream_count > get_seamless_boot_stream_count(context) ||
 		context->stream_count == 0)
 		dc->hwss.prepare_bandwidth(dc, context);
@@ -2124,6 +2205,14 @@ static enum dc_status dc_commit_state_no_check(struct dc *dc, struct dc_state *c
 	if (dc->hwss.program_front_end_for_ctx) {
 		dc->hwss.interdependent_update_lock(dc, context, true);
 		dc->hwss.program_front_end_for_ctx(dc, context);
+
+		if (dc->hwseq->funcs.set_wait_for_update_needed_for_pipe) {
+			for (i = 0; i < dc->res_pool->pipe_count; i++) {
+				pipe = &context->res_ctx.pipe_ctx[i];
+				dc->hwseq->funcs.set_wait_for_update_needed_for_pipe(dc, pipe);
+			}
+		}
+
 		dc->hwss.interdependent_update_lock(dc, context, false);
 		dc->hwss.post_unlock_program_front_end(dc, context);
 	}
@@ -2265,11 +2354,15 @@ enum dc_status dc_commit_streams(struct dc *dc, struct dc_commit_streams_params 
 	for (i = 0; i < params->stream_count; i++) {
 		struct dc_stream_state *stream = params->streams[i];
 		struct dc_stream_status *status = dc_stream_get_status(stream);
+		struct dc_sink *sink = stream->sink;
 
 		/* revalidate streams */
-		res = dc_validate_stream(dc, stream);
-		if (res != DC_OK)
-			return res;
+		if (!dc_is_virtual_signal(sink->sink_signal)) {
+			res = dc_validate_stream(dc, stream);
+			if (res != DC_OK)
+				return res;
+		}
+
 
 		dc_stream_log(dc, stream);
 
@@ -2304,7 +2397,7 @@ enum dc_status dc_commit_streams(struct dc *dc, struct dc_commit_streams_params 
 
 	context->power_source = params->power_source;
 
-	res = dc_validate_with_context(dc, set, params->stream_count, context, false);
+	res = dc_validate_with_context(dc, set, params->stream_count, context, DC_VALIDATE_MODE_AND_PROGRAMMING);
 
 	/*
 	 * Only update link encoder to stream assignment after bandwidth validation passed.
@@ -2822,7 +2915,7 @@ static enum surface_update_type check_update_surfaces_for_stream(
 	int i;
 	enum surface_update_type overall_type = UPDATE_TYPE_FAST;
 
-	if (dc->idle_optimizations_allowed)
+	if (dc->idle_optimizations_allowed || dc_can_clear_cursor_limit(dc))
 		overall_type = UPDATE_TYPE_FULL;
 
 	if (stream_status == NULL || stream_status->plane_count != surface_count)
@@ -3227,7 +3320,8 @@ static void copy_stream_update_to_stream(struct dc *dc,
 		if (dsc_validate_context) {
 			stream->timing.dsc_cfg = *update->dsc_config;
 			stream->timing.flags.DSC = enable_dsc;
-			if (!dc->res_pool->funcs->validate_bandwidth(dc, dsc_validate_context, true)) {
+			if (dc->res_pool->funcs->validate_bandwidth(dc, dsc_validate_context,
+				DC_VALIDATE_MODE_ONLY) != DC_OK) {
 				stream->timing.dsc_cfg = old_dsc_cfg;
 				stream->timing.flags.DSC = old_dsc_enabled;
 				update->dsc_config = NULL;
@@ -3256,7 +3350,7 @@ static void backup_planes_and_stream_state(
 		return;
 
 	for (i = 0; i < status->plane_count; i++) {
-		scratch->plane_states[i] = *status->plane_states[i];
+		dc_plane_copy_config(&scratch->plane_states[i], status->plane_states[i]);
 	}
 	scratch->stream_state = *stream;
 }
@@ -3272,10 +3366,7 @@ static void restore_planes_and_stream_state(
 		return;
 
 	for (i = 0; i < status->plane_count; i++) {
-		/* refcount will always be valid, restore everything else */
-		struct kref refcount = status->plane_states[i]->refcount;
-		*status->plane_states[i] = scratch->plane_states[i];
-		status->plane_states[i]->refcount = refcount;
+		dc_plane_copy_config(status->plane_states[i], &scratch->plane_states[i]);
 	}
 	*stream = scratch->stream_state;
 }
@@ -3452,7 +3543,7 @@ static bool update_planes_and_stream_state(struct dc *dc,
 	}
 
 	if (update_type == UPDATE_TYPE_FULL) {
-		if (!dc->res_pool->funcs->validate_bandwidth(dc, context, false)) {
+		if (dc->res_pool->funcs->validate_bandwidth(dc, context, DC_VALIDATE_MODE_AND_PROGRAMMING) != DC_OK) {
 			BREAK_TO_DEBUGGER();
 			goto fail;
 		}
@@ -4006,6 +4097,7 @@ static void commit_planes_for_stream(struct dc *dc,
 				&context->res_ctx,
 				stream);
 	ASSERT(top_pipe_to_program != NULL);
+
 	for (i = 0; i < dc->res_pool->pipe_count; i++) {
 		struct pipe_ctx *old_pipe = &dc->current_state->res_ctx.pipe_ctx[i];
 
@@ -4055,6 +4147,9 @@ static void commit_planes_for_stream(struct dc *dc,
 	if (dc->hwss.wait_for_dcc_meta_propagation) {
 		dc->hwss.wait_for_dcc_meta_propagation(dc, top_pipe_to_program);
 	}
+
+	if (dc->hwseq->funcs.wait_for_pipe_update_if_needed)
+		dc->hwseq->funcs.wait_for_pipe_update_if_needed(dc, top_pipe_to_program, update_type == UPDATE_TYPE_FAST);
 
 	if (should_lock_all_pipes && dc->hwss.interdependent_update_lock) {
 		if (dc->hwss.subvp_pipe_control_lock)
@@ -4176,12 +4271,6 @@ static void commit_planes_for_stream(struct dc *dc,
 			if (update_type == UPDATE_TYPE_FAST)
 				continue;
 
-			ASSERT(!pipe_ctx->plane_state->triplebuffer_flips);
-			if (dc->hwss.program_triplebuffer != NULL && dc->debug.enable_tri_buf) {
-				/*turn off triple buffer for full update*/
-				dc->hwss.program_triplebuffer(
-					dc, pipe_ctx, pipe_ctx->plane_state->triplebuffer_flips);
-			}
 			stream_status =
 				stream_get_status(context, pipe_ctx->stream);
 
@@ -4190,8 +4279,37 @@ static void commit_planes_for_stream(struct dc *dc,
 					dc, pipe_ctx->stream, stream_status->plane_count, context);
 		}
 	}
+
+	for (j = 0; j < dc->res_pool->pipe_count; j++) {
+		struct pipe_ctx *pipe_ctx = &context->res_ctx.pipe_ctx[j];
+
+		if (!pipe_ctx->plane_state)
+			continue;
+
+		/* Full fe update*/
+		if (update_type == UPDATE_TYPE_FAST)
+			continue;
+
+		ASSERT(!pipe_ctx->plane_state->triplebuffer_flips);
+		if (dc->hwss.program_triplebuffer != NULL && dc->debug.enable_tri_buf) {
+			/*turn off triple buffer for full update*/
+			dc->hwss.program_triplebuffer(
+				dc, pipe_ctx, pipe_ctx->plane_state->triplebuffer_flips);
+		}
+	}
+
 	if (dc->hwss.program_front_end_for_ctx && update_type != UPDATE_TYPE_FAST) {
 		dc->hwss.program_front_end_for_ctx(dc, context);
+
+		//Pipe busy until some frame and line #
+		if (dc->hwseq->funcs.set_wait_for_update_needed_for_pipe && update_type == UPDATE_TYPE_FULL) {
+			for (j = 0; j < dc->res_pool->pipe_count; j++) {
+				struct pipe_ctx *pipe_ctx = &context->res_ctx.pipe_ctx[j];
+
+				dc->hwseq->funcs.set_wait_for_update_needed_for_pipe(dc, pipe_ctx);
+			}
+		}
+
 		if (dc->debug.validate_dml_output) {
 			for (i = 0; i < dc->res_pool->pipe_count; i++) {
 				struct pipe_ctx *cur_pipe = &context->res_ctx.pipe_ctx[i];
@@ -4531,7 +4649,8 @@ static struct dc_state *create_minimal_transition_state(struct dc *dc,
 
 	backup_and_set_minimal_pipe_split_policy(dc, base_context, policy);
 	/* commit minimal state */
-	if (dc->res_pool->funcs->validate_bandwidth(dc, minimal_transition_context, false)) {
+	if (dc->res_pool->funcs->validate_bandwidth(dc, minimal_transition_context,
+		DC_VALIDATE_MODE_AND_PROGRAMMING) == DC_OK) {
 		/* prevent underflow and corruption when reconfiguring pipes */
 		force_vsync_flip_in_minimal_transition_context(minimal_transition_context);
 	} else {
@@ -4966,6 +5085,9 @@ static bool full_update_required(struct dc *dc,
 	if (dc->idle_optimizations_allowed)
 		return true;
 
+	if (dc_can_clear_cursor_limit(dc))
+		return true;
+
 	return false;
 }
 
@@ -5051,7 +5173,7 @@ static bool update_planes_and_stream_v1(struct dc *dc,
 	copy_stream_update_to_stream(dc, context, stream, stream_update);
 
 	if (update_type >= UPDATE_TYPE_FULL) {
-		if (!dc->res_pool->funcs->validate_bandwidth(dc, context, false)) {
+		if (dc->res_pool->funcs->validate_bandwidth(dc, context, DC_VALIDATE_MODE_AND_PROGRAMMING) != DC_OK) {
 			DC_ERROR("Mode validation failed for stream update!\n");
 			dc_state_release(context);
 			return false;
@@ -5335,8 +5457,8 @@ bool dc_update_planes_and_stream(struct dc *dc,
 	else
 		ret = update_planes_and_stream_v2(dc, srf_updates,
 			surface_count, stream, stream_update);
-
-	if (ret)
+	if (ret && (dc->ctx->dce_version >= DCN_VERSION_3_2 ||
+		dc->ctx->dce_version == DCN_VERSION_3_01))
 		clear_update_flags(srf_updates, surface_count, stream);
 
 	return ret;
@@ -5367,7 +5489,7 @@ void dc_commit_updates_for_stream(struct dc *dc,
 		ret = update_planes_and_stream_v1(dc, srf_updates, surface_count, stream,
 				stream_update, state);
 
-	if (ret)
+	if (ret && dc->ctx->dce_version >= DCN_VERSION_3_2)
 		clear_update_flags(srf_updates, surface_count, stream);
 }
 
@@ -5438,6 +5560,15 @@ void dc_set_power_state(struct dc *dc, enum dc_acpi_cm_power_state power_state)
 		if (dc->hwss.init_sys_ctx != NULL &&
 			dc->vm_pa_config.valid) {
 			dc->hwss.init_sys_ctx(dc->hwseq, dc, &dc->vm_pa_config);
+		}
+		break;
+	case DC_ACPI_CM_POWER_STATE_D3:
+		if (dc->caps.ips_support)
+			dc_dmub_srv_notify_fw_dc_power_state(dc->ctx->dmub_srv, DC_ACPI_CM_POWER_STATE_D3);
+
+		if (dc->caps.ips_v2_support) {
+			if (dc->clk_mgr->funcs->set_low_power_state)
+				dc->clk_mgr->funcs->set_low_power_state(dc->clk_mgr);
 		}
 		break;
 	default:
@@ -6195,15 +6326,22 @@ bool dc_abm_save_restore(
 void dc_query_current_properties(struct dc *dc, struct dc_current_properties *properties)
 {
 	unsigned int i;
-	bool subvp_sw_cursor_req = false;
+	unsigned int max_cursor_size = dc->caps.max_cursor_size;
+	unsigned int stream_cursor_size;
 
-	for (i = 0; i < dc->current_state->stream_count; i++) {
-		if (check_subvp_sw_cursor_fallback_req(dc, dc->current_state->streams[i]) && !dc->current_state->streams[i]->hw_cursor_req) {
-			subvp_sw_cursor_req = true;
-			break;
+	if (dc->debug.allow_sw_cursor_fallback && dc->res_pool->funcs->get_max_hw_cursor_size) {
+		for (i = 0; i < dc->current_state->stream_count; i++) {
+			stream_cursor_size = dc->res_pool->funcs->get_max_hw_cursor_size(dc,
+					dc->current_state,
+					dc->current_state->streams[i]);
+
+			if (stream_cursor_size < max_cursor_size) {
+				max_cursor_size = stream_cursor_size;
+			}
 		}
 	}
-	properties->cursor_size_limit = subvp_sw_cursor_req ? 64 : dc->caps.max_cursor_size;
+
+	properties->cursor_size_limit = max_cursor_size;
 }
 
 /**
@@ -6230,13 +6368,14 @@ void dc_set_edp_power(const struct dc *dc, struct dc_link *edp_link,
 	edp_link->dc->link_srv->edp_set_panel_power(edp_link, powerOn);
 }
 
-/*
- *****************************************************************************
+/**
  * dc_get_power_profile_for_dc_state() - extracts power profile from dc state
  *
  * Called when DM wants to make power policy decisions based on dc_state
  *
- *****************************************************************************
+ * @context: Pointer to the dc_state from which the power profile is extracted.
+ *
+ * Return: The power profile structure containing the power level information.
  */
 struct dc_power_profile dc_get_power_profile_for_dc_state(const struct dc_state *context)
 {
@@ -6251,25 +6390,45 @@ struct dc_power_profile dc_get_power_profile_for_dc_state(const struct dc_state 
 		profile.power_level = dc->res_pool->funcs->get_power_profile(context);
 	return profile;
 }
+
 /**
- ***********************************************************************************************
+ * dc_get_det_buffer_size_from_state() - extracts detile buffer size from dc state
+ *
+ * This function is called to log the detile buffer size from the dc_state.
+ *
+ * @context: a pointer to the dc_state from which the detile buffer size is extracted.
+ *
+ * Return: the size of the detile buffer, or 0 if not available.
+ */
+unsigned int dc_get_det_buffer_size_from_state(const struct dc_state *context)
+{
+	struct dc *dc = context->clk_mgr->ctx->dc;
+
+	if (dc->res_pool->funcs->get_det_buffer_size)
+		return dc->res_pool->funcs->get_det_buffer_size(context);
+	else
+		return 0;
+}
+
+/**
  * dc_get_host_router_index: Get index of host router from a dpia link
  *
  * This function return a host router index of the target link. If the target link is dpia link.
  *
- * @param [in] link: target link
- * @param [out] host_router_index: host router index of the target link
+ * @link: Pointer to the target link (input)
+ * @host_router_index: Pointer to store the host router index of the target link (output).
  *
- * @return: true if the host router index is found and valid.
+ * Return: true if the host router index is found and valid.
  *
- ***********************************************************************************************
  */
 bool dc_get_host_router_index(const struct dc_link *link, unsigned int *host_router_index)
 {
-	struct dc *dc = link->ctx->dc;
+	struct dc *dc;
 
-	if (link->ep_type != DISPLAY_ENDPOINT_USB4_DPIA)
+	if (!link || !host_router_index || link->ep_type != DISPLAY_ENDPOINT_USB4_DPIA)
 		return false;
+
+	dc = link->ctx->dc;
 
 	if (link->link_index < dc->lowest_dpia_link_index)
 		return false;
@@ -6281,20 +6440,26 @@ bool dc_get_host_router_index(const struct dc_link *link, unsigned int *host_rou
 		return false;
 }
 
-/*
- **********************************************************************************
- * dc_get_det_buffer_size_from_state() - extracts detile buffer size from dc state
- *
- * Called when DM wants to log detile buffer size from dc_state
- *
- **********************************************************************************
- */
-unsigned int dc_get_det_buffer_size_from_state(const struct dc_state *context)
+bool dc_is_cursor_limit_pending(struct dc *dc)
 {
-	struct dc *dc = context->clk_mgr->ctx->dc;
+	uint32_t i;
 
-	if (dc->res_pool->funcs->get_det_buffer_size)
-		return dc->res_pool->funcs->get_det_buffer_size(context);
-	else
-		return 0;
+	for (i = 0; i < dc->current_state->stream_count; i++) {
+		if (dc_stream_is_cursor_limit_pending(dc, dc->current_state->streams[i]))
+			return true;
+	}
+
+	return false;
+}
+
+bool dc_can_clear_cursor_limit(struct dc *dc)
+{
+	uint32_t i;
+
+	for (i = 0; i < dc->current_state->stream_count; i++) {
+		if (dc_state_can_clear_stream_cursor_subvp_limit(dc->current_state->streams[i], dc->current_state))
+			return true;
+	}
+
+	return false;
 }

@@ -36,15 +36,16 @@
 #include <drm/drm_blend.h>
 #include <drm/drm_color_mgmt.h>
 #include <drm/drm_fourcc.h>
+#include <drm/drm_print.h>
 #include <drm/drm_rect.h>
 
-#include "i915_drv.h"
+#include "i915_utils.h"
 #include "i9xx_plane.h"
-#include "intel_atomic_plane.h"
 #include "intel_de.h"
 #include "intel_display_types.h"
 #include "intel_fb.h"
 #include "intel_frontbuffer.h"
+#include "intel_plane.h"
 #include "intel_sprite.h"
 #include "intel_sprite_regs.h"
 
@@ -1365,8 +1366,8 @@ g4x_sprite_check(struct intel_crtc_state *crtc_state,
 		}
 	}
 
-	ret = intel_atomic_plane_check_clipping(plane_state, crtc_state,
-						min_scale, max_scale, true);
+	ret = intel_plane_check_clipping(plane_state, crtc_state,
+					 min_scale, max_scale, true);
 	if (ret)
 		return ret;
 
@@ -1420,10 +1421,10 @@ vlv_sprite_check(struct intel_crtc_state *crtc_state,
 	if (ret)
 		return ret;
 
-	ret = intel_atomic_plane_check_clipping(plane_state, crtc_state,
-						DRM_PLANE_NO_SCALING,
-						DRM_PLANE_NO_SCALING,
-						true);
+	ret = intel_plane_check_clipping(plane_state, crtc_state,
+					 DRM_PLANE_NO_SCALING,
+					 DRM_PLANE_NO_SCALING,
+					 true);
 	if (ret)
 		return ret;
 

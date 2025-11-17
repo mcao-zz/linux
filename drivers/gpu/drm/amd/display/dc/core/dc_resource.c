@@ -1342,32 +1342,6 @@ static void calculate_inits_and_viewports(struct pipe_ctx *pipe_ctx)
 	data->viewport_c.y += src.y / vpc_div;
 }
 
-static bool is_subvp_high_refresh_candidate(struct dc_stream_state *stream)
-{
-	uint32_t refresh_rate;
-	struct dc *dc = stream->ctx->dc;
-
-	refresh_rate = (stream->timing.pix_clk_100hz * (uint64_t)100 +
-		stream->timing.v_total * stream->timing.h_total - (uint64_t)1);
-	refresh_rate = div_u64(refresh_rate, stream->timing.v_total);
-	refresh_rate = div_u64(refresh_rate, stream->timing.h_total);
-
-	/* If there's any stream that fits the SubVP high refresh criteria,
-	 * we must return true. This is because cursor updates are asynchronous
-	 * with full updates, so we could transition into a SubVP config and
-	 * remain in HW cursor mode if there's no cursor update which will
-	 * then cause corruption.
-	 */
-	if ((refresh_rate >= 120 && refresh_rate <= 175 &&
-			stream->timing.v_addressable >= 1080 &&
-			stream->timing.v_addressable <= 2160) &&
-			(dc->current_state->stream_count > 1 ||
-			(dc->current_state->stream_count == 1 && !stream->allow_freesync)))
-		return true;
-
-	return false;
-}
-
 static enum controller_dp_test_pattern convert_dp_to_controller_test_pattern(
 				enum dp_test_pattern test_pattern)
 {
@@ -3937,6 +3911,10 @@ enum dc_status resource_map_pool_resources(
 		if (!dc->link_srv->dp_decide_link_settings(stream,
 				&pipe_ctx->link_config.dp_link_settings))
 			return DC_FAIL_DP_LINK_BANDWIDTH;
+
+		dc->link_srv->dp_decide_tunnel_settings(stream,
+				&pipe_ctx->link_config.dp_tunnel_settings);
+
 		if (dc->link_srv->dp_get_encoding_format(
 				&pipe_ctx->link_config.dp_link_settings) == DP_128b_132b_ENCODING) {
 			pipe_ctx->stream_res.hpo_dp_stream_enc =
@@ -3962,7 +3940,9 @@ enum dc_status resource_map_pool_resources(
 	/* TODO: Add check if ASIC support and EDID audio */
 	if (!stream->converter_disable_audio &&
 	    dc_is_audio_capable_signal(pipe_ctx->stream->signal) &&
-	    stream->audio_info.mode_count && stream->audio_info.flags.all) {
+	    stream->audio_info.mode_count &&
+		(stream->audio_info.flags.all ||
+		(stream->sink && stream->sink->edid_caps.panel_patch.skip_audio_sab_check))) {
 		pipe_ctx->stream_res.audio = find_first_free_audio(
 		&context->res_ctx, pool, pipe_ctx->stream_res.stream_enc->id, dc_ctx->dce_version);
 
@@ -4075,7 +4055,7 @@ static bool add_all_planes_for_stream(
  * @set: An array of dc_validation_set with all the current streams reference
  * @set_count: Total of streams
  * @context: New context
- * @fast_validate: Enable or disable fast validation
+ * @validate_mode: identify the validation mode
  *
  * This function updates the potential new stream in the context object. It
  * creates multiple lists for the add, remove, and unchanged streams. In
@@ -4090,7 +4070,7 @@ enum dc_status dc_validate_with_context(struct dc *dc,
 					const struct dc_validation_set set[],
 					int set_count,
 					struct dc_state *context,
-					bool fast_validate)
+					enum dc_validate_mode validate_mode)
 {
 	struct dc_stream_state *unchanged_streams[MAX_PIPES] = { 0 };
 	struct dc_stream_state *del_streams[MAX_PIPES] = { 0 };
@@ -4259,7 +4239,12 @@ enum dc_status dc_validate_with_context(struct dc *dc,
 		}
 	}
 
-	res = dc_validate_global_state(dc, context, fast_validate);
+	/* clear subvp cursor limitations */
+	for (i = 0; i < context->stream_count; i++) {
+		dc_state_set_stream_subvp_cursor_limit(context->streams[i], context, false);
+	}
+
+	res = dc_validate_global_state(dc, context, validate_mode);
 
 	/* calculate pixel rate divider after deciding pxiel clock & odm combine  */
 	if ((dc->hwss.calculate_pix_rate_divider) && (res == DC_OK)) {
@@ -4316,7 +4301,7 @@ static void decide_hblank_borrow(struct pipe_ctx *pipe_ctx)
  *
  * @dc: dc struct for this driver
  * @new_ctx: state to be validated
- * @fast_validate: set to true if only yes/no to support matters
+ * @validate_mode: identify the validation mode
  *
  * Checks hardware resource availability and bandwidth requirement.
  *
@@ -4326,7 +4311,7 @@ static void decide_hblank_borrow(struct pipe_ctx *pipe_ctx)
 enum dc_status dc_validate_global_state(
 		struct dc *dc,
 		struct dc_state *new_ctx,
-		bool fast_validate)
+		enum dc_validate_mode validate_mode)
 {
 	enum dc_status result = DC_ERROR_UNEXPECTED;
 	int i, j;
@@ -4385,8 +4370,7 @@ enum dc_status dc_validate_global_state(
 	result = resource_build_scaling_params_for_context(dc, new_ctx);
 
 	if (result == DC_OK)
-		if (!dc->res_pool->funcs->validate_bandwidth(dc, new_ctx, fast_validate))
-			result = DC_FAIL_BANDWIDTH_VALIDATE;
+		result = dc->res_pool->funcs->validate_bandwidth(dc, new_ctx, validate_mode);
 
 	return result;
 }
@@ -5538,23 +5522,17 @@ enum dc_status update_dp_encoder_resources_for_test_harness(const struct dc *dc,
 	return DC_OK;
 }
 
-bool check_subvp_sw_cursor_fallback_req(const struct dc *dc, struct dc_stream_state *stream)
-{
-	if (!dc->debug.disable_subvp_high_refresh && is_subvp_high_refresh_candidate(stream))
-		return true;
-	if (dc->current_state->stream_count == 1 && stream->timing.v_addressable >= 2880 &&
-			((stream->timing.pix_clk_100hz * 100) / stream->timing.v_total / stream->timing.h_total) < 120)
-		return true;
-	else if (dc->current_state->stream_count > 1 && stream->timing.v_addressable >= 1080 &&
-			((stream->timing.pix_clk_100hz * 100) / stream->timing.v_total / stream->timing.h_total) < 120)
-		return true;
-
-	return false;
-}
-
 struct dscl_prog_data *resource_get_dscl_prog_data(struct pipe_ctx *pipe_ctx)
 {
 	return &pipe_ctx->plane_res.scl_data.dscl_prog_data;
+}
+
+static bool resource_allocate_mcache(struct dc_state *context, const struct  dc_mcache_params *mcache_params)
+{
+	if (context->clk_mgr->ctx->dc->res_pool->funcs->program_mcache_pipe_config)
+		context->clk_mgr->ctx->dc->res_pool->funcs->program_mcache_pipe_config(context, mcache_params);
+
+	return true;
 }
 
 void resource_init_common_dml2_callbacks(struct dc *dc, struct dml2_configuration_options *dml2_options)
@@ -5576,6 +5554,7 @@ void resource_init_common_dml2_callbacks(struct dc *dc, struct dml2_configuratio
 	dml2_options->callbacks.get_stream_status = &dc_state_get_stream_status;
 	dml2_options->callbacks.get_stream_from_id = &dc_state_get_stream_from_id;
 	dml2_options->callbacks.get_max_flickerless_instant_vtotal_increase = &dc_stream_get_max_flickerless_instant_vtotal_increase;
+	dml2_options->callbacks.allocate_mcache = &resource_allocate_mcache;
 
 	dml2_options->svp_pstate.callbacks.dc = dc;
 	dml2_options->svp_pstate.callbacks.add_phantom_plane = &dc_state_add_phantom_plane;

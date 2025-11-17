@@ -1535,7 +1535,8 @@ static int nfs_is_exclusive_create(struct inode *dir, unsigned int flags)
 {
 	if (NFS_PROTO(dir)->version == 2)
 		return 0;
-	return flags & LOOKUP_EXCL;
+	return (flags & (LOOKUP_CREATE | LOOKUP_EXCL)) ==
+		(LOOKUP_CREATE | LOOKUP_EXCL);
 }
 
 /*
@@ -1840,9 +1841,7 @@ static void block_revalidate(struct dentry *dentry)
 
 static void unblock_revalidate(struct dentry *dentry)
 {
-	/* store_release ensures wait_var_event() sees the update */
-	smp_store_release(&dentry->d_fsdata, NULL);
-	wake_up_var(&dentry->d_fsdata);
+	store_release_wake_up(&dentry->d_fsdata, NULL);
 }
 
 /*
