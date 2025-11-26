@@ -93,6 +93,13 @@ ifndef RHJOBS
 	  fi)
 endif
 
+# for official builds use RELEASE_LOCALVERSION persisted in Makefile.variables
+ifneq ($(filter $(MAKECMDGOALS),dist-release dist-release-tag dist-release-git dist-rtg dist-get-tag),)
+  DISTLOCALVERSION:=$(RELEASE_LOCALVERSION)
+  ifeq (,$(findstring s,$(firstword -$(MAKEFLAGS))))
+    $(info DISTLOCALVERSION is "$(DISTLOCALVERSION)".)
+  endif
+else
 LOCVERFILE:=../localversion
 # create an empty localversion file if you don't want a local buildid
 ifneq ($(wildcard $(LOCVERFILE)),)
@@ -110,6 +117,7 @@ else
   endif
   $(info DISTLOCALVERSION is "$(DISTLOCALVERSION)".)
 endif
+endif # MAKECMDGOALS
 
 # options for process_configs.sh script
 ifdef NO_CONFIGCHECKS
@@ -306,11 +314,7 @@ ifeq ("$(ZSTREAM)", "yes")
   BUILDOPTS += +kabidupchk
 else
   ZSTREAM_FLAG = no
-  ifeq ("$(EARLY_YSTREAM)", "yes")
-    YSTREAM_FLAG = early
-  else
-    YSTREAM_FLAG = yes
-  endif
+  YSTREAM_FLAG = yes
 endif
 
 include Makefile.cross
