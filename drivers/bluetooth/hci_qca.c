@@ -474,7 +474,7 @@ static void qca_wq_serial_tx_clock_vote_off(struct work_struct *work)
 
 static void hci_ibs_tx_idle_timeout(struct timer_list *t)
 {
-	struct qca_data *qca = from_timer(qca, t, tx_idle_timer);
+	struct qca_data *qca = timer_container_of(qca, t, tx_idle_timer);
 	struct hci_uart *hu = qca->hu;
 	unsigned long flags;
 
@@ -507,7 +507,7 @@ static void hci_ibs_tx_idle_timeout(struct timer_list *t)
 
 static void hci_ibs_wake_retrans_timeout(struct timer_list *t)
 {
-	struct qca_data *qca = from_timer(qca, t, wake_retrans_timer);
+	struct qca_data *qca = timer_container_of(qca, t, wake_retrans_timer);
 	struct hci_uart *hu = qca->hu;
 	unsigned long flags, retrans_delay;
 	bool retransmit = false;
@@ -1264,6 +1264,7 @@ static const struct h4_recv_pkt qca_recv_pkts[] = {
 	{ H4_RECV_ACL,             .recv = qca_recv_acl_data },
 	{ H4_RECV_SCO,             .recv = hci_recv_frame    },
 	{ H4_RECV_EVENT,           .recv = qca_recv_event    },
+	{ H4_RECV_ISO,             .recv = hci_recv_frame    },
 	{ QCA_IBS_WAKE_IND_EVENT,  .recv = qca_ibs_wake_ind  },
 	{ QCA_IBS_WAKE_ACK_EVENT,  .recv = qca_ibs_wake_ack  },
 	{ QCA_IBS_SLEEP_IND_EVENT, .recv = qca_ibs_sleep_ind },
