@@ -86,6 +86,7 @@ extern __printf(4, 5)
 struct device *cpu_device_create(struct device *parent, void *drvdata,
 				 const struct attribute_group **groups,
 				 const char *fmt, ...);
+extern bool arch_cpu_is_hotpluggable(int cpu);
 extern int arch_register_cpu(int cpu);
 extern void arch_unregister_cpu(int cpu);
 #ifdef CONFIG_HOTPLUG_CPU
@@ -136,7 +137,7 @@ static inline int add_cpu(unsigned int cpu) { return 0;}
 static inline int arch_cpu_rescan_dead_smt_siblings(void) { return 0; }
 
 #endif /* CONFIG_SMP */
-extern struct bus_type cpu_subsys;
+extern const struct bus_type cpu_subsys;
 
 #ifdef CONFIG_PM_SLEEP_SMP
 extern int freeze_secondary_cpus(int primary);
@@ -172,7 +173,7 @@ void arch_cpu_idle(void);
 void arch_cpu_idle_prepare(void);
 void arch_cpu_idle_enter(void);
 void arch_cpu_idle_exit(void);
-void arch_cpu_idle_dead(void);
+void __noreturn arch_cpu_idle_dead(void);
 
 #ifdef CONFIG_ARCH_HAS_CPU_FINALIZE_INIT
 void arch_cpu_finalize_init(void);
