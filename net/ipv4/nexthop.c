@@ -1357,13 +1357,13 @@ static bool ipv6_good_nh(const struct fib6_nh *nh)
 	int state = NUD_REACHABLE;
 	struct neighbour *n;
 
-	rcu_read_lock_bh();
+	rcu_read_lock();
 
 	n = __ipv6_neigh_lookup_noref_stub(nh->fib_nh_dev, &nh->fib_nh_gw6);
 	if (n)
 		state = READ_ONCE(n->nud_state);
 
-	rcu_read_unlock_bh();
+	rcu_read_unlock();
 
 	return !!(state & NUD_VALID);
 }
@@ -1373,14 +1373,14 @@ static bool ipv4_good_nh(const struct fib_nh *nh)
 	int state = NUD_REACHABLE;
 	struct neighbour *n;
 
-	rcu_read_lock_bh();
+	rcu_read_lock();
 
 	n = __ipv4_neigh_lookup_noref(nh->fib_nh_dev,
 				      (__force u32)nh->fib_nh_gw4);
 	if (n)
 		state = READ_ONCE(n->nud_state);
 
-	rcu_read_unlock_bh();
+	rcu_read_unlock();
 
 	return !!(state & NUD_VALID);
 }
@@ -2797,6 +2797,7 @@ static int nh_create_ipv4(struct net *net, struct nexthop *nh,
 		.fc_gw4   = cfg->gw.ipv4,
 		.fc_gw_family = cfg->gw.ipv4 ? AF_INET : 0,
 		.fc_flags = cfg->nh_flags,
+		.fc_nlinfo = cfg->nlinfo,
 		.fc_encap = cfg->nh_encap,
 		.fc_encap_type = cfg->nh_encap_type,
 	};
@@ -2835,6 +2836,7 @@ static int nh_create_ipv6(struct net *net,  struct nexthop *nh,
 		.fc_ifindex = cfg->nh_ifindex,
 		.fc_gateway = cfg->gw.ipv6,
 		.fc_flags = cfg->nh_flags,
+		.fc_nlinfo = cfg->nlinfo,
 		.fc_encap = cfg->nh_encap,
 		.fc_encap_type = cfg->nh_encap_type,
 		.fc_is_fdb = cfg->nh_fdb,
