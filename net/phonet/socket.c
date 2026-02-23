@@ -153,7 +153,7 @@ EXPORT_SYMBOL(pn_sock_unhash);
 
 static DEFINE_MUTEX(port_mutex);
 
-static int pn_socket_bind(struct socket *sock, struct sockaddr *addr, int len)
+static int pn_socket_bind(struct socket *sock, struct sockaddr_unsized *addr, int len)
 {
 	struct sock *sk = sock->sk;
 	struct pn_sock *pn = pn_sk(sk);
@@ -206,16 +206,16 @@ static int pn_socket_autobind(struct socket *sock)
 
 	memset(&sa, 0, sizeof(sa));
 	sa.spn_family = AF_PHONET;
-	err = pn_socket_bind(sock, (struct sockaddr *)&sa,
-				sizeof(struct sockaddr_pn));
+	err = pn_socket_bind(sock, (struct sockaddr_unsized *)&sa,
+			     sizeof(struct sockaddr_pn));
 	if (err != -EINVAL)
 		return err;
 	BUG_ON(!pn_port(pn_sk(sock->sk)->sobject));
 	return 0; /* socket was already bound */
 }
 
-static int pn_socket_connect(struct socket *sock, struct sockaddr *addr,
-		int len, int flags)
+static int pn_socket_connect(struct socket *sock, struct sockaddr_unsized *addr,
+			     int len, int flags)
 {
 	struct sock *sk = sock->sk;
 	struct pn_sock *pn = pn_sk(sk);
@@ -587,7 +587,7 @@ static int pn_sock_seq_show(struct seq_file *seq, void *v)
 			from_kuid_munged(seq_user_ns(seq), sk_uid(sk)),
 			sock_i_ino(sk),
 			refcount_read(&sk->sk_refcnt), sk,
-			atomic_read(&sk->sk_drops));
+			sk_drops_read(sk));
 	}
 	seq_pad(seq, '\n');
 	return 0;

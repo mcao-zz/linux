@@ -66,7 +66,7 @@ struct fbnic_net;
 	(4096 - FBNIC_RX_HROOM - FBNIC_RX_TROOM - FBNIC_RX_PAD)
 #define FBNIC_HDS_THRESH_DEFAULT \
 	(1536 - FBNIC_RX_PAD)
-#define FBNIC_HDR_BYTES_MIN		128
+#define FBNIC_HDR_BYTES_MIN		256
 
 struct fbnic_pkt_buff {
 	struct xdp_buff buff;
@@ -92,6 +92,9 @@ struct fbnic_queue_stats {
 			u64 csum_none;
 			u64 length_errors;
 		} rx;
+		struct {
+			u64 alloc_failed;
+		} bdq;
 	};
 	u64 dropped;
 	struct u64_stats_sync syncp;
@@ -100,7 +103,7 @@ struct fbnic_queue_stats {
 #define FBNIC_PAGECNT_BIAS_MAX	PAGE_SIZE
 
 struct fbnic_rx_buf {
-	struct page *page;
+	netmem_ref netmem;
 	long pagecnt_bias;
 };
 
@@ -121,11 +124,16 @@ struct fbnic_ring {
 
 	u32 head, tail;			/* Head/Tail of ring */
 
-	/* Deferred_head is used to cache the head for TWQ1 if an attempt
-	 * is made to clean TWQ1 with zero napi_budget. We do not use it for
-	 * any other ring.
-	 */
-	s32 deferred_head;
+	union {
+		/* Rx BDQs only */
+		struct page_pool *page_pool;
+
+		/* Deferred_head is used to cache the head for TWQ1 if
+		 * an attempt is made to clean TWQ1 with zero napi_budget.
+		 * We do not use it for any other ring.
+		 */
+		s32 deferred_head;
+	};
 
 	struct fbnic_queue_stats stats;
 
@@ -142,8 +150,8 @@ struct fbnic_q_triad {
 struct fbnic_napi_vector {
 	struct napi_struct napi;
 	struct device *dev;		/* Device for DMA unmapping */
-	struct page_pool *page_pool;
 	struct fbnic_dev *fbd;
+	struct dentry *dbg_nv;
 
 	u16 v_idx;
 	u8 txt_count;
@@ -152,6 +160,8 @@ struct fbnic_napi_vector {
 	struct fbnic_q_triad qt[];
 };
 
+extern const struct netdev_queue_mgmt_ops fbnic_queue_mgmt_ops;
+
 netdev_tx_t fbnic_xmit_frame(struct sk_buff *skb, struct net_device *dev);
 netdev_features_t
 fbnic_features_check(struct sk_buff *skb, struct net_device *dev,
@@ -159,8 +169,12 @@ fbnic_features_check(struct sk_buff *skb, struct net_device *dev,
 
 void fbnic_aggregate_ring_rx_counters(struct fbnic_net *fbn,
 				      struct fbnic_ring *rxr);
+void fbnic_aggregate_ring_bdq_counters(struct fbnic_net *fbn,
+				       struct fbnic_ring *rxr);
 void fbnic_aggregate_ring_tx_counters(struct fbnic_net *fbn,
 				      struct fbnic_ring *txr);
+void fbnic_aggregate_ring_xdp_counters(struct fbnic_net *fbn,
+				       struct fbnic_ring *xdpr);
 
 int fbnic_alloc_napi_vectors(struct fbnic_net *fbn);
 void fbnic_free_napi_vectors(struct fbnic_net *fbn);
@@ -171,11 +185,15 @@ void fbnic_reset_netif_queues(struct fbnic_net *fbn);
 irqreturn_t fbnic_msix_clean_rings(int irq, void *data);
 void fbnic_napi_enable(struct fbnic_net *fbn);
 void fbnic_napi_disable(struct fbnic_net *fbn);
+void fbnic_config_drop_mode(struct fbnic_net *fbn, bool tx_pause);
 void fbnic_enable(struct fbnic_net *fbn);
 void fbnic_disable(struct fbnic_net *fbn);
+void fbnic_dbg_up(struct fbnic_net *fbn);
+void fbnic_dbg_down(struct fbnic_net *fbn);
 void fbnic_flush(struct fbnic_net *fbn);
 void fbnic_fill(struct fbnic_net *fbn);
 
+u32 __iomem *fbnic_ring_csr_base(const struct fbnic_ring *ring);
 void fbnic_napi_depletion_check(struct net_device *netdev);
 int fbnic_wait_all_queues_idle(struct fbnic_dev *fbd, bool may_fail);
 
@@ -184,4 +202,6 @@ static inline int fbnic_napi_idx(const struct fbnic_napi_vector *nv)
 	return nv->v_idx - FBNIC_NON_NAPI_VECTORS;
 }
 
+void fbnic_dbg_nv_init(struct fbnic_napi_vector *nv);
+void fbnic_dbg_nv_exit(struct fbnic_napi_vector *nv);
 #endif /* _FBNIC_TXRX_H_ */

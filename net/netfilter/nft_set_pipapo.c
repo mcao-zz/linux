@@ -530,8 +530,7 @@ static struct nft_pipapo_elem *pipapo_get(const struct nft_pipapo_match *m,
 	local_bh_disable();
 
 #if defined(CONFIG_X86_64) && !defined(CONFIG_UML)
-	if (boot_cpu_has(X86_FEATURE_AVX2) && boot_cpu_has(X86_FEATURE_AVX) &&
-	    irq_fpu_usable()) {
+	if (boot_cpu_has(X86_FEATURE_AVX2) && irq_fpu_usable()) {
 		e = pipapo_get_avx2(m, data, genmask, tstamp);
 		local_bh_enable();
 		return e;
@@ -550,6 +549,22 @@ static struct nft_pipapo_elem *pipapo_get(const struct nft_pipapo_match *m,
  *
  * This function is called from the data path.  It will search for
  * an element matching the given key in the current active copy.
+ * Unlike other set types, this uses 0 instead of nft_genmask_cur().
+ *
+ * This is because new (future) elements are not reachable from
+ * priv->match, they get added to priv->clone instead.
+ * When the commit phase flips the generation bitmask, the
+ * 'now old' entries are skipped but without the 'now current'
+ * elements becoming visible. Using nft_genmask_cur() thus creates
+ * inconsistent state: matching old entries get skipped but thew
+ * newly matching entries are unreachable.
+ *
+ * GENMASK_ANY doesn't work for the same reason: old-gen entries get
+ * skipped, new-gen entries are only reachable from priv->clone.
+ *
+ * nft_pipapo_commit swaps ->clone and ->match shortly after the
+ * genbit flip.  As ->clone doesn't contain the old entries in the first
+ * place, lookup will only find the now-current ones.
  *
  * Return: ntables API extension pointer or NULL if no match.
  */
@@ -558,12 +573,11 @@ nft_pipapo_lookup(const struct net *net, const struct nft_set *set,
 		  const u32 *key)
 {
 	struct nft_pipapo *priv = nft_set_priv(set);
-	u8 genmask = nft_genmask_cur(net);
 	const struct nft_pipapo_match *m;
 	const struct nft_pipapo_elem *e;
 
 	m = rcu_dereference(priv->match);
-	e = pipapo_get_slow(m, (const u8 *)key, genmask, get_jiffies_64());
+	e = pipapo_get_slow(m, (const u8 *)key, 0, get_jiffies_64());
 
 	return e ? &e->ext : NULL;
 }
@@ -1303,8 +1317,8 @@ static int nft_pipapo_insert(const struct net *net, const struct nft_set *set,
 		else
 			dup_end = dup_key;
 
-		if (!memcmp(start, dup_key->data, sizeof(*dup_key->data)) &&
-		    !memcmp(end, dup_end->data, sizeof(*dup_end->data))) {
+		if (!memcmp(start, dup_key->data, set->klen) &&
+		    !memcmp(end, dup_end->data, set->klen)) {
 			*elem_priv = &dup->priv;
 			return -EEXIST;
 		}
@@ -2356,6 +2370,7 @@ const struct nft_set_type nft_set_pipapo_type = {
 		.gc_init	= nft_pipapo_gc_init,
 		.commit		= nft_pipapo_commit,
 		.abort		= nft_pipapo_abort,
+		.abort_skip_removal = true,
 		.elemsize	= offsetof(struct nft_pipapo_elem, ext),
 	},
 };
@@ -2380,6 +2395,7 @@ const struct nft_set_type nft_set_pipapo_avx2_type = {
 		.gc_init	= nft_pipapo_gc_init,
 		.commit		= nft_pipapo_commit,
 		.abort		= nft_pipapo_abort,
+		.abort_skip_removal = true,
 		.elemsize	= offsetof(struct nft_pipapo_elem, ext),
 	},
 };

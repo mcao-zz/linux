@@ -44,7 +44,7 @@ struct fbnic_net {
 
 	struct phylink *phylink;
 	struct phylink_config phylink_config;
-	struct phylink_pcs phylink_pcs;
+	struct phylink_pcs *pcs;
 
 	u8 aui;
 	u8 fec;
@@ -68,10 +68,13 @@ struct fbnic_net {
 	/* Storage for stats after ring destruction */
 	struct fbnic_queue_stats tx_stats;
 	struct fbnic_queue_stats rx_stats;
+	struct fbnic_queue_stats bdq_stats;
 	u64 link_down_events;
 
 	/* Time stamping filter config */
 	struct kernel_hwtstamp_config hwtstamp_config;
+
+	bool tx_pause;
 };
 
 int __fbnic_open(struct fbnic_net *fbn);
@@ -94,8 +97,8 @@ void fbnic_time_init(struct fbnic_net *fbn);
 int fbnic_time_start(struct fbnic_net *fbn);
 void fbnic_time_stop(struct fbnic_net *fbn);
 
-void __fbnic_set_rx_mode(struct net_device *netdev);
-void fbnic_clear_rx_mode(struct net_device *netdev);
+void __fbnic_set_rx_mode(struct fbnic_dev *fbd);
+void fbnic_clear_rx_mode(struct fbnic_dev *fbd);
 
 void fbnic_phylink_get_pauseparam(struct net_device *netdev,
 				  struct ethtool_pauseparam *pause);
@@ -105,8 +108,10 @@ int fbnic_phylink_ethtool_ksettings_get(struct net_device *netdev,
 					struct ethtool_link_ksettings *cmd);
 int fbnic_phylink_get_fecparam(struct net_device *netdev,
 			       struct ethtool_fecparam *fecparam);
+int fbnic_phylink_create(struct net_device *netdev);
+void fbnic_phylink_destroy(struct net_device *netdev);
 int fbnic_phylink_init(struct net_device *netdev);
-
+void fbnic_phylink_pmd_training_complete_notify(struct net_device *netdev);
 bool fbnic_check_split_frames(struct bpf_prog *prog,
 			      unsigned int mtu, u32 hds_threshold);
 #endif /* _FBNIC_NETDEV_H_ */

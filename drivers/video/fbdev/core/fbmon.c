@@ -32,9 +32,12 @@
 #include <linux/module.h>
 #include <linux/pci.h>
 #include <linux/slab.h>
-#include <video/edid.h>
+#include <linux/string_choices.h>
+#include <linux/sysfb.h>
+
 #include <video/of_videomode.h>
 #include <video/videomode.h>
+
 #include "../edid.h"
 
 /*
@@ -320,9 +323,9 @@ static void get_dpms_capabilities(unsigned char flags,
 	if (flags & DPMS_STANDBY)
 		specs->dpms |= FB_DPMS_STANDBY;
 	DPRINTK("      DPMS: Active %s, Suspend %s, Standby %s\n",
-	       (flags & DPMS_ACTIVE_OFF) ? "yes" : "no",
-	       (flags & DPMS_SUSPEND)    ? "yes" : "no",
-	       (flags & DPMS_STANDBY)    ? "yes" : "no");
+	       str_yes_no(flags & DPMS_ACTIVE_OFF),
+	       str_yes_no(flags & DPMS_SUSPEND),
+	       str_yes_no(flags & DPMS_STANDBY));
 }
 
 static void get_chroma(unsigned char *block, struct fb_monspecs *specs)
@@ -1503,7 +1506,7 @@ const unsigned char *fb_firmware_edid(struct device *device)
 		res = &dev->resource[PCI_ROM_RESOURCE];
 
 	if (res && res->flags & IORESOURCE_ROM_SHADOW)
-		edid = edid_info.dummy;
+		edid = sysfb_primary_display.edid.dummy;
 
 	return edid;
 }

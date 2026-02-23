@@ -142,7 +142,7 @@ static bool is_not(const char *str)
 }
 
 /**
- * struct prog_entry - a singe entry in the filter program
+ * struct prog_entry - a single entry in the filter program
  * @target:	     Index to jump to on a branch (actually one minus the index)
  * @when_to_branch:  The value of the result of the predicate to do a branch
  * @pred:	     The predicate to execute.
@@ -1375,7 +1375,7 @@ static void free_filter_list_tasks(struct rcu_head *rhp)
 	struct filter_head *filter_list = container_of(rhp, struct filter_head, rcu);
 
 	INIT_RCU_WORK(&filter_list->rwork, free_filter_list_work);
-	queue_rcu_work(system_wq, &filter_list->rwork);
+	queue_rcu_work(system_dfl_wq, &filter_list->rwork);
 }
 
 /*

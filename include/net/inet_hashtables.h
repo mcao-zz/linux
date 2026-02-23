@@ -108,6 +108,8 @@ struct inet_bind2_bucket {
 	struct hlist_node	bhash_node;
 	/* List of sockets hashed to this bucket */
 	struct hlist_head	owners;
+	signed char		fastreuse;
+	signed char		fastreuseport;
 };
 
 static inline struct net *ib_net(const struct inet_bind_bucket *ib)
@@ -289,7 +291,6 @@ int inet_hashinfo2_init_mod(struct inet_hashinfo *h);
 bool inet_ehash_insert(struct sock *sk, struct sock *osk, bool *found_dup_sk);
 bool inet_ehash_nolisten(struct sock *sk, struct sock *osk,
 			 bool *found_dup_sk);
-int __inet_hash(struct sock *sk, struct sock *osk);
 int inet_hash(struct sock *sk);
 void inet_unhash(struct sock *sk);
 

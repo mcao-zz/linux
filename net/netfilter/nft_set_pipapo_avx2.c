@@ -1099,7 +1099,7 @@ bool nft_pipapo_avx2_estimate(const struct nft_set_desc *desc, u32 features,
 	    desc->field_count < NFT_PIPAPO_MIN_FIELDS)
 		return false;
 
-	if (!boot_cpu_has(X86_FEATURE_AVX2) || !boot_cpu_has(X86_FEATURE_AVX))
+	if (!boot_cpu_has(X86_FEATURE_AVX2))
 		return false;
 
 	est->size = pipapo_estimate_size(desc);
@@ -1179,7 +1179,6 @@ struct nft_pipapo_elem *pipapo_get_avx2(const struct nft_pipapo_match *m,
 
 	nft_pipapo_avx2_prepare();
 
-next_match:
 	nft_pipapo_for_each_field(f, i, m) {
 		bool last = i == m->field_count - 1, first = !i;
 		int ret = 0;
@@ -1226,6 +1225,7 @@ next_match:
 
 #undef NFT_SET_PIPAPO_AVX2_LOOKUP
 
+next_match:
 		if (ret < 0) {
 			scratch->map_index = map_index;
 			kernel_fpu_end();
@@ -1238,8 +1238,11 @@ next_match:
 
 			e = f->mt[ret].e;
 			if (unlikely(__nft_set_elem_expired(&e->ext, tstamp) ||
-				     !nft_set_elem_active(&e->ext, genmask)))
+				     !nft_set_elem_active(&e->ext, genmask))) {
+				ret = pipapo_refill(res, f->bsize, f->rules,
+						    fill, f->mt, last);
 				goto next_match;
+			}
 
 			scratch->map_index = map_index;
 			kernel_fpu_end();
@@ -1275,7 +1278,6 @@ nft_pipapo_avx2_lookup(const struct net *net, const struct nft_set *set,
 		       const u32 *key)
 {
 	struct nft_pipapo *priv = nft_set_priv(set);
-	u8 genmask = nft_genmask_cur(net);
 	const struct nft_pipapo_match *m;
 	const u8 *rp = (const u8 *)key;
 	const struct nft_pipapo_elem *e;
@@ -1293,7 +1295,7 @@ nft_pipapo_avx2_lookup(const struct net *net, const struct nft_set *set,
 
 	m = rcu_dereference(priv->match);
 
-	e = pipapo_get_avx2(m, rp, genmask, get_jiffies_64());
+	e = pipapo_get_avx2(m, rp, 0, get_jiffies_64());
 	local_bh_enable();
 
 	return e ? &e->ext : NULL;

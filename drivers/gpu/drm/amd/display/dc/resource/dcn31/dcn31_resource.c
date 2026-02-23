@@ -888,10 +888,13 @@ static const struct dc_debug_options debug_defaults_drv = {
 		}
 	},
 	.disable_z10 = true,
-	.enable_legacy_fast_update = true,
 	.enable_z9_disable_interface = true, /* Allow support for the PMFW interface for disable Z9*/
 	.dml_hostvm_override = DML_HOSTVM_OVERRIDE_FALSE,
 	.using_dml2 = false,
+};
+
+static const struct dc_check_config config_defaults = {
+	.enable_legacy_fast_update = true,
 };
 
 static const struct dc_panel_config panel_config_defaults = {
@@ -1978,6 +1981,7 @@ static bool dcn31_resource_construct(
 			dc->caps.vbios_lttpr_aware = true;
 		}
 	}
+	dc->check_config = config_defaults;
 
 	if (dc->ctx->dce_environment == DCE_ENV_PRODUCTION_DRV)
 		dc->debug = debug_defaults_drv;
@@ -2246,12 +2250,15 @@ enum dc_status dcn31_update_dc_state_for_encoder_switch(struct dc_link *link,
 	int i;
 
 #if defined(CONFIG_DRM_AMD_DC_FP)
-	for (i = 0; i < state->stream_count; i++)
-		if (state->streams[i] && state->streams[i]->link && state->streams[i]->link == link)
-			link->dc->hwss.calculate_pix_rate_divider((struct dc *)link->dc, state, state->streams[i]);
+	if (link->dc->hwss.calculate_pix_rate_divider) {
+		for (i = 0; i < state->stream_count; i++)
+			if (state->streams[i] && state->streams[i]->link && state->streams[i]->link == link)
+				link->dc->hwss.calculate_pix_rate_divider((struct dc *)link->dc, state, state->streams[i]);
+	}
 
 	for (i = 0; i < pipe_count; i++) {
-		link->dc->res_pool->funcs->build_pipe_pix_clk_params(&pipes[i]);
+		if (link->dc->res_pool->funcs->build_pipe_pix_clk_params)
+			link->dc->res_pool->funcs->build_pipe_pix_clk_params(&pipes[i]);
 
 		// Setup audio
 		if (pipes[i].stream_res.audio != NULL)

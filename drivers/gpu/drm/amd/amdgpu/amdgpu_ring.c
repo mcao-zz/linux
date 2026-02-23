@@ -33,6 +33,7 @@
 
 #include <drm/amdgpu_drm.h>
 #include "amdgpu.h"
+#include "amdgpu_ras_mgr.h"
 #include "atom.h"
 
 /*
@@ -75,8 +76,12 @@ unsigned int amdgpu_ring_max_ibs(enum amdgpu_ring_type type)
  * @ring: amdgpu_ring structure holding ring information
  * @ndw: number of dwords to allocate in the ring buffer
  *
- * Allocate @ndw dwords in the ring buffer (all asics).
- * Returns 0 on success, error on failure.
+ * Allocate @ndw dwords in the ring buffer. The number of dwords should be the
+ * sum of all commands written to the ring.
+ *
+ * Returns:
+ * 0 on success, otherwise -ENOMEM if it tries to allocate more than the
+ * maximum dword allowed for one submission.
  */
 int amdgpu_ring_alloc(struct amdgpu_ring *ring, unsigned int ndw)
 {
@@ -122,7 +127,8 @@ static void amdgpu_ring_alloc_reemit(struct amdgpu_ring *ring, unsigned int ndw)
 		ring->funcs->begin_use(ring);
 }
 
-/** amdgpu_ring_insert_nop - insert NOP packets
+/**
+ * amdgpu_ring_insert_nop - insert NOP packets
  *
  * @ring: amdgpu_ring structure holding ring information
  * @count: the number of NOP packets to insert
@@ -159,8 +165,16 @@ void amdgpu_ring_insert_nop(struct amdgpu_ring *ring, uint32_t count)
  */
 void amdgpu_ring_generic_pad_ib(struct amdgpu_ring *ring, struct amdgpu_ib *ib)
 {
-	while (ib->length_dw & ring->funcs->align_mask)
-		ib->ptr[ib->length_dw++] = ring->funcs->nop;
+	u32 align_mask = ring->funcs->align_mask;
+	u32 count = ib->length_dw & align_mask;
+
+	if (count) {
+		count = align_mask + 1 - count;
+
+		memset32(&ib->ptr[ib->length_dw], ring->funcs->nop, count);
+
+		ib->length_dw += count;
+	}
 }
 
 /**
@@ -177,7 +191,7 @@ void amdgpu_ring_commit(struct amdgpu_ring *ring)
 	uint32_t count;
 
 	if (ring->count_dw < 0)
-		DRM_ERROR("amdgpu: writing more dwords to the ring than expected!\n");
+		drm_err(adev_to_drm(ring->adev), "writing more dwords to the ring than expected!\n");
 
 	/* We pad to match fetch size */
 	count = ring->funcs->align_mask + 1 -
@@ -364,7 +378,8 @@ int amdgpu_ring_init(struct amdgpu_device *adev, struct amdgpu_ring *ring,
 
 	/* Allocate ring buffer */
 	if (ring->ring_obj == NULL) {
-		r = amdgpu_bo_create_kernel(adev, ring->ring_size + ring->funcs->extra_dw, PAGE_SIZE,
+		r = amdgpu_bo_create_kernel(adev, ring->ring_size + ring->funcs->extra_bytes,
+					    PAGE_SIZE,
 					    AMDGPU_GEM_DOMAIN_GTT,
 					    &ring->ring_obj,
 					    &ring->gpu_addr,
@@ -421,8 +436,6 @@ void amdgpu_ring_fini(struct amdgpu_ring *ring)
 	dma_fence_put(ring->vmid_wait);
 	ring->vmid_wait = NULL;
 	ring->me = 0;
-
-	ring->adev->rings[ring->idx] = NULL;
 }
 
 /**
@@ -461,9 +474,6 @@ bool amdgpu_ring_soft_recovery(struct amdgpu_ring *ring, unsigned int vmid,
 	ktime_t deadline;
 	bool ret;
 
-	if (unlikely(ring->adev->debug_disable_soft_recovery))
-		return false;
-
 	deadline = ktime_add_us(ktime_get(), 10000);
 
 	if (amdgpu_sriov_vf(ring->adev) || !ring->funcs->soft_recovery || !fence)
@@ -491,6 +501,66 @@ bool amdgpu_ring_soft_recovery(struct amdgpu_ring *ring, unsigned int vmid,
  */
 #if defined(CONFIG_DEBUG_FS)
 
+static ssize_t amdgpu_ras_cper_debugfs_read(struct file *f, char __user *buf,
+					    size_t size, loff_t *offset)
+{
+	const uint8_t ring_header_size = 12;
+	struct amdgpu_ring *ring = file_inode(f)->i_private;
+	struct ras_cmd_cper_snapshot_req *snapshot_req __free(kfree) =
+		kzalloc(sizeof(struct ras_cmd_cper_snapshot_req), GFP_KERNEL);
+	struct ras_cmd_cper_snapshot_rsp *snapshot_rsp __free(kfree) =
+		kzalloc(sizeof(struct ras_cmd_cper_snapshot_rsp), GFP_KERNEL);
+	struct ras_cmd_cper_record_req *record_req __free(kfree) =
+		kzalloc(sizeof(struct ras_cmd_cper_record_req), GFP_KERNEL);
+	struct ras_cmd_cper_record_rsp *record_rsp __free(kfree) =
+		kzalloc(sizeof(struct ras_cmd_cper_record_rsp), GFP_KERNEL);
+	uint8_t *ring_header __free(kfree) =
+		kzalloc(ring_header_size, GFP_KERNEL);
+	uint32_t total_cper_num;
+	uint64_t start_cper_id;
+	int r;
+
+	if (!snapshot_req || !snapshot_rsp || !record_req || !record_rsp ||
+	    !ring_header)
+		return -ENOMEM;
+
+	if (!(*offset)) {
+		/* Need at least 12 bytes for the header on the first read */
+		if (size < ring_header_size)
+			return -EINVAL;
+
+		if (copy_to_user(buf, ring_header, ring_header_size))
+			return -EFAULT;
+		buf += ring_header_size;
+		size -= ring_header_size;
+	}
+
+	r = amdgpu_ras_mgr_handle_ras_cmd(ring->adev,
+					  RAS_CMD__GET_CPER_SNAPSHOT,
+					  snapshot_req, sizeof(struct ras_cmd_cper_snapshot_req),
+					  snapshot_rsp, sizeof(struct ras_cmd_cper_snapshot_rsp));
+	if (r || !snapshot_rsp->total_cper_num)
+		return r;
+
+	start_cper_id = snapshot_rsp->start_cper_id;
+	total_cper_num = snapshot_rsp->total_cper_num;
+
+	record_req->buf_ptr = (uint64_t)(uintptr_t)buf;
+	record_req->buf_size = size;
+	record_req->cper_start_id = start_cper_id + *offset;
+	record_req->cper_num = total_cper_num;
+	r = amdgpu_ras_mgr_handle_ras_cmd(ring->adev, RAS_CMD__GET_CPER_RECORD,
+					  record_req, sizeof(struct ras_cmd_cper_record_req),
+					  record_rsp, sizeof(struct ras_cmd_cper_record_rsp));
+	if (r)
+		return r;
+
+	r = *offset ? record_rsp->real_data_size : record_rsp->real_data_size + ring_header_size;
+	(*offset) += record_rsp->real_cper_num;
+
+	return r;
+}
+
 /* Layout of file is 12 bytes consisting of
  * - rptr
  * - wptr
@@ -506,6 +576,9 @@ static ssize_t amdgpu_debugfs_ring_read(struct file *f, char __user *buf,
 	uint64_t p;
 	loff_t i;
 	int r;
+
+	if (ring->funcs->type == AMDGPU_RING_TYPE_CPER && amdgpu_uniras_enabled(ring->adev))
+		return amdgpu_ras_cper_debugfs_read(f, buf, size, pos);
 
 	if (*pos & 3 || size & 3)
 		return -EINVAL;
@@ -812,9 +885,9 @@ int amdgpu_ring_reset_helper_end(struct amdgpu_ring *ring,
 	if (r)
 		return r;
 
-	/* signal the fence of the bad job */
+	/* set an error on all fences from the context */
 	if (guilty_fence)
-		amdgpu_fence_driver_guilty_force_completion(guilty_fence);
+		amdgpu_fence_driver_update_timedout_fence_state(guilty_fence);
 	/* Re-emit the non-guilty commands */
 	if (ring->ring_backup_entries_to_copy) {
 		amdgpu_ring_alloc_reemit(ring, ring->ring_backup_entries_to_copy);

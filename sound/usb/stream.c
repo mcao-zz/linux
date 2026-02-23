@@ -349,7 +349,7 @@ snd_pcm_chmap_elem *convert_chmap_v3(struct uac3_cluster_header_descriptor
 		u16 cs_len;
 		u8 cs_type;
 
-		if (len < sizeof(*p))
+		if (len < sizeof(*cs_desc))
 			break;
 		cs_len = le16_to_cpu(cs_desc->wLength);
 		if (len < cs_len)
@@ -690,6 +690,7 @@ audio_format_alloc_init(struct snd_usb_audio *chip,
 		       int protocol, int iface_no, int altset_idx,
 		       int altno, int num_channels, int clock)
 {
+	struct usb_host_endpoint *ep = &alts->endpoint[0];
 	struct audioformat *fp;
 
 	fp = kzalloc(sizeof(*fp), GFP_KERNEL);
@@ -703,11 +704,8 @@ audio_format_alloc_init(struct snd_usb_audio *chip,
 	fp->ep_attr = get_endpoint(alts, 0)->bmAttributes;
 	fp->datainterval = snd_usb_parse_datainterval(chip, alts);
 	fp->protocol = protocol;
-	fp->maxpacksize = le16_to_cpu(get_endpoint(alts, 0)->wMaxPacketSize);
+	fp->maxpacksize = usb_endpoint_max_periodic_payload(chip->dev, ep);
 	fp->channels = num_channels;
-	if (snd_usb_get_speed(chip->dev) == USB_SPEED_HIGH)
-		fp->maxpacksize = (((fp->maxpacksize >> 11) & 3) + 1)
-				* (fp->maxpacksize & 0x7ff);
 	fp->clock = clock;
 	INIT_LIST_HEAD(&fp->list);
 

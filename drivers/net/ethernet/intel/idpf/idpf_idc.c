@@ -247,10 +247,10 @@ static void idpf_unplug_aux_dev(struct auxiliary_device *adev)
 	if (!adev)
 		return;
 
+	ida_free(&idpf_idc_ida, adev->id);
+
 	auxiliary_device_delete(adev);
 	auxiliary_device_uninit(adev);
-
-	ida_free(&idpf_idc_ida, adev->id);
 }
 
 /**
@@ -322,7 +322,7 @@ static void idpf_idc_vport_dev_down(struct idpf_adapter *adapter)
 	for (i = 0; i < adapter->num_alloc_vports; i++) {
 		struct idpf_vport *vport = adapter->vports[i];
 
-		if (!vport)
+		if (!vport || !vport->vdev_info)
 			continue;
 
 		idpf_unplug_aux_dev(vport->vdev_info->adev);

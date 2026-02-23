@@ -3,12 +3,12 @@
 
 libphy-y			:= phy.o phy-c45.o phy-core.o phy_device.o \
 				   linkmode.o phy_link_topology.o \
-				   phy_caps.o mdio_bus_provider.o
+				   phy_caps.o mdio_bus_provider.o phy_port.o
 mdio-bus-y			+= mdio_bus.o mdio_device.o
 
 ifdef CONFIG_PHYLIB
 # built-in whenever PHYLIB is built-in or module
-obj-y				+= stubs.o mdio-boardinfo.o
+obj-y				+= stubs.o
 endif
 
 libphy-$(CONFIG_SWPHY)		+= swphy.o

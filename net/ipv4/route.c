@@ -414,11 +414,11 @@ static struct neighbour *ipv4_neigh_lookup(const struct dst_entry *dst,
 					   const void *daddr)
 {
 	const struct rtable *rt = container_of(dst, struct rtable, dst);
-	struct net_device *dev = dst_dev(dst);
+	struct net_device *dev;
 	struct neighbour *n;
 
 	rcu_read_lock();
-
+	dev = dst_dev_rcu(dst);
 	if (likely(rt->rt_gw_family == AF_INET)) {
 		n = ip_neigh_gw4(dev, rt->rt_gw4);
 	} else if (rt->rt_gw_family == AF_INET6) {
@@ -607,6 +607,11 @@ static void fnhe_remove_oldest(struct fnhe_hash_bucket *hash)
 			oldest_p = fnhe_p;
 		}
 	}
+
+	/* Clear oldest->fnhe_daddr to prevent this fnhe from being
+	 * rebound with new dsts in rt_bind_exception().
+	 */
+	oldest->fnhe_daddr = 0;
 	fnhe_flush_routes(oldest);
 	*oldest_p = oldest->fnhe_next;
 	kfree_rcu(oldest, rcu);
@@ -1027,7 +1032,7 @@ static void __ip_rt_update_pmtu(struct rtable *rt, struct flowi4 *fl4, u32 mtu)
 		return;
 
 	rcu_read_lock();
-	net = dev_net_rcu(dst_dev(dst));
+	net = dst_dev_net_rcu(dst);
 	if (mtu < net->ipv4.ip_rt_min_pmtu) {
 		lock = true;
 		mtu = min(old_mtu, net->ipv4.ip_rt_min_pmtu);
@@ -1222,8 +1227,8 @@ EXPORT_INDIRECT_CALLABLE(ipv4_dst_check);
 
 static void ipv4_send_dest_unreach(struct sk_buff *skb)
 {
+	struct inet_skb_parm parm;
 	struct net_device *dev;
-	struct ip_options opt;
 	int res;
 
 	/* Recompile ip options since IPCB may not be valid anymore.
@@ -1233,21 +1238,21 @@ static void ipv4_send_dest_unreach(struct sk_buff *skb)
 	    ip_hdr(skb)->version != 4 || ip_hdr(skb)->ihl < 5)
 		return;
 
-	memset(&opt, 0, sizeof(opt));
+	memset(&parm, 0, sizeof(parm));
 	if (ip_hdr(skb)->ihl > 5) {
 		if (!pskb_network_may_pull(skb, ip_hdr(skb)->ihl * 4))
 			return;
-		opt.optlen = ip_hdr(skb)->ihl * 4 - sizeof(struct iphdr);
+		parm.opt.optlen = ip_hdr(skb)->ihl * 4 - sizeof(struct iphdr);
 
 		rcu_read_lock();
 		dev = skb->dev ? skb->dev : skb_rtable(skb)->dst.dev;
-		res = __ip_options_compile(dev_net(dev), &opt, skb, NULL);
+		res = __ip_options_compile(dev_net(dev), &parm.opt, skb, NULL);
 		rcu_read_unlock();
 
 		if (res)
 			return;
 	}
-	__icmp_send(skb, ICMP_DEST_UNREACH, ICMP_HOST_UNREACH, 0, &opt);
+	__icmp_send(skb, ICMP_DEST_UNREACH, ICMP_HOST_UNREACH, 0, &parm);
 }
 
 static void ipv4_link_failure(struct sk_buff *skb)
@@ -1327,7 +1332,7 @@ static unsigned int ipv4_default_advmss(const struct dst_entry *dst)
 	struct net *net;
 
 	rcu_read_lock();
-	net = dev_net_rcu(dst_dev(dst));
+	net = dst_dev_net_rcu(dst);
 	advmss = max_t(unsigned int, ipv4_mtu(dst) - header_size,
 				   net->ipv4.ip_rt_min_advmss);
 	rcu_read_unlock();
@@ -1532,9 +1537,9 @@ void rt_add_uncached_list(struct rtable *rt)
 
 void rt_del_uncached_list(struct rtable *rt)
 {
-	if (!list_empty(&rt->dst.rt_uncached)) {
-		struct uncached_list *ul = rt->dst.rt_uncached_list;
+	struct uncached_list *ul = rt->dst.rt_uncached_list;
 
+	if (ul) {
 		spin_lock_bh(&ul->lock);
 		list_del_init(&rt->dst.rt_uncached);
 		spin_unlock_bh(&ul->lock);
@@ -1790,8 +1795,8 @@ static void ip_handle_martian_source(struct net_device *dev,
 		 *	RFC1812 recommendation, if source is martian,
 		 *	the only hint is MAC header.
 		 */
-		pr_warn("martian source %pI4 from %pI4, on dev %s\n",
-			&daddr, &saddr, dev->name);
+		pr_warn("martian source (src=%pI4, dst=%pI4, dev=%s)\n",
+			&saddr, &daddr, dev->name);
 		if (dev->hard_header_len && skb_mac_header_was_set(skb)) {
 			print_hex_dump(KERN_WARNING, "ll header: ",
 				       DUMP_PREFIX_OFFSET, 16, 1,
@@ -2470,8 +2475,8 @@ martian_destination:
 	RT_CACHE_STAT_INC(in_martian_dst);
 #ifdef CONFIG_IP_ROUTE_VERBOSE
 	if (IN_DEV_LOG_MARTIANS(in_dev))
-		net_warn_ratelimited("martian destination %pI4 from %pI4, dev %s\n",
-				     &daddr, &saddr, dev->name);
+		net_warn_ratelimited("martian destination (src=%pI4, dst=%pI4, dev=%s)\n",
+				     &saddr, &daddr, dev->name);
 #endif
 	goto out;
 
@@ -2576,12 +2581,16 @@ static struct rtable *__mkroute_output(const struct fib_result *res,
 		    !netif_is_l3_master(dev_out))
 			return ERR_PTR(-EINVAL);
 
-	if (ipv4_is_lbcast(fl4->daddr))
+	if (ipv4_is_lbcast(fl4->daddr)) {
 		type = RTN_BROADCAST;
-	else if (ipv4_is_multicast(fl4->daddr))
+
+		/* reset fi to prevent gateway resolution */
+		fi = NULL;
+	} else if (ipv4_is_multicast(fl4->daddr)) {
 		type = RTN_MULTICAST;
-	else if (ipv4_is_zeronet(fl4->daddr))
+	} else if (ipv4_is_zeronet(fl4->daddr)) {
 		return ERR_PTR(-EINVAL);
+	}
 
 	if (dev_out->flags & IFF_LOOPBACK)
 		flags |= RTCF_LOCAL;

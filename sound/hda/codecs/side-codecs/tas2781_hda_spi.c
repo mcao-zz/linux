@@ -2,7 +2,7 @@
 //
 // TAS2781 HDA SPI driver
 //
-// Copyright 2024 - 2025 Texas Instruments, Inc.
+// Copyright 2024 - 2026 Texas Instruments, Inc.
 //
 // Author: Baojun Xu <baojun.xu@ti.com>
 
@@ -41,9 +41,6 @@
 #define TASDEVICE_RANGE_MAX_SIZE	(256 * 128)
 #define TASDEVICE_WIN_LEN		128
 #define TAS2781_SPI_MAX_FREQ		(4 * HZ_PER_MHZ)
-/* Flag of calibration registers address. */
-#define TASDEVICE_CALIBRATION_REG_ADDRESS	BIT(7)
-#define TASDEV_UEFI_CALI_REG_ADDR_FLG	BIT(7)
 
 /* System Reset Check Register */
 #define TAS2781_REG_CLK_CONFIG		TASDEVICE_REG(0x0, 0x0, 0x5c)
@@ -494,9 +491,11 @@ static int tas2781_force_fwload_put(struct snd_kcontrol *kcontrol,
 
 static struct snd_kcontrol_new tas2781_snd_ctls[] = {
 	ACARD_SINGLE_RANGE_EXT_TLV(NULL, TAS2781_AMP_LEVEL, 1, 0, 20, 0,
-		tas2781_amp_getvol, tas2781_amp_putvol, amp_vol_tlv),
+		tas2781_amp_getvol, tas2781_amp_putvol,
+		tas2781_amp_tlv),
 	ACARD_SINGLE_RANGE_EXT_TLV(NULL, TAS2781_DVC_LVL, 0, 0, 200, 1,
-		tas2781_digital_getvol, tas2781_digital_putvol, dvc_tlv),
+		tas2781_digital_getvol, tas2781_digital_putvol,
+		tas2781_dvc_tlv),
 	ACARD_SINGLE_BOOL_EXT(NULL, 0, tas2781_force_fwload_get,
 		tas2781_force_fwload_put),
 };
@@ -634,7 +633,7 @@ static void tasdev_fw_ready(const struct firmware *fmw, void *context)
 	struct hda_codec *codec = tas_priv->codec;
 	int ret, val;
 
-	pm_runtime_get_sync(tas_priv->dev);
+	guard(pm_runtime_active_auto)(tas_priv->dev);
 	guard(mutex)(&tas_priv->codec_lock);
 
 	ret = tasdevice_rca_parser(tas_priv, fmw);
@@ -697,7 +696,6 @@ static void tasdev_fw_ready(const struct firmware *fmw, void *context)
 	tas2781_save_calibration(tas_hda);
 out:
 	release_firmware(fmw);
-	pm_runtime_put_autosuspend(tas_hda->priv->dev);
 }
 
 static int tas2781_hda_bind(struct device *dev, struct device *master,
@@ -718,7 +716,7 @@ static int tas2781_hda_bind(struct device *dev, struct device *master,
 
 	codec = parent->codec;
 
-	pm_runtime_get_sync(dev);
+	guard(pm_runtime_active_auto)(dev);
 
 	comp->dev = dev;
 
@@ -729,7 +727,8 @@ static int tas2781_hda_bind(struct device *dev, struct device *master,
 	if (!ret)
 		comp->playback_hook = tas2781_hda_playback_hook;
 
-	pm_runtime_put_autosuspend(dev);
+	/* Only HP Laptop support SPI-based TAS2781 */
+	tas_hda->catlog_id = HP;
 
 	return ret;
 }

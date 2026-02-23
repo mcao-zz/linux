@@ -44,13 +44,15 @@ int __fbnic_open(struct fbnic_net *fbn)
 	if (err)
 		goto time_stop;
 
-	err = fbnic_pcs_request_irq(fbd);
+	err = fbnic_mac_request_irq(fbd);
 	if (err)
 		goto time_stop;
 
 	/* Pull the BMC config and initialize the RPC */
 	fbnic_bmc_rpc_init(fbd);
 	fbnic_rss_reinit(fbd, fbn);
+
+	phylink_resume(fbn->phylink);
 
 	return 0;
 time_stop:
@@ -84,8 +86,10 @@ static int fbnic_stop(struct net_device *netdev)
 {
 	struct fbnic_net *fbn = netdev_priv(netdev);
 
+	fbnic_mac_free_irq(fbn->fbd);
+	phylink_suspend(fbn->phylink, fbnic_bmc_present(fbn->fbd));
+
 	fbnic_down(fbn);
-	fbnic_pcs_free_irq(fbn->fbd);
 
 	fbnic_time_stop(fbn);
 	fbnic_fw_xmit_ownership_msg(fbn->fbd, false);
@@ -179,11 +183,10 @@ static int fbnic_mc_unsync(struct net_device *netdev, const unsigned char *addr)
 	return ret;
 }
 
-void __fbnic_set_rx_mode(struct net_device *netdev)
+void __fbnic_set_rx_mode(struct fbnic_dev *fbd)
 {
-	struct fbnic_net *fbn = netdev_priv(netdev);
 	bool uc_promisc = false, mc_promisc = false;
-	struct fbnic_dev *fbd = fbn->fbd;
+	struct net_device *netdev = fbd->netdev;
 	struct fbnic_mac_addr *mac_addr;
 	int err;
 
@@ -220,49 +223,8 @@ void __fbnic_set_rx_mode(struct net_device *netdev)
 	uc_promisc |= !!(netdev->flags & IFF_PROMISC);
 	mc_promisc |= !!(netdev->flags & IFF_ALLMULTI) || uc_promisc;
 
-	/* Populate last TCAM entry with promiscuous entry and 0/1 bit mask */
-	mac_addr = &fbd->mac_addr[FBNIC_RPC_TCAM_MACDA_PROMISC_IDX];
-	if (uc_promisc) {
-		if (!is_zero_ether_addr(mac_addr->value.addr8) ||
-		    mac_addr->state != FBNIC_TCAM_S_VALID) {
-			eth_zero_addr(mac_addr->value.addr8);
-			eth_broadcast_addr(mac_addr->mask.addr8);
-			clear_bit(FBNIC_MAC_ADDR_T_ALLMULTI,
-				  mac_addr->act_tcam);
-			set_bit(FBNIC_MAC_ADDR_T_PROMISC,
-				mac_addr->act_tcam);
-			mac_addr->state = FBNIC_TCAM_S_ADD;
-		}
-	} else if (mc_promisc &&
-		   (!fbnic_bmc_present(fbd) || !fbd->fw_cap.all_multi)) {
-		/* We have to add a special handler for multicast as the
-		 * BMC may have an all-multi rule already in place. As such
-		 * adding a rule ourselves won't do any good so we will have
-		 * to modify the rules for the ALL MULTI below if the BMC
-		 * already has the rule in place.
-		 */
-		if (!is_multicast_ether_addr(mac_addr->value.addr8) ||
-		    mac_addr->state != FBNIC_TCAM_S_VALID) {
-			eth_zero_addr(mac_addr->value.addr8);
-			eth_broadcast_addr(mac_addr->mask.addr8);
-			mac_addr->value.addr8[0] ^= 1;
-			mac_addr->mask.addr8[0] ^= 1;
-			set_bit(FBNIC_MAC_ADDR_T_ALLMULTI,
-				mac_addr->act_tcam);
-			clear_bit(FBNIC_MAC_ADDR_T_PROMISC,
-				  mac_addr->act_tcam);
-			mac_addr->state = FBNIC_TCAM_S_ADD;
-		}
-	} else if (mac_addr->state == FBNIC_TCAM_S_VALID) {
-		if (test_bit(FBNIC_MAC_ADDR_T_BMC, mac_addr->act_tcam)) {
-			clear_bit(FBNIC_MAC_ADDR_T_ALLMULTI,
-				  mac_addr->act_tcam);
-			clear_bit(FBNIC_MAC_ADDR_T_PROMISC,
-				  mac_addr->act_tcam);
-		} else {
-			mac_addr->state = FBNIC_TCAM_S_DELETE;
-		}
-	}
+	/* Update the promiscuous rules */
+	fbnic_promisc_sync(fbd, uc_promisc, mc_promisc);
 
 	/* Add rules for BMC all multicast if it is enabled */
 	fbnic_bmc_rpc_all_multi_config(fbd, mc_promisc);
@@ -278,9 +240,12 @@ void __fbnic_set_rx_mode(struct net_device *netdev)
 
 static void fbnic_set_rx_mode(struct net_device *netdev)
 {
+	struct fbnic_net *fbn = netdev_priv(netdev);
+	struct fbnic_dev *fbd = fbn->fbd;
+
 	/* No need to update the hardware if we are not running */
 	if (netif_running(netdev))
-		__fbnic_set_rx_mode(netdev);
+		__fbnic_set_rx_mode(fbd);
 }
 
 static int fbnic_set_mac(struct net_device *netdev, void *p)
@@ -297,10 +262,26 @@ static int fbnic_set_mac(struct net_device *netdev, void *p)
 	return 0;
 }
 
-void fbnic_clear_rx_mode(struct net_device *netdev)
+static int fbnic_change_mtu(struct net_device *dev, int new_mtu)
 {
-	struct fbnic_net *fbn = netdev_priv(netdev);
-	struct fbnic_dev *fbd = fbn->fbd;
+	struct fbnic_net *fbn = netdev_priv(dev);
+
+	if (fbnic_check_split_frames(fbn->xdp_prog, new_mtu, fbn->hds_thresh)) {
+		dev_err(&dev->dev,
+			"MTU %d is larger than HDS threshold %d in XDP mode\n",
+			new_mtu, fbn->hds_thresh);
+
+		return -EINVAL;
+	}
+
+	WRITE_ONCE(dev->mtu, new_mtu);
+
+	return 0;
+}
+
+void fbnic_clear_rx_mode(struct fbnic_dev *fbd)
+{
+	struct net_device *netdev = fbd->netdev;
 	int idx;
 
 	for (idx = ARRAY_SIZE(fbd->mac_addr); idx--;) {
@@ -424,12 +405,12 @@ static void fbnic_get_stats64(struct net_device *dev,
 	tx_dropped = stats->dropped;
 
 	/* Record drops from Tx HW Datapath */
-	spin_lock(&fbd->hw_stats_lock);
+	spin_lock(&fbd->hw_stats.lock);
 	tx_dropped += fbd->hw_stats.tmi.drop.frames.value +
 		      fbd->hw_stats.tti.cm_drop.frames.value +
 		      fbd->hw_stats.tti.frame_drop.frames.value +
 		      fbd->hw_stats.tti.tbi_drop.frames.value;
-	spin_unlock(&fbd->hw_stats_lock);
+	spin_unlock(&fbd->hw_stats.lock);
 
 	stats64->tx_bytes = tx_bytes;
 	stats64->tx_packets = tx_packets;
@@ -460,7 +441,7 @@ static void fbnic_get_stats64(struct net_device *dev,
 	rx_packets = stats->packets;
 	rx_dropped = stats->dropped;
 
-	spin_lock(&fbd->hw_stats_lock);
+	spin_lock(&fbd->hw_stats.lock);
 	/* Record drops for the host FIFOs.
 	 * 4: network to Host,	6: BMC to Host
 	 * Exclude the BMC and MC FIFOs as those stats may contain drops
@@ -480,7 +461,7 @@ static void fbnic_get_stats64(struct net_device *dev,
 		/* Report packets with errors */
 		rx_errors += fbd->hw_stats.hw_q[i].rde_pkt_err.value;
 	}
-	spin_unlock(&fbd->hw_stats_lock);
+	spin_unlock(&fbd->hw_stats.lock);
 
 	stats64->rx_bytes = rx_bytes;
 	stats64->rx_packets = rx_packets;
@@ -569,6 +550,7 @@ static const struct net_device_ops fbnic_netdev_ops = {
 	.ndo_start_xmit		= fbnic_xmit_frame,
 	.ndo_features_check	= fbnic_features_check,
 	.ndo_set_mac_address	= fbnic_set_mac,
+	.ndo_change_mtu		= fbnic_change_mtu,
 	.ndo_set_rx_mode	= fbnic_set_rx_mode,
 	.ndo_get_stats64	= fbnic_get_stats64,
 	.ndo_bpf		= fbnic_bpf,
@@ -579,16 +561,20 @@ static const struct net_device_ops fbnic_netdev_ops = {
 static void fbnic_get_queue_stats_rx(struct net_device *dev, int idx,
 				     struct netdev_queue_stats_rx *rx)
 {
+	u64 bytes, packets, alloc_fail, alloc_fail_bdq;
 	struct fbnic_net *fbn = netdev_priv(dev);
 	struct fbnic_ring *rxr = fbn->rx[idx];
 	struct fbnic_dev *fbd = fbn->fbd;
 	struct fbnic_queue_stats *stats;
-	u64 bytes, packets, alloc_fail;
 	u64 csum_complete, csum_none;
+	struct fbnic_q_triad *qt;
 	unsigned int start;
 
 	if (!rxr)
 		return;
+
+	/* fbn->rx points to completion queues */
+	qt = container_of(rxr, struct fbnic_q_triad, cmpl);
 
 	stats = &rxr->stats;
 	do {
@@ -600,6 +586,20 @@ static void fbnic_get_queue_stats_rx(struct net_device *dev, int idx,
 		csum_none = stats->rx.csum_none;
 	} while (u64_stats_fetch_retry(&stats->syncp, start));
 
+	stats = &qt->sub0.stats;
+	do {
+		start = u64_stats_fetch_begin(&stats->syncp);
+		alloc_fail_bdq = stats->bdq.alloc_failed;
+	} while (u64_stats_fetch_retry(&stats->syncp, start));
+	alloc_fail += alloc_fail_bdq;
+
+	stats = &qt->sub1.stats;
+	do {
+		start = u64_stats_fetch_begin(&stats->syncp);
+		alloc_fail_bdq = stats->bdq.alloc_failed;
+	} while (u64_stats_fetch_retry(&stats->syncp, start));
+	alloc_fail += alloc_fail_bdq;
+
 	rx->bytes = bytes;
 	rx->packets = packets;
 	rx->alloc_fail = alloc_fail;
@@ -608,12 +608,12 @@ static void fbnic_get_queue_stats_rx(struct net_device *dev, int idx,
 
 	fbnic_get_hw_q_stats(fbd, fbd->hw_stats.hw_q);
 
-	spin_lock(&fbd->hw_stats_lock);
+	spin_lock(&fbd->hw_stats.lock);
 	rx->hw_drop_overruns = fbd->hw_stats.hw_q[idx].rde_pkt_cq_drop.value +
 			       fbd->hw_stats.hw_q[idx].rde_pkt_bdq_drop.value;
 	rx->hw_drops = fbd->hw_stats.hw_q[idx].rde_pkt_err.value +
 		       rx->hw_drop_overruns;
-	spin_unlock(&fbd->hw_stats_lock);
+	spin_unlock(&fbd->hw_stats.lock);
 }
 
 static void fbnic_get_queue_stats_tx(struct net_device *dev, int idx,
@@ -677,7 +677,8 @@ static void fbnic_get_base_stats(struct net_device *dev,
 
 	rx->bytes = fbn->rx_stats.bytes;
 	rx->packets = fbn->rx_stats.packets;
-	rx->alloc_fail = fbn->rx_stats.rx.alloc_failed;
+	rx->alloc_fail = fbn->rx_stats.rx.alloc_failed +
+		fbn->bdq_stats.bdq.alloc_failed;
 	rx->csum_complete = fbn->rx_stats.rx.csum_complete;
 	rx->csum_none = fbn->rx_stats.rx.csum_none;
 }
@@ -714,10 +715,7 @@ void fbnic_reset_queues(struct fbnic_net *fbn,
  **/
 void fbnic_netdev_free(struct fbnic_dev *fbd)
 {
-	struct fbnic_net *fbn = netdev_priv(fbd->netdev);
-
-	if (fbn->phylink)
-		phylink_destroy(fbn->phylink);
+	fbnic_phylink_destroy(fbd->netdev);
 
 	free_netdev(fbd->netdev);
 	fbd->netdev = NULL;
@@ -747,6 +745,8 @@ struct net_device *fbnic_netdev_alloc(struct fbnic_dev *fbd)
 
 	netdev->netdev_ops = &fbnic_netdev_ops;
 	netdev->stat_ops = &fbnic_stat_ops;
+	netdev->queue_mgmt_ops = &fbnic_queue_mgmt_ops;
+	netdev->netmem_tx = true;
 
 	fbnic_set_ethtool_ops(netdev);
 
@@ -805,6 +805,8 @@ struct net_device *fbnic_netdev_alloc(struct fbnic_dev *fbd)
 	netdev->hw_enc_features |= netdev->features;
 	netdev->features |= NETIF_F_NTUPLE;
 
+	netdev->xdp_features = NETDEV_XDP_ACT_BASIC | NETDEV_XDP_ACT_RX_SG;
+
 	netdev->min_mtu = IPV6_MIN_MTU;
 	netdev->max_mtu = FBNIC_MAX_JUMBO_FRAME_SIZE - ETH_HLEN;
 
@@ -817,7 +819,7 @@ struct net_device *fbnic_netdev_alloc(struct fbnic_dev *fbd)
 
 	netif_tx_stop_all_queues(netdev);
 
-	if (fbnic_phylink_init(netdev)) {
+	if (fbnic_phylink_create(netdev)) {
 		fbnic_netdev_free(fbd);
 		return NULL;
 	}

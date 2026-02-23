@@ -36,26 +36,30 @@
 
 #include <linux/slab.h>
 
-#include "i915_drv.h"
-#include "i915_reg.h"
+#include <drm/drm_print.h>
+
+#include "display/i9xx_plane_regs.h"
 #include "display/intel_display_regs.h"
+#include "display/intel_sprite_regs.h"
+
+#include "gem/i915_gem_context.h"
+#include "gem/i915_gem_pm.h"
+
+#include "gt/intel_context.h"
 #include "gt/intel_engine_regs.h"
 #include "gt/intel_gpu_commands.h"
 #include "gt/intel_gt_regs.h"
+#include "gt/intel_gt_requests.h"
 #include "gt/intel_lrc.h"
 #include "gt/intel_ring.h"
-#include "gt/intel_gt_requests.h"
 #include "gt/shmem_utils.h"
-#include "gvt.h"
-#include "i915_pvinfo.h"
-#include "trace.h"
 
-#include "display/i9xx_plane_regs.h"
-#include "display/intel_display_core.h"
-#include "display/intel_sprite_regs.h"
-#include "gem/i915_gem_context.h"
-#include "gem/i915_gem_pm.h"
-#include "gt/intel_context.h"
+#include "display_helpers.h"
+#include "gvt.h"
+#include "i915_drv.h"
+#include "i915_pvinfo.h"
+#include "i915_reg.h"
+#include "trace.h"
 
 #define INVALID_OP    (~0U)
 
@@ -1921,7 +1925,7 @@ static int perform_bb_shadow(struct parser_exec_state *s)
 	if (!bb)
 		return -ENOMEM;
 
-	bb->ppgtt = (s->buf_addr_type == GTT_BUFFER) ? false : true;
+	bb->ppgtt = s->buf_addr_type != GTT_BUFFER;
 
 	/*
 	 * The start_offset stores the batch buffer's start gma's

@@ -47,9 +47,10 @@ Contents:
    mellanox/mlx5/index
    meta/fbnic
    microsoft/netvsc
-   neterion/s2io
+   mucse/rnpgbe
    netronome/nfp
    pensando/ionic
+   pensando/ionic_rdma
    qualcomm/ppe/ppe
    smsc/smc9
    stmicro/stmmac
@@ -62,10 +63,3 @@ Contents:
    wangxun/txgbevf
    wangxun/ngbe
    wangxun/ngbevf
-
-.. only::  subproject and html
-
-   Indices
-   =======
-
-   * :ref:`genindex`
