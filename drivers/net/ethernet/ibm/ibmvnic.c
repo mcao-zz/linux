@@ -5546,15 +5546,7 @@ static void handle_request_cap_rsp(union ibmvnic_crq *crq,
 			 (long)be64_to_cpu(crq->request_capability_rsp.number),
 			 name);
 
-		if (be16_to_cpu(crq->request_capability_rsp.capability) ==
-		    REQ_MTU) {
-			pr_err("mtu of %llu is not supported. Reverting.\n",
-			       *req_value);
-			*req_value = adapter->fallback.mtu;
-		} else {
-			*req_value =
-				be64_to_cpu(crq->request_capability_rsp.number);
-		}
+		*req_value = be64_to_cpu(crq->request_capability_rsp.number);
 
 		send_request_cap(adapter, 1);
 		return;
