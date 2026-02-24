@@ -218,6 +218,20 @@ parameters.
        * ``balanced`` : Merges fewer CQEs, resulting in a moderate compression ratio but maintaining a balance between bandwidth savings and performance
        * ``aggressive`` : Merges more CQEs into a single entry, achieving a higher compression rate and maximizing performance, particularly under high traffic loads
 
+   * - ``swp_l4_csum_mode``
+     - string
+     - permanent
+     - Configure how the L4 checksum is calculated by the device when using
+       Software Parser (SWP) hints for header locations.
+
+       * ``default`` : Use the device's default checksum calculation
+         mode. The driver will discover during init whether or
+         full_csum or l4_only is in use. Setting this value explicitly
+         from userspace is not allowed, but some firmware versions may
+         return this value on param read.
+       * ``full_csum`` : Calculate full checksum including the pseudo-header
+       * ``l4_only`` : Calculate L4-only checksum, excluding the pseudo-header
+
 The ``mlx5`` driver supports reloading via ``DEVLINK_CMD_RELOAD``
 
 Info versions
@@ -385,6 +399,12 @@ Description of the vnic counters:
         amount of Interconnect Host Memory (ICM) consumed by the vnic in
         granularity of 4KB. ICM is host memory allocated by SW upon HCA request
         and is used for storing data structures that control HCA operation.
+- bar_uar_access
+        number of WRITE or READ access operations to the UAR on the PCIe BAR.
+- odp_local_triggered_page_fault
+        number of locally-triggered page-faults due to ODP.
+- odp_remote_triggered_page_fault
+        number of remotly-triggered page-faults due to ODP.
 
 User commands examples:
 

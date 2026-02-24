@@ -3,7 +3,7 @@
  * Copyright (c) 2000-2005 Silicon Graphics, Inc.
  * All Rights Reserved.
  */
-#include "xfs.h"
+#include "xfs_platform.h"
 #include "xfs_fs.h"
 #include "xfs_shared.h"
 #include "xfs_format.h"
@@ -41,6 +41,7 @@
 #include "xfs_rtrefcount_btree.h"
 #include "scrub/stats.h"
 #include "xfs_zone_alloc.h"
+#include "xfs_healthmon.h"
 
 static DEFINE_MUTEX(xfs_uuid_table_mutex);
 static int xfs_uuid_table_size;
@@ -625,6 +626,7 @@ xfs_unmount_flush_inodes(
 	cancel_delayed_work_sync(&mp->m_reclaim_work);
 	xfs_reclaim_inodes(mp);
 	xfs_health_unmount(mp);
+	xfs_healthmon_unmount(mp);
 }
 
 static void
@@ -1056,19 +1058,6 @@ xfs_mountfs(
 	/* Enable background inode inactivation workers. */
 	xfs_inodegc_start(mp);
 	xfs_blockgc_start(mp);
-
-	/*
-	 * Now that we've recovered any pending superblock feature bit
-	 * additions, we can finish setting up the attr2 behaviour for the
-	 * mount. The noattr2 option overrides the superblock flag, so only
-	 * check the superblock feature flag if the mount option is not set.
-	 */
-	if (xfs_has_noattr2(mp)) {
-		mp->m_features &= ~XFS_FEAT_ATTR2;
-	} else if (!xfs_has_attr2(mp) &&
-		   (mp->m_sb.sb_features2 & XFS_SB_VERSION2_ATTR2BIT)) {
-		mp->m_features |= XFS_FEAT_ATTR2;
-	}
 
 	if (xfs_has_metadir(mp)) {
 		error = xfs_mount_setup_metadir(mp);

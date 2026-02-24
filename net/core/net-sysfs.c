@@ -1022,7 +1022,7 @@ static int netdev_rx_queue_set_rps_mask(struct netdev_rx_queue *queue,
 int rps_cpumask_housekeeping(struct cpumask *mask)
 {
 	if (!cpumask_empty(mask)) {
-		cpumask_and(mask, mask, housekeeping_cpumask(HK_TYPE_DOMAIN));
+		cpumask_and(mask, mask, housekeeping_cpumask(HK_TYPE_DOMAIN_BOOT));
 		cpumask_and(mask, mask, housekeeping_cpumask(HK_TYPE_WQ));
 		if (cpumask_empty(mask))
 			return -EINVAL;
@@ -1330,7 +1330,7 @@ net_rx_queue_update_kobjects(struct net_device *dev, int old_num, int new_num)
 		struct netdev_rx_queue *queue = &dev->_rx[i];
 		struct kobject *kobj = &queue->kobj;
 
-		if (!refcount_read(&dev_net(dev)->ns.count))
+		if (!check_net(dev_net(dev)))
 			kobj->uevent_suppress = 1;
 		if (dev->sysfs_rx_queue_group)
 			sysfs_remove_group(kobj, dev->sysfs_rx_queue_group);
@@ -2063,7 +2063,7 @@ netdev_queue_update_kobjects(struct net_device *dev, int old_num, int new_num)
 	while (--i >= new_num) {
 		struct netdev_queue *queue = dev->_tx + i;
 
-		if (!refcount_read(&dev_net(dev)->ns.count))
+		if (!check_net(dev_net(dev)))
 			queue->kobj.uevent_suppress = 1;
 
 		if (netdev_uses_bql(dev))
@@ -2317,7 +2317,7 @@ void netdev_unregister_kobject(struct net_device *ndev)
 {
 	struct device *dev = &ndev->dev;
 
-	if (!refcount_read(&dev_net(ndev)->ns.count))
+	if (!check_net(dev_net(ndev)))
 		dev_set_uevent_suppress(dev, 1);
 
 	kobject_get(&dev->kobj);

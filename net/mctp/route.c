@@ -623,6 +623,7 @@ static int mctp_dst_output(struct mctp_dst *dst, struct sk_buff *skb)
 
 	skb->protocol = htons(ETH_P_MCTP);
 	skb->pkt_type = PACKET_OUTGOING;
+	skb->dev = dst->dev->dev;
 
 	if (skb->len > dst->mtu) {
 		kfree_skb(skb);
@@ -1642,6 +1643,7 @@ static int mctp_fill_rtinfo(struct sk_buff *skb, struct mctp_route *rt,
 		return -EMSGSIZE;
 
 	hdr = nlmsg_data(nlh);
+	memset(hdr, 0, sizeof(*hdr));
 	hdr->rtm_family = AF_MCTP;
 
 	/* we use the _len fields as a number of EIDs, rather than

@@ -101,6 +101,7 @@ do {								\
 		idx = 0;					\
 } while (0)
 
+#define IDPF_RX_MAX_BUF_SZ			(16384 - 128)
 #define IDPF_RX_BUF_STRIDE			32
 #define IDPF_RX_BUF_POST_STRIDE			16
 #define IDPF_LOW_WATERMARK			64
@@ -140,6 +141,8 @@ do {								\
 #define IDPF_TX_FLAGS_IPV6		BIT(2)
 #define IDPF_TX_FLAGS_TUNNEL		BIT(3)
 #define IDPF_TX_FLAGS_TSYN		BIT(4)
+
+struct libeth_rq_napi_stats;
 
 union idpf_tx_flex_desc {
 	struct idpf_flex_tx_desc q; /* queue based scheduling */
@@ -280,11 +283,13 @@ struct idpf_ptype_state {
  * @__IDPF_Q_FLOW_SCH_EN: Enable flow scheduling
  * @__IDPF_Q_SW_MARKER: Used to indicate TX queue marker completions
  * @__IDPF_Q_CRC_EN: enable CRC offload in singleq mode
+ * @__IDPF_Q_RSC_EN: enable Receive Side Coalescing on Rx (splitq)
  * @__IDPF_Q_HSPLIT_EN: enable header split on Rx (splitq)
  * @__IDPF_Q_PTP: indicates whether the Rx timestamping is enabled for the
  *		  queue
  * @__IDPF_Q_NOIRQ: queue is polling-driven and has no interrupt
  * @__IDPF_Q_XDP: this is an XDP queue
+ * @__IDPF_Q_XSK: the queue has an XSk pool installed
  * @__IDPF_Q_FLAGS_NBITS: Must be last
  */
 enum idpf_queue_flags_t {
@@ -293,10 +298,12 @@ enum idpf_queue_flags_t {
 	__IDPF_Q_FLOW_SCH_EN,
 	__IDPF_Q_SW_MARKER,
 	__IDPF_Q_CRC_EN,
+	__IDPF_Q_RSC_EN,
 	__IDPF_Q_HSPLIT_EN,
 	__IDPF_Q_PTP,
 	__IDPF_Q_NOIRQ,
 	__IDPF_Q_XDP,
+	__IDPF_Q_XSK,
 
 	__IDPF_Q_FLAGS_NBITS,
 };
@@ -363,14 +370,17 @@ struct idpf_intr_reg {
  * @num_txq: Number of TX queues
  * @num_bufq: Number of buffer queues
  * @num_complq: number of completion queues
+ * @num_xsksq: number of XSk send queues
  * @rx: Array of RX queues to service
  * @tx: Array of TX queues to service
  * @bufq: Array of buffer queues to service
  * @complq: array of completion queues
+ * @xsksq: array of XSk send queues
  * @intr_reg: See struct idpf_intr_reg
- * @napi: napi handler
+ * @csd: XSk wakeup CSD
  * @total_events: Number of interrupts processed
  * @wb_on_itr: whether WB on ITR is enabled
+ * @napi: napi handler
  * @tx_dim: Data for TX net_dim algorithm
  * @tx_itr_value: TX interrupt throttling rate
  * @tx_intr_mode: Dynamic ITR or not
@@ -389,18 +399,23 @@ struct idpf_q_vector {
 	u16 num_txq;
 	u16 num_bufq;
 	u16 num_complq;
+	u16 num_xsksq;
 	struct idpf_rx_queue **rx;
 	struct idpf_tx_queue **tx;
 	struct idpf_buf_queue **bufq;
 	struct idpf_compl_queue **complq;
+	struct idpf_tx_queue **xsksq;
 
 	struct idpf_intr_reg intr_reg;
 	__cacheline_group_end_aligned(read_mostly);
 
 	__cacheline_group_begin_aligned(read_write);
-	struct napi_struct napi;
+	call_single_data_t csd;
+
 	u16 total_events;
 	bool wb_on_itr;
+
+	struct napi_struct napi;
 
 	struct dim tx_dim;
 	u16 tx_itr_value;
@@ -418,8 +433,8 @@ struct idpf_q_vector {
 
 	__cacheline_group_end_aligned(cold);
 };
-libeth_cacheline_set_assert(struct idpf_q_vector, 120,
-			    24 + sizeof(struct napi_struct) +
+libeth_cacheline_set_assert(struct idpf_q_vector, 136,
+			    56 + sizeof(struct napi_struct) +
 			    2 * sizeof(struct dim),
 			    8);
 
@@ -485,6 +500,8 @@ struct idpf_tx_queue_stats {
  * @next_to_clean: Next descriptor to clean
  * @next_to_alloc: RX buffer to allocate at
  * @xdp: XDP buffer with the current frame
+ * @xsk: current XDP buffer in XSk mode
+ * @pool: XSk pool if installed
  * @cached_phc_time: Cached PHC time for the Rx queue
  * @stats_sync: See struct u64_stats_sync
  * @q_stats: See union idpf_rx_queue_stats
@@ -540,7 +557,13 @@ struct idpf_rx_queue {
 	u32 next_to_clean;
 	u32 next_to_alloc;
 
-	struct libeth_xdp_buff_stash xdp;
+	union {
+		struct libeth_xdp_buff_stash xdp;
+		struct {
+			struct libeth_xdp_buff *xsk;
+			struct xsk_buff_pool *pool;
+		};
+	};
 	u64 cached_phc_time;
 
 	struct u64_stats_sync stats_sync;
@@ -578,6 +601,7 @@ libeth_cacheline_set_assert(struct idpf_rx_queue,
  * @txq_grp: See struct idpf_txq_group
  * @complq: corresponding completion queue in XDP mode
  * @dev: Device back pointer for DMA mapping
+ * @pool: corresponding XSk pool if installed
  * @tail: Tail offset. Used for both queue models single and split
  * @flags: See enum idpf_queue_flags_t
  * @idx: For TX queue, it is used as index to map between TX queue group and
@@ -614,6 +638,7 @@ libeth_cacheline_set_assert(struct idpf_rx_queue,
  * @dma: Physical address of ring
  * @q_vector: Backreference to associated vector
  * @buf_pool_size: Total number of idpf_tx_buf
+ * @rel_q_id: relative virtchnl queue index
  */
 struct idpf_tx_queue {
 	__cacheline_group_begin_aligned(read_mostly);
@@ -630,7 +655,10 @@ struct idpf_tx_queue {
 		struct idpf_txq_group *txq_grp;
 		struct idpf_compl_queue *complq;
 	};
-	struct device *dev;
+	union {
+		struct device *dev;
+		struct xsk_buff_pool *pool;
+	};
 	void __iomem *tail;
 
 	DECLARE_BITMAP(flags, __IDPF_Q_FLAGS_NBITS);
@@ -684,7 +712,9 @@ struct idpf_tx_queue {
 	dma_addr_t dma;
 
 	struct idpf_q_vector *q_vector;
+
 	u32 buf_pool_size;
+	u32 rel_q_id;
 	__cacheline_group_end_aligned(cold);
 };
 libeth_cacheline_set_assert(struct idpf_tx_queue, 64,
@@ -698,16 +728,20 @@ libeth_cacheline_set_assert(struct idpf_tx_queue, 64,
 /**
  * struct idpf_buf_queue - software structure representing a buffer queue
  * @split_buf: buffer descriptor array
- * @hdr_buf: &libeth_fqe for header buffers
- * @hdr_pp: &page_pool for header buffers
  * @buf: &libeth_fqe for data buffers
  * @pp: &page_pool for data buffers
+ * @xsk_buf: &xdp_buff for XSk Rx buffers
+ * @pool: &xsk_buff_pool on XSk queues
+ * @hdr_buf: &libeth_fqe for header buffers
+ * @hdr_pp: &page_pool for header buffers
  * @tail: Tail offset
  * @flags: See enum idpf_queue_flags_t
  * @desc_count: Number of descriptors
+ * @thresh: refill threshold in XSk
  * @next_to_use: Next descriptor to use
  * @next_to_clean: Next descriptor to clean
  * @next_to_alloc: RX buffer to allocate at
+ * @pending: number of buffers to refill (Xsk)
  * @hdr_truesize: truesize for buffer headers
  * @truesize: truesize for data buffers
  * @q_id: Queue id
@@ -721,14 +755,24 @@ libeth_cacheline_set_assert(struct idpf_tx_queue, 64,
 struct idpf_buf_queue {
 	__cacheline_group_begin_aligned(read_mostly);
 	struct virtchnl2_splitq_rx_buf_desc *split_buf;
+	union {
+		struct {
+			struct libeth_fqe *buf;
+			struct page_pool *pp;
+		};
+		struct {
+			struct libeth_xdp_buff **xsk_buf;
+			struct xsk_buff_pool *pool;
+		};
+	};
 	struct libeth_fqe *hdr_buf;
 	struct page_pool *hdr_pp;
-	struct libeth_fqe *buf;
-	struct page_pool *pp;
 	void __iomem *tail;
 
 	DECLARE_BITMAP(flags, __IDPF_Q_FLAGS_NBITS);
 	u32 desc_count;
+
+	u32 thresh;
 	__cacheline_group_end_aligned(read_mostly);
 
 	__cacheline_group_begin_aligned(read_write);
@@ -736,6 +780,7 @@ struct idpf_buf_queue {
 	u32 next_to_clean;
 	u32 next_to_alloc;
 
+	u32 pending;
 	u32 hdr_truesize;
 	u32 truesize;
 	__cacheline_group_end_aligned(read_write);
@@ -882,6 +927,7 @@ struct idpf_bufq_set {
  * @singleq.rxqs: Array of RX queue pointers
  * @splitq: Struct with split queue related members
  * @splitq.num_rxq_sets: Number of RX queue sets
+ * @splitq.num_rxq_sets: Number of Buffer queue sets
  * @splitq.rxq_sets: Array of RX queue sets
  * @splitq.bufq_sets: Buffer queue set pointer
  *
@@ -899,6 +945,7 @@ struct idpf_rxq_group {
 		} singleq;
 		struct {
 			u16 num_rxq_sets;
+			u16 num_bufq_sets;
 			struct idpf_rxq_set *rxq_sets[IDPF_LARGE_MAX_Q];
 			struct idpf_bufq_set *bufq_sets;
 		} splitq;
@@ -1029,24 +1076,42 @@ static inline u32 idpf_tx_splitq_get_free_bufs(struct idpf_sw_queue *refillq)
 
 int idpf_vport_singleq_napi_poll(struct napi_struct *napi, int budget);
 void idpf_vport_init_num_qs(struct idpf_vport *vport,
-			    struct virtchnl2_create_vport *vport_msg);
-void idpf_vport_calc_num_q_desc(struct idpf_vport *vport);
+			    struct virtchnl2_create_vport *vport_msg,
+			    struct idpf_q_vec_rsrc *rsrc);
+void idpf_vport_calc_num_q_desc(struct idpf_vport *vport,
+				struct idpf_q_vec_rsrc *rsrc);
 int idpf_vport_calc_total_qs(struct idpf_adapter *adapter, u16 vport_index,
 			     struct virtchnl2_create_vport *vport_msg,
 			     struct idpf_vport_max_q *max_q);
-void idpf_vport_calc_num_q_groups(struct idpf_vport *vport);
-int idpf_vport_queues_alloc(struct idpf_vport *vport);
-void idpf_vport_queues_rel(struct idpf_vport *vport);
-void idpf_vport_intr_rel(struct idpf_vport *vport);
-int idpf_vport_intr_alloc(struct idpf_vport *vport);
+void idpf_vport_calc_num_q_groups(struct idpf_q_vec_rsrc *rsrc);
+int idpf_vport_queues_alloc(struct idpf_vport *vport,
+			    struct idpf_q_vec_rsrc *rsrc);
+void idpf_vport_queues_rel(struct idpf_vport *vport,
+			   struct idpf_q_vec_rsrc *rsrc);
+void idpf_vport_intr_rel(struct idpf_q_vec_rsrc *rsrc);
+int idpf_vport_intr_alloc(struct idpf_vport *vport,
+			  struct idpf_q_vec_rsrc *rsrc);
 void idpf_vport_intr_update_itr_ena_irq(struct idpf_q_vector *q_vector);
-void idpf_vport_intr_deinit(struct idpf_vport *vport);
-int idpf_vport_intr_init(struct idpf_vport *vport);
-void idpf_vport_intr_ena(struct idpf_vport *vport);
-int idpf_config_rss(struct idpf_vport *vport);
-int idpf_init_rss(struct idpf_vport *vport);
-void idpf_deinit_rss(struct idpf_vport *vport);
-int idpf_rx_bufs_init_all(struct idpf_vport *vport);
+void idpf_vport_intr_deinit(struct idpf_vport *vport,
+			    struct idpf_q_vec_rsrc *rsrc);
+int idpf_vport_intr_init(struct idpf_vport *vport,
+			 struct idpf_q_vec_rsrc *rsrc);
+void idpf_vport_intr_ena(struct idpf_vport *vport,
+			 struct idpf_q_vec_rsrc *rsrc);
+void idpf_fill_dflt_rss_lut(struct idpf_vport *vport,
+			    struct idpf_rss_data *rss_data);
+int idpf_config_rss(struct idpf_vport *vport, struct idpf_rss_data *rss_data);
+int idpf_init_rss_lut(struct idpf_vport *vport, struct idpf_rss_data *rss_data);
+void idpf_deinit_rss_lut(struct idpf_rss_data *rss_data);
+int idpf_rx_bufs_init_all(struct idpf_vport *vport,
+			  struct idpf_q_vec_rsrc *rsrc);
+
+struct idpf_q_vector *idpf_find_rxq_vec(const struct idpf_vport *vport,
+					u32 q_num);
+struct idpf_q_vector *idpf_find_txq_vec(const struct idpf_vport *vport,
+					u32 q_num);
+int idpf_qp_switch(struct idpf_vport *vport, u32 qid, bool en);
+
 void idpf_tx_buf_hw_update(struct idpf_tx_queue *tx_q, u32 val,
 			   bool xmit_more);
 unsigned int idpf_size_to_txd_count(unsigned int size);
@@ -1059,6 +1124,9 @@ netdev_tx_t idpf_tx_singleq_frame(struct sk_buff *skb,
 netdev_tx_t idpf_tx_start(struct sk_buff *skb, struct net_device *netdev);
 bool idpf_rx_singleq_buf_hw_alloc_all(struct idpf_rx_queue *rxq,
 				      u16 cleaned_count);
+bool idpf_rx_process_skb_fields(struct sk_buff *skb,
+				const struct libeth_xdp_buff *xdp,
+				struct libeth_rq_napi_stats *rs);
 int idpf_tso(struct sk_buff *skb, struct idpf_tx_offload_params *off);
 
 void idpf_wait_for_sw_marker_completion(const struct idpf_tx_queue *txq);

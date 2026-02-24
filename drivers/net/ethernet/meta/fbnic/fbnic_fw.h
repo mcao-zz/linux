@@ -4,6 +4,7 @@
 #ifndef _FBNIC_FW_H_
 #define _FBNIC_FW_H_
 
+#include <linux/completion.h>
 #include <linux/if_ether.h>
 #include <linux/types.h>
 
@@ -36,6 +37,7 @@ struct fbnic_fw_mbx {
  *                       + INDEX_SZ))
  */
 #define FBNIC_FW_MAX_LOG_HISTORY		14
+#define FBNIC_MBX_RX_TO_SEC			10
 
 struct fbnic_fw_ver {
 	u32 version;
@@ -79,12 +81,20 @@ struct fbnic_fw_completion {
 			u32 length;
 		} fw_update;
 		struct {
+			u16 length;
+			u8 offset;
+			u8 page;
+			u8 bank;
+			u8 data[] __aligned(sizeof(u32)) __counted_by(length);
+		} qsfp;
+		struct {
 			s32 millivolts;
 			s32 millidegrees;
 		} tsene;
 	} u;
 };
 
+u64 __fbnic_mbx_rd_desc(struct fbnic_dev *fbd, int mbx_idx, int desc_idx);
 void fbnic_mbx_init(struct fbnic_dev *fbd);
 void fbnic_mbx_clean(struct fbnic_dev *fbd);
 int fbnic_mbx_set_cmpl(struct fbnic_dev *fbd,
@@ -109,6 +119,9 @@ int fbnic_fw_xmit_fw_start_upgrade(struct fbnic_dev *fbd,
 int fbnic_fw_xmit_fw_write_chunk(struct fbnic_dev *fbd,
 				 const u8 *data, u32 offset, u16 length,
 				 int cancel_error);
+int fbnic_fw_xmit_qsfp_read_msg(struct fbnic_dev *fbd,
+				struct fbnic_fw_completion *cmpl_data,
+				u32 page, u32 bank, u32 offset, u32 length);
 int fbnic_fw_xmit_tsene_read_msg(struct fbnic_dev *fbd,
 				 struct fbnic_fw_completion *cmpl_data);
 int fbnic_fw_xmit_send_logs(struct fbnic_dev *fbd, bool enable,
@@ -118,6 +131,13 @@ struct fbnic_fw_completion *__fbnic_fw_alloc_cmpl(u32 msg_type,
 						  size_t priv_size);
 struct fbnic_fw_completion *fbnic_fw_alloc_cmpl(u32 msg_type);
 void fbnic_fw_put_cmpl(struct fbnic_fw_completion *cmpl_data);
+
+static inline unsigned long
+fbnic_mbx_wait_for_cmpl(struct fbnic_fw_completion *cmpl)
+{
+	return wait_for_completion_timeout(&cmpl->done,
+					   FBNIC_MBX_RX_TO_SEC * HZ);
+}
 
 #define fbnic_mk_full_fw_ver_str(_rev_id, _delim, _commit, _str, _str_sz) \
 do {									\
@@ -161,6 +181,8 @@ enum {
 	FBNIC_TLV_MSG_ID_FW_WRITE_CHUNK_RESP		= 0x25,
 	FBNIC_TLV_MSG_ID_FW_FINISH_UPGRADE_REQ		= 0x28,
 	FBNIC_TLV_MSG_ID_FW_FINISH_UPGRADE_RESP		= 0x29,
+	FBNIC_TLV_MSG_ID_QSFP_READ_REQ			= 0x38,
+	FBNIC_TLV_MSG_ID_QSFP_READ_RESP			= 0x39,
 	FBNIC_TLV_MSG_ID_TSENE_READ_REQ			= 0x3C,
 	FBNIC_TLV_MSG_ID_TSENE_READ_RESP		= 0x3D,
 	FBNIC_TLV_MSG_ID_LOG_SEND_LOGS_REQ		= 0x43,
@@ -207,6 +229,16 @@ enum {
 	FBNIC_FW_LINK_FEC_NONE			= 1,
 	FBNIC_FW_LINK_FEC_RS			= 2,
 	FBNIC_FW_LINK_FEC_BASER			= 3,
+};
+
+enum {
+	FBNIC_FW_QSFP_BANK			= 0x0,
+	FBNIC_FW_QSFP_PAGE			= 0x1,
+	FBNIC_FW_QSFP_OFFSET			= 0x2,
+	FBNIC_FW_QSFP_LENGTH			= 0x3,
+	FBNIC_FW_QSFP_ERROR			= 0x4,
+	FBNIC_FW_QSFP_DATA			= 0x5,
+	FBNIC_FW_QSFP_MSG_MAX
 };
 
 enum {

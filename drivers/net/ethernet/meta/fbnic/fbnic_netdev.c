@@ -44,7 +44,7 @@ int __fbnic_open(struct fbnic_net *fbn)
 	if (err)
 		goto time_stop;
 
-	err = fbnic_pcs_request_irq(fbd);
+	err = fbnic_mac_request_irq(fbd);
 	if (err)
 		goto time_stop;
 
@@ -86,10 +86,10 @@ static int fbnic_stop(struct net_device *netdev)
 {
 	struct fbnic_net *fbn = netdev_priv(netdev);
 
+	fbnic_mac_free_irq(fbn->fbd);
 	phylink_suspend(fbn->phylink, fbnic_bmc_present(fbn->fbd));
 
 	fbnic_down(fbn);
-	fbnic_pcs_free_irq(fbn->fbd);
 
 	fbnic_time_stop(fbn);
 	fbnic_fw_xmit_ownership_msg(fbn->fbd, false);
@@ -258,6 +258,23 @@ static int fbnic_set_mac(struct net_device *netdev, void *p)
 	eth_hw_addr_set(netdev, addr->sa_data);
 
 	fbnic_set_rx_mode(netdev);
+
+	return 0;
+}
+
+static int fbnic_change_mtu(struct net_device *dev, int new_mtu)
+{
+	struct fbnic_net *fbn = netdev_priv(dev);
+
+	if (fbnic_check_split_frames(fbn->xdp_prog, new_mtu, fbn->hds_thresh)) {
+		dev_err(&dev->dev,
+			"MTU %d is larger than HDS threshold %d in XDP mode\n",
+			new_mtu, fbn->hds_thresh);
+
+		return -EINVAL;
+	}
+
+	WRITE_ONCE(dev->mtu, new_mtu);
 
 	return 0;
 }
@@ -533,6 +550,7 @@ static const struct net_device_ops fbnic_netdev_ops = {
 	.ndo_start_xmit		= fbnic_xmit_frame,
 	.ndo_features_check	= fbnic_features_check,
 	.ndo_set_mac_address	= fbnic_set_mac,
+	.ndo_change_mtu		= fbnic_change_mtu,
 	.ndo_set_rx_mode	= fbnic_set_rx_mode,
 	.ndo_get_stats64	= fbnic_get_stats64,
 	.ndo_bpf		= fbnic_bpf,
@@ -543,16 +561,20 @@ static const struct net_device_ops fbnic_netdev_ops = {
 static void fbnic_get_queue_stats_rx(struct net_device *dev, int idx,
 				     struct netdev_queue_stats_rx *rx)
 {
+	u64 bytes, packets, alloc_fail, alloc_fail_bdq;
 	struct fbnic_net *fbn = netdev_priv(dev);
 	struct fbnic_ring *rxr = fbn->rx[idx];
 	struct fbnic_dev *fbd = fbn->fbd;
 	struct fbnic_queue_stats *stats;
-	u64 bytes, packets, alloc_fail;
 	u64 csum_complete, csum_none;
+	struct fbnic_q_triad *qt;
 	unsigned int start;
 
 	if (!rxr)
 		return;
+
+	/* fbn->rx points to completion queues */
+	qt = container_of(rxr, struct fbnic_q_triad, cmpl);
 
 	stats = &rxr->stats;
 	do {
@@ -563,6 +585,20 @@ static void fbnic_get_queue_stats_rx(struct net_device *dev, int idx,
 		csum_complete = stats->rx.csum_complete;
 		csum_none = stats->rx.csum_none;
 	} while (u64_stats_fetch_retry(&stats->syncp, start));
+
+	stats = &qt->sub0.stats;
+	do {
+		start = u64_stats_fetch_begin(&stats->syncp);
+		alloc_fail_bdq = stats->bdq.alloc_failed;
+	} while (u64_stats_fetch_retry(&stats->syncp, start));
+	alloc_fail += alloc_fail_bdq;
+
+	stats = &qt->sub1.stats;
+	do {
+		start = u64_stats_fetch_begin(&stats->syncp);
+		alloc_fail_bdq = stats->bdq.alloc_failed;
+	} while (u64_stats_fetch_retry(&stats->syncp, start));
+	alloc_fail += alloc_fail_bdq;
 
 	rx->bytes = bytes;
 	rx->packets = packets;
@@ -641,7 +677,8 @@ static void fbnic_get_base_stats(struct net_device *dev,
 
 	rx->bytes = fbn->rx_stats.bytes;
 	rx->packets = fbn->rx_stats.packets;
-	rx->alloc_fail = fbn->rx_stats.rx.alloc_failed;
+	rx->alloc_fail = fbn->rx_stats.rx.alloc_failed +
+		fbn->bdq_stats.bdq.alloc_failed;
 	rx->csum_complete = fbn->rx_stats.rx.csum_complete;
 	rx->csum_none = fbn->rx_stats.rx.csum_none;
 }
@@ -678,10 +715,7 @@ void fbnic_reset_queues(struct fbnic_net *fbn,
  **/
 void fbnic_netdev_free(struct fbnic_dev *fbd)
 {
-	struct fbnic_net *fbn = netdev_priv(fbd->netdev);
-
-	if (fbn->phylink)
-		phylink_destroy(fbn->phylink);
+	fbnic_phylink_destroy(fbd->netdev);
 
 	free_netdev(fbd->netdev);
 	fbd->netdev = NULL;
@@ -771,6 +805,8 @@ struct net_device *fbnic_netdev_alloc(struct fbnic_dev *fbd)
 	netdev->hw_enc_features |= netdev->features;
 	netdev->features |= NETIF_F_NTUPLE;
 
+	netdev->xdp_features = NETDEV_XDP_ACT_BASIC | NETDEV_XDP_ACT_RX_SG;
+
 	netdev->min_mtu = IPV6_MIN_MTU;
 	netdev->max_mtu = FBNIC_MAX_JUMBO_FRAME_SIZE - ETH_HLEN;
 
@@ -783,7 +819,7 @@ struct net_device *fbnic_netdev_alloc(struct fbnic_dev *fbd)
 
 	netif_tx_stop_all_queues(netdev);
 
-	if (fbnic_phylink_init(netdev)) {
+	if (fbnic_phylink_create(netdev)) {
 		fbnic_netdev_free(fbd);
 		return NULL;
 	}

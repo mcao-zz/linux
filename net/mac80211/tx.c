@@ -59,6 +59,9 @@ static __le16 ieee80211_duration(struct ieee80211_tx_data *tx,
 	if (WARN_ON_ONCE(tx->rate.idx < 0))
 		return 0;
 
+	if (info->band >= NUM_NL80211_BANDS)
+		return 0;
+
 	sband = local->hw.wiphy->bands[info->band];
 	txrate = &sband->bitrates[tx->rate.idx];
 
@@ -637,7 +640,9 @@ ieee80211_tx_h_select_key(struct ieee80211_tx_data *tx)
 			if (!ieee80211_is_data_present(hdr->frame_control) &&
 			    !ieee80211_use_mfp(hdr->frame_control, tx->sta,
 					       tx->skb) &&
-			    !ieee80211_is_group_privacy_action(tx->skb))
+			    !ieee80211_is_group_privacy_action(tx->skb) &&
+			    !ieee80211_require_encrypted_assoc(hdr->frame_control,
+							       tx->sta))
 				tx->key = NULL;
 			else
 				skip_hw = (tx->key->conf.flags &
@@ -683,7 +688,10 @@ ieee80211_tx_h_rate_ctrl(struct ieee80211_tx_data *tx)
 
 	memset(&txrc, 0, sizeof(txrc));
 
-	sband = tx->local->hw.wiphy->bands[info->band];
+	if (info->band < NUM_NL80211_BANDS)
+		sband = tx->local->hw.wiphy->bands[info->band];
+	else
+		return TX_CONTINUE;
 
 	len = min_t(u32, tx->skb->len + FCS_LEN,
 			 tx->local->hw.wiphy->frag_threshold);
@@ -1056,9 +1064,11 @@ ieee80211_tx_h_encrypt(struct ieee80211_tx_data *tx)
 		return ieee80211_crypto_ccmp_encrypt(
 			tx, IEEE80211_CCMP_256_MIC_LEN);
 	case WLAN_CIPHER_SUITE_AES_CMAC:
-		return ieee80211_crypto_aes_cmac_encrypt(tx);
+		return ieee80211_crypto_aes_cmac_encrypt(
+			tx, IEEE80211_CMAC_128_MIC_LEN);
 	case WLAN_CIPHER_SUITE_BIP_CMAC_256:
-		return ieee80211_crypto_aes_cmac_256_encrypt(tx);
+		return ieee80211_crypto_aes_cmac_encrypt(
+			tx, IEEE80211_CMAC_256_MIC_LEN);
 	case WLAN_CIPHER_SUITE_BIP_GMAC_128:
 	case WLAN_CIPHER_SUITE_BIP_GMAC_256:
 		return ieee80211_crypto_aes_gmac_encrypt(tx);
@@ -1815,7 +1825,6 @@ static int invoke_tx_handlers_early(struct ieee80211_tx_data *tx)
  txh_done:
 	if (unlikely(res == TX_DROP)) {
 		tx->sdata->tx_handlers_drop++;
-		I802_DEBUG_INC(tx->local->tx_handlers_drop);
 		if (tx->skb)
 			ieee80211_free_txskb(&tx->local->hw, tx->skb);
 		else
@@ -1860,7 +1869,6 @@ static int invoke_tx_handlers_late(struct ieee80211_tx_data *tx)
  txh_done:
 	if (unlikely(res == TX_DROP)) {
 		tx->sdata->tx_handlers_drop++;
-		I802_DEBUG_INC(tx->local->tx_handlers_drop);
 		if (tx->skb)
 			ieee80211_free_txskb(&tx->local->hw, tx->skb);
 		else
@@ -2391,6 +2399,8 @@ netdev_tx_t ieee80211_monitor_start_xmit(struct sk_buff *skb,
 
 	if (chanctx_conf)
 		chandef = &chanctx_conf->def;
+	else if (local->emulate_chanctx)
+		chandef = &local->hw.conf.chandef;
 	else
 		goto fail_rcu;
 
@@ -6288,7 +6298,9 @@ void ieee80211_tx_skb_tid(struct ieee80211_sub_if_data *sdata,
 	enum nl80211_band band;
 
 	rcu_read_lock();
-	if (!ieee80211_vif_is_mld(&sdata->vif)) {
+	if (sdata->vif.type == NL80211_IFTYPE_NAN) {
+		band = NUM_NL80211_BANDS;
+	} else if (!ieee80211_vif_is_mld(&sdata->vif)) {
 		WARN_ON(link_id >= 0);
 		chanctx_conf =
 			rcu_dereference(sdata->vif.bss_conf.chanctx_conf);

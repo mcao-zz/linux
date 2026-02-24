@@ -253,8 +253,10 @@ void psp_assocs_key_rotated(struct psp_dev *psd)
 	/* Mark the stale associations as invalid, they will no longer
 	 * be able to Rx any traffic.
 	 */
-	list_for_each_entry_safe(pas, next, &psd->prev_assocs, assocs_list)
+	list_for_each_entry_safe(pas, next, &psd->prev_assocs, assocs_list) {
 		pas->generation |= ~PSP_GEN_VALID_MASK;
+		psd->stats.stales++;
+	}
 	list_splice_init(&psd->prev_assocs, &psd->stale_assocs);
 	list_splice_init(&psd->active_assocs, &psd->prev_assocs);
 
@@ -279,12 +281,12 @@ void psp_twsk_assoc_free(struct inet_timewait_sock *tw)
 	psp_assoc_put(pas);
 }
 
-void psp_reply_set_decrypted(struct sk_buff *skb)
+void psp_reply_set_decrypted(const struct sock *sk, struct sk_buff *skb)
 {
 	struct psp_assoc *pas;
 
 	rcu_read_lock();
-	pas = psp_sk_get_assoc_rcu(skb->sk);
+	pas = psp_sk_get_assoc_rcu(sk);
 	if (pas && pas->tx.spi)
 		skb->decrypted = 1;
 	rcu_read_unlock();
