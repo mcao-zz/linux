@@ -291,6 +291,9 @@ struct ibmveth_adapter {
 	dma_addr_t filter_list_dma;
 	struct ibmveth_buff_pool rx_buff_pool[IBMVETH_NUM_BUFF_POOLS];
 	struct ibmveth_rx_q rx_queue;
+	u64 queue_handle;
+	unsigned int queue_irq;
+	int use_subordinate_queue;
 	int rx_csum;
 	int large_send;
 	bool is_active_trunk;

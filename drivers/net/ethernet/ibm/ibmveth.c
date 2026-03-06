@@ -610,6 +610,60 @@ retry:
 	return rc;
 }
 
+/**
+ * ibmveth_register_logical_lan_queue - Register subordinate queue with hypervisor
+ * @adapter: ibmveth adapter structure
+ * @rxq_desc: Receive queue descriptor
+ *
+ * Registers a subordinate receive queue using H_REG_LOGICAL_LAN_QUEUE.
+ * On success, stores the queue handle and IRQ number in the adapter structure.
+ * Retries once if registration fails (handles kexec case).
+ *
+ * Return: H_SUCCESS on success, error code otherwise
+ */
+static int ibmveth_register_logical_lan_queue(struct ibmveth_adapter *adapter,
+					      union ibmveth_buf_desc rxq_desc)
+{
+	int rc, try_again = 1;
+	unsigned long retbuf[PLPAR_HCALL9_BUFSIZE];
+
+retry:
+	rc = plpar_hcall9(H_REG_LOGICAL_LAN_QUEUE, retbuf,
+			  adapter->vdev->unit_address,
+			  adapter->buffer_list_dma,
+			  rxq_desc.desc);
+
+	if (rc == H_SUCCESS) {
+		adapter->queue_handle = retbuf[0];	/* R4 */
+		adapter->queue_irq = retbuf[1];		/* R5 */
+
+		netdev_dbg(adapter->netdev,
+			   "queue registered: handle=0x%llx irq=%u\n",
+			   adapter->queue_handle, adapter->queue_irq);
+	} else if (rc == H_FUNCTION) {
+		/* Hypervisor doesn't support subordinate queue mode */
+		netdev_info(adapter->netdev,
+			    "Subordinate queue mode not supported by firmware, falling back to regular mode\n");
+		adapter->use_subordinate_queue = 0;
+		return rc;
+	} else if (try_again) {
+		/*
+		 * After kexec, adapter may still be open.
+		 * We don't have the old queue_handle, so we can't
+		 * call h_free_logical_lan_queue. The hypervisor
+		 * should handle cleanup internally on retry.
+		 */
+		try_again = 0;
+		goto retry;
+	} else {
+		netdev_err(adapter->netdev,
+			   "h_reg_logical_lan_queue failed with %d after retry\n",
+			   rc);
+	}
+
+	return rc;
+}
+
 static int ibmveth_open(struct net_device *netdev)
 {
 	struct ibmveth_adapter *adapter = netdev_priv(netdev);
@@ -679,6 +733,7 @@ static int ibmveth_open(struct net_device *netdev)
 	rxq_desc.fields.flags_len = IBMVETH_BUF_VALID |
 					adapter->rx_queue.queue_len;
 	rxq_desc.fields.address = adapter->rx_queue.queue_dma;
+	adapter->queue_irq = netdev->irq;
 
 	netdev_dbg(netdev, "buffer list @ 0x%p\n", adapter->buffer_list_addr);
 	netdev_dbg(netdev, "filter list @ 0x%p\n", adapter->filter_list_addr);
@@ -686,17 +741,43 @@ static int ibmveth_open(struct net_device *netdev)
 
 	h_vio_signal(adapter->vdev->unit_address, VIO_IRQ_DISABLE);
 
-	lpar_rc = ibmveth_register_logical_lan(adapter, rxq_desc, mac_address);
+	if (adapter->use_subordinate_queue) {
+		lpar_rc = ibmveth_register_logical_lan_queue(adapter, rxq_desc);
+
+		/* If H_FUNCTION, adapter doesn't support it - fall back */
+		if (lpar_rc == H_FUNCTION) {
+			adapter->use_subordinate_queue = 0;
+			lpar_rc = ibmveth_register_logical_lan(adapter, rxq_desc,
+							       mac_address);
+		}
+
+		/* Validate hypervisor return values */
+		if (!adapter->queue_handle || !adapter->queue_irq) {
+			netdev_err(adapter->netdev,
+				   "Invalid hypervisor return values: handle=0x%llx irq=%u\n",
+				   adapter->queue_handle, adapter->queue_irq);
+			rc = -EINVAL;
+			goto out_unmap_filter_list;
+		}
+	} else {
+		lpar_rc = ibmveth_register_logical_lan(adapter, rxq_desc,
+						       mac_address);
+	}
 
 	if (lpar_rc != H_SUCCESS) {
-		netdev_err(netdev, "h_register_logical_lan failed with %ld\n",
-			   lpar_rc);
+		if (adapter->use_subordinate_queue)
+			netdev_err(netdev,
+				   "h_register_logical_lan_queue failed with %ld\n",
+				   lpar_rc);
+		else
+			netdev_err(netdev, "h_register_logical_lan failed with %ld\n",
+				   lpar_rc);
 		netdev_err(netdev, "buffer TCE:0x%llx filter TCE:0x%llx rxq "
 			   "desc:0x%llx MAC:0x%llx\n",
-				     adapter->buffer_list_dma,
-				     adapter->filter_list_dma,
-				     rxq_desc.desc,
-				     mac_address);
+				      adapter->buffer_list_dma,
+				      adapter->filter_list_dma,
+				      rxq_desc.desc,
+				      mac_address);
 		rc = -ENONET;
 		goto out_unmap_filter_list;
 	}
@@ -712,23 +793,21 @@ static int ibmveth_open(struct net_device *netdev)
 		}
 	}
 
-	netdev_dbg(netdev, "registering irq 0x%x\n", netdev->irq);
-	rc = request_irq(netdev->irq, ibmveth_interrupt, 0, netdev->name,
-			 netdev);
+	netdev_dbg(netdev, "registering queue irq 0x%x\n",
+		   adapter->queue_irq);
+	rc = request_irq(adapter->queue_irq, ibmveth_interrupt, 0,
+			 netdev->name, netdev);
+
 	if (rc != 0) {
 		netdev_err(netdev, "unable to request irq 0x%x, rc %d\n",
-			   netdev->irq, rc);
-		do {
-			lpar_rc = h_free_logical_lan(adapter->vdev->unit_address);
-		} while (H_IS_LONG_BUSY(lpar_rc) || (lpar_rc == H_BUSY));
-
+			   adapter->queue_irq, rc);
 		goto out_free_buffer_pools;
 	}
 
 	rc = -ENOMEM;
 
 	netdev_dbg(netdev, "initial replenish cycle\n");
-	ibmveth_interrupt(netdev->irq, netdev);
+	ibmveth_interrupt(adapter->queue_irq, netdev);
 
 	netif_tx_start_all_queues(netdev);
 
@@ -742,6 +821,14 @@ out_free_buffer_pools:
 			ibmveth_free_buffer_pool(adapter,
 						 &adapter->rx_buff_pool[i]);
 	}
+	do {
+		if (adapter->use_subordinate_queue)
+			lpar_rc = h_free_logical_lan_queue(adapter->vdev->unit_address,
+							   adapter->queue_handle);
+		else
+			lpar_rc = h_free_logical_lan(adapter->vdev->unit_address);
+	} while (H_IS_LONG_BUSY(lpar_rc) || (lpar_rc == H_BUSY));
+
 out_unmap_filter_list:
 	dma_unmap_single(dev, adapter->filter_list_dma, 4096,
 			 DMA_BIDIRECTIONAL);
@@ -783,15 +870,19 @@ static int ibmveth_close(struct net_device *netdev)
 	h_vio_signal(adapter->vdev->unit_address, VIO_IRQ_DISABLE);
 
 	do {
-		lpar_rc = h_free_logical_lan(adapter->vdev->unit_address);
+		if (adapter->use_subordinate_queue)
+			lpar_rc = h_free_logical_lan_queue(adapter->vdev->unit_address,
+							   adapter->queue_handle);
+		else
+			lpar_rc = h_free_logical_lan(adapter->vdev->unit_address);
 	} while (H_IS_LONG_BUSY(lpar_rc) || (lpar_rc == H_BUSY));
 
 	if (lpar_rc != H_SUCCESS) {
-		netdev_err(netdev, "h_free_logical_lan failed with %lx, "
+		netdev_err(netdev, "h_free_logical_lan or queue failed with %lx, "
 			   "continuing with close\n", lpar_rc);
 	}
 
-	free_irq(netdev->irq, netdev);
+	free_irq(adapter->queue_irq, netdev);
 
 	ibmveth_update_rx_no_buffer(adapter);
 
@@ -1866,6 +1957,8 @@ static int ibmveth_probe(struct vio_dev *dev, const struct vio_device_id *id)
 			   "RX Single-buffer hcall mode, batch set to %u\n",
 			   adapter->rx_buffers_per_hcall);
 	}
+
+	adapter->use_subordinate_queue = 0;
 
 	netdev->min_mtu = IBMVETH_MIN_MTU;
 	netdev->max_mtu = ETH_MAX_MTU - IBMVETH_BUFF_OH;
