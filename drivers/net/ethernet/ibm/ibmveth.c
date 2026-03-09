@@ -205,6 +205,71 @@ static inline void ibmveth_flush_buffer(void *addr, unsigned long length)
 		asm("dcbf %0,%1,1" :: "b" (addr), "r" (offset));
 }
 
+/**
+ * ibmveth_add_logical_lan_buffers - Add receive buffers to hypervisor
+ * @adapter: ibmveth adapter struct
+ * @descs: array of buffer descriptors to add
+ * @filled: number of valid descriptors in the array
+ * @buff_size: size of each buffer, only used in multi queue mode
+ *
+ * Adds receive buffers to the hypervisor using the appropriate hypercall
+ * based on the adapter mode:
+ * - Subordinate queue mode: Uses h_add_logical_lan_buffers_queue() with
+ *   buffer addresses packed in pairs (up to 12 buffers per call)
+ * - Regular mode: Uses h_add_logical_lan_buffer() for single buffer or
+ *   h_add_logical_lan_buffers() for multiple buffers (up to 8 per call)
+ *
+ * Return: H_SUCCESS on success
+ */
+static int ibmveth_add_logical_lan_buffers(struct ibmveth_adapter *adapter,
+					   union ibmveth_buf_desc *descs,
+					   int filled,
+					   unsigned long buff_size)
+{
+	struct vio_dev *vdev = adapter->vdev;
+	unsigned long rc;
+
+	if (adapter->use_subordinate_queue) {
+		/* Pack buffer addresses in pairs for queue mode */
+		unsigned long buffersznum = (buff_size << 32) | filled;
+		unsigned long ioba12, ioba34, ioba56;
+		unsigned long ioba78, ioba910, ioba1112;
+
+		ioba12 = descs[0].fields.address |
+			 ((unsigned long)descs[1].fields.address << 32);
+		ioba34 = descs[2].fields.address |
+			 ((unsigned long)descs[3].fields.address << 32);
+		ioba56 = descs[4].fields.address |
+			 ((unsigned long)descs[5].fields.address << 32);
+		ioba78 = descs[6].fields.address |
+			 ((unsigned long)descs[7].fields.address << 32);
+		ioba910 = (descs[8].fields.address |
+			  ((unsigned long)descs[9].fields.address << 32));
+		ioba1112 = (descs[10].fields.address |
+			  ((unsigned long)descs[11].fields.address << 32));
+
+		rc = h_add_logical_lan_buffers_queue(vdev->unit_address,
+						     adapter->queue_handle,
+						     buffersznum,
+						     ioba12, ioba34,
+						     ioba56, ioba78,
+						     ioba910, ioba1112);
+	} else if (filled == 1) {
+		/* Single buffer: use dedicated hcall */
+		rc = h_add_logical_lan_buffer(vdev->unit_address,
+					      descs[0].desc);
+	} else {
+		/* Regular multi-buffer mode: up to 8 buffers per call */
+		rc = h_add_logical_lan_buffers(vdev->unit_address,
+					       descs[0].desc, descs[1].desc,
+					       descs[2].desc, descs[3].desc,
+					       descs[4].desc, descs[5].desc,
+					       descs[6].desc, descs[7].desc);
+	}
+
+	return rc;
+}
+
 /* replenish the buffers for a pool.  note that we don't need to
  * skb_reserve these since they are used for incoming...
  */
@@ -294,25 +359,14 @@ static void ibmveth_replenish_buffer_pool(struct ibmveth_adapter *adapter,
 
 		if (!filled)
 			break;
+		lpar_rc = ibmveth_add_logical_lan_buffers(adapter, descs,
+							  filled,
+							  pool->buff_size);
 
-		/* single buffer case*/
-		if (filled == 1)
-			lpar_rc = h_add_logical_lan_buffer(vdev->unit_address,
-							   descs[0].desc);
-		else
-			/* Multi-buffer hcall */
-			lpar_rc = h_add_logical_lan_buffers(vdev->unit_address,
-							    descs[0].desc,
-							    descs[1].desc,
-							    descs[2].desc,
-							    descs[3].desc,
-							    descs[4].desc,
-							    descs[5].desc,
-							    descs[6].desc,
-							    descs[7].desc);
 		if (lpar_rc != H_SUCCESS) {
 			dev_warn_ratelimited(dev,
-					     "RX h_add_logical_lan failed: filled=%u, rc=%lu, batch=%u\n",
+					     "RX h_add_logical_lan %s failed: filled=%u, rc=%lu, batch=%u\n",
+					     adapter->use_subordinate_queue ? "_queue" : "",
 					     filled, lpar_rc, batch);
 			goto hcall_failure;
 		}
@@ -765,13 +819,9 @@ static int ibmveth_open(struct net_device *netdev)
 	}
 
 	if (lpar_rc != H_SUCCESS) {
-		if (adapter->use_subordinate_queue)
-			netdev_err(netdev,
-				   "h_register_logical_lan_queue failed with %ld\n",
-				   lpar_rc);
-		else
-			netdev_err(netdev, "h_register_logical_lan failed with %ld\n",
-				   lpar_rc);
+		netdev_err(netdev, "h_register_logical_lan%s failed with %ld\n",
+			   adapter->use_subordinate_queue ? "_queue" : "",
+			   lpar_rc);
 		netdev_err(netdev, "buffer TCE:0x%llx filter TCE:0x%llx rxq "
 			   "desc:0x%llx MAC:0x%llx\n",
 				      adapter->buffer_list_dma,
@@ -1947,7 +1997,11 @@ static int ibmveth_probe(struct vio_dev *dev, const struct vio_device_id *id)
 
 	if (ret == H_SUCCESS &&
 	    (ret_attr & IBMVETH_ILLAN_RX_MULTI_BUFF_SUPPORT)) {
-		adapter->rx_buffers_per_hcall = IBMVETH_MAX_RX_PER_HCALL;
+		if (adapter->use_subordinate_queue)
+			adapter->rx_buffers_per_hcall = IBMVETH_MAX_RX_QUEUE;
+		else
+			adapter->rx_buffers_per_hcall = IBMVETH_MAX_RX_REGULAR;
+
 		netdev_dbg(netdev,
 			   "RX Multi-buffer hcall supported by FW, batch set to %u\n",
 			    adapter->rx_buffers_per_hcall);
