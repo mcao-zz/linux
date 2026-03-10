@@ -1913,6 +1913,8 @@ static const struct net_device_ops ibmveth_netdev_ops = {
 #endif
 };
 
+static const struct attribute_group ibmveth_attr_group;
+
 static int ibmveth_probe(struct vio_dev *dev, const struct vio_device_id *id)
 {
 	int rc, i, mac_len;
@@ -2070,8 +2072,107 @@ static int ibmveth_probe(struct vio_dev *dev, const struct vio_device_id *id)
 
 	netdev_dbg(netdev, "registered\n");
 
+	/* Create sysfs attributes */
+	rc = sysfs_create_group(&dev->dev.kobj, &ibmveth_attr_group);
+	if (rc) {
+		netdev_err(netdev, "failed to create sysfs attributes rc=%d\n", rc);
+		unregister_netdev(netdev);
+		free_netdev(netdev);
+		return rc;
+	}
+
 	return 0;
 }
+
+/* Sysfs attribute: subordinate_queue_mode */
+static ssize_t subordinate_queue_mode_show(struct device *dev,
+					   struct device_attribute *attr,
+					   char *buf)
+{
+	struct net_device *netdev = dev_get_drvdata(dev);
+	struct ibmveth_adapter *adapter = netdev_priv(netdev);
+
+	return sprintf(buf, "%d\n", adapter->use_subordinate_queue);
+}
+
+static ssize_t subordinate_queue_mode_store(struct device *dev,
+					    struct device_attribute *attr,
+					    const char *buf, size_t count)
+{
+	struct net_device *netdev = dev_get_drvdata(dev);
+	struct ibmveth_adapter *adapter = netdev_priv(netdev);
+	unsigned long value;
+	int rc;
+
+	rc = kstrtoul(buf, 10, &value);
+	if (rc)
+		return rc;
+
+	if (value > 1)
+		return -EINVAL;
+
+	/* Can only change when interface is down */
+	if (netif_running(netdev)) {
+		netdev_err(netdev, "Cannot change subordinate queue mode while interface is up\n");
+		return -EBUSY;
+	}
+
+	adapter->use_subordinate_queue = value;
+
+	/* Update batch size based on new mode */
+	if (adapter->use_subordinate_queue)
+		adapter->rx_buffers_per_hcall = IBMVETH_MAX_RX_QUEUE;
+	else
+		adapter->rx_buffers_per_hcall = IBMVETH_MAX_RX_REGULAR;
+
+	netdev_info(netdev, "Subordinate queue mode %s\n",
+		    value ? "enabled" : "disabled");
+
+	return count;
+}
+static DEVICE_ATTR_RW(subordinate_queue_mode);
+
+/* Sysfs attribute: max_rx_buffers_per_call */
+static ssize_t max_rx_buffers_per_call_show(struct device *dev,
+					    struct device_attribute *attr,
+					    char *buf)
+{
+	struct net_device *netdev = dev_get_drvdata(dev);
+	struct ibmveth_adapter *adapter = netdev_priv(netdev);
+	unsigned int max_buffers;
+
+	if (adapter->use_subordinate_queue)
+		max_buffers = IBMVETH_MAX_RX_QUEUE;
+	else
+		max_buffers = IBMVETH_MAX_RX_REGULAR;
+
+	return sprintf(buf, "%u\n", max_buffers);
+}
+static DEVICE_ATTR_RO(max_rx_buffers_per_call);
+
+/* Sysfs attribute: current_rx_batch_size */
+static ssize_t current_rx_batch_size_show(struct device *dev,
+					  struct device_attribute *attr,
+					  char *buf)
+{
+	struct net_device *netdev = dev_get_drvdata(dev);
+	struct ibmveth_adapter *adapter = netdev_priv(netdev);
+
+	return sprintf(buf, "%u\n", adapter->rx_buffers_per_hcall);
+}
+static DEVICE_ATTR_RO(current_rx_batch_size);
+
+/* Attribute group */
+static struct attribute *ibmveth_attrs[] = {
+	&dev_attr_subordinate_queue_mode.attr,
+	&dev_attr_max_rx_buffers_per_call.attr,
+	&dev_attr_current_rx_batch_size.attr,
+	NULL
+};
+
+static const struct attribute_group ibmveth_attr_group = {
+	.attrs = ibmveth_attrs,
+};
 
 static void ibmveth_remove(struct vio_dev *dev)
 {
@@ -2081,12 +2182,16 @@ static void ibmveth_remove(struct vio_dev *dev)
 
 	cancel_work_sync(&adapter->work);
 
+	/* Remove sysfs attributes */
+	sysfs_remove_group(&dev->dev.kobj, &ibmveth_attr_group);
+
 	for (i = 0; i < IBMVETH_NUM_BUFF_POOLS; i++)
 		kobject_put(&adapter->rx_buff_pool[i].kobj);
 
 	unregister_netdev(netdev);
 
 	free_netdev(netdev);
+
 	dev_set_drvdata(&dev->dev, NULL);
 }
 
