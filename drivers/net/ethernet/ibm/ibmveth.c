@@ -1995,6 +1995,16 @@ static int ibmveth_probe(struct vio_dev *dev, const struct vio_device_id *id)
 		netdev->features |= NETIF_F_FRAGLIST;
 	}
 
+	/* Check for multi queue support */
+	if (ret == H_SUCCESS &&
+	    (ret_attr & IBMVETH_ILLAN_RX_MULTI_QUEUE_SUPPORT)) {
+		adapter->use_subordinate_queue = 1;
+		netdev_info(netdev, "RX multi queue mode enabled\n");
+	} else {
+		adapter->use_subordinate_queue = 0;
+		netdev_info(netdev, "RX multi queue mode disabled\n");
+	}
+
 	if (ret == H_SUCCESS &&
 	    (ret_attr & IBMVETH_ILLAN_RX_MULTI_BUFF_SUPPORT)) {
 		if (adapter->use_subordinate_queue)
@@ -2011,8 +2021,6 @@ static int ibmveth_probe(struct vio_dev *dev, const struct vio_device_id *id)
 			   "RX Single-buffer hcall mode, batch set to %u\n",
 			   adapter->rx_buffers_per_hcall);
 	}
-
-	adapter->use_subordinate_queue = 0;
 
 	netdev->min_mtu = IBMVETH_MIN_MTU;
 	netdev->max_mtu = ETH_MAX_MTU - IBMVETH_BUFF_OH;
