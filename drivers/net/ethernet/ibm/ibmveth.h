@@ -316,6 +316,20 @@ struct ibmveth_adapter {
 	u64 tx_send_failed;
 	u64 tx_large_packets;
 	u64 rx_large_packets;
+	/* Hcall statistics */
+	u64 h_reg_queue_calls;		/* H_REG_LOGICAL_LAN_QUEUE */
+	u64 h_reg_lan_calls;		/* H_REGISTER_LOGICAL_LAN */
+	u64 h_add_buf_queue_calls;	/* H_ADD_LOGICAL_LAN_BUFFERS_QUEUE */
+	u64 h_add_buf_lan_buffers_calls;/* H_ADD_LOGICAL_LAN_BUFFERS multi*/
+	u64 h_add_buf_lan_buffer_calls;	/* H_ADD_LOGICAL_LAN_BUFFER single*/
+	u64 h_free_queue_calls;		/* H_FREE_LOGICAL_LAN_QUEUE */
+	u64 h_free_lan_calls;		/* H_FREE_LOGICAL_LAN */
+	u64 h_send_lan_calls;		/* H_SEND_LOGICAL_LAN attempts */
+	u64 h_send_lan_packets;		/* Successful packets sent */
+	u64 h_send_lan_busy_retries;	/* H_BUSY retry count */
+	u64 h_send_lan_dropped;		/* H_DROPPED count */
+	u64 h_send_lan_failed;		/* Other failures */
+
 	/* Ethtool settings */
 	u8 duplex;
 	u32 speed;
