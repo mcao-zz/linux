@@ -316,21 +316,22 @@ struct ibmveth_hcall_stats {
 struct ibmveth_adapter {
 	struct vio_dev *vdev;
 	struct net_device *netdev;
-	struct napi_struct napi;
+	struct napi_struct napi[IBMVETH_MAX_QUEUES];
 	struct work_struct work;
 	unsigned int mcastFilterSize;
-	void *buffer_list_addr;
+	void *buffer_list_addr[IBMVETH_MAX_QUEUES];
 	void *filter_list_addr;
 	void *tx_ltb_ptr[IBMVETH_MAX_QUEUES];
 	unsigned int tx_ltb_size;
 	dma_addr_t tx_ltb_dma[IBMVETH_MAX_QUEUES];
-	dma_addr_t buffer_list_dma;
+	dma_addr_t buffer_list_dma[IBMVETH_MAX_QUEUES];
 	dma_addr_t filter_list_dma;
 	struct ibmveth_buff_pool rx_buff_pool[IBMVETH_NUM_BUFF_POOLS];
-	struct ibmveth_rx_q rx_queue;
-	u64 queue_handle;
-	unsigned int queue_irq;
+	struct ibmveth_rx_q rx_queue[IBMVETH_MAX_QUEUES];
+	u64 queue_handle[IBMVETH_MAX_QUEUES];
+	unsigned int queue_irq[IBMVETH_MAX_QUEUES];
 	int use_subordinate_queue;
+	unsigned int num_rx_queues;
 	int rx_csum;
 	int large_send;
 	bool is_active_trunk;
