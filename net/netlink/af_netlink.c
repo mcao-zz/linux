@@ -2108,8 +2108,8 @@ int __netlink_change_ngroups(struct sock *sk, unsigned int groups)
  * This changes the number of multicast groups that are available
  * on a certain netlink family. Note that it is not possible to
  * change the number of groups to below 32. Also note that it does
- * not implicitly call netlink_clear_multicast_users() when the
- * number of groups is reduced.
+ * not implicitly clear listeners from groups that are removed when
+ * the number of groups is reduced.
  *
  * @sk: The kernel netlink socket, as returned by netlink_kernel_create().
  * @groups: The new number of groups.
@@ -2927,7 +2927,7 @@ static int __init netlink_proto_init(void)
 
 	BUILD_BUG_ON(sizeof(struct netlink_skb_parms) > sizeof_field(struct sk_buff, cb));
 
-	nl_table = kcalloc(MAX_LINKS, sizeof(*nl_table), GFP_KERNEL);
+	nl_table = kzalloc_objs(*nl_table, MAX_LINKS);
 	if (!nl_table)
 		goto panic;
 

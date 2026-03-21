@@ -91,6 +91,18 @@ static struct vhost_vsock *vhost_vsock_get(u32 guest_cid, struct net *net)
 	return NULL;
 }
 
+static bool vhost_transport_has_remote_cid(struct vsock_sock *vsk, u32 cid)
+{
+	struct sock *sk = sk_vsock(vsk);
+	struct net *net = sock_net(sk);
+	bool found;
+
+	rcu_read_lock();
+	found = !!vhost_vsock_get(cid, net);
+	rcu_read_unlock();
+	return found;
+}
+
 static void
 vhost_transport_do_send_pkt(struct vhost_vsock *vsock,
 			    struct vhost_virtqueue *vq)
@@ -424,6 +436,7 @@ static struct virtio_transport vhost_transport = {
 		.module                   = THIS_MODULE,
 
 		.get_local_cid            = vhost_transport_get_local_cid,
+		.has_remote_cid           = vhost_transport_has_remote_cid,
 
 		.init                     = virtio_transport_do_socket_init,
 		.destruct                 = virtio_transport_destruct,
@@ -676,11 +689,11 @@ static int vhost_vsock_dev_open(struct inode *inode, struct file *file)
 	/* This struct is large and allocation could fail, fall back to vmalloc
 	 * if there is no other way.
 	 */
-	vsock = kvmalloc(sizeof(*vsock), GFP_KERNEL | __GFP_RETRY_MAYFAIL);
+	vsock = kvmalloc_obj(*vsock, GFP_KERNEL | __GFP_RETRY_MAYFAIL);
 	if (!vsock)
 		return -ENOMEM;
 
-	vqs = kmalloc_array(ARRAY_SIZE(vsock->vqs), sizeof(*vqs), GFP_KERNEL);
+	vqs = kmalloc_objs(*vqs, ARRAY_SIZE(vsock->vqs));
 	if (!vqs) {
 		ret = -ENOMEM;
 		goto out;

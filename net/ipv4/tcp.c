@@ -244,6 +244,7 @@
 #define pr_fmt(fmt) "TCP: " fmt
 
 #include <crypto/md5.h>
+#include <crypto/utils.h>
 #include <linux/kernel.h>
 #include <linux/module.h>
 #include <linux/types.h>
@@ -1077,8 +1078,8 @@ int tcp_sendmsg_fastopen(struct sock *sk, struct msghdr *msg, int *copied,
 	if (tp->fastopen_req)
 		return -EALREADY; /* Another Fast Open is in progress */
 
-	tp->fastopen_req = kzalloc(sizeof(struct tcp_fastopen_request),
-				   sk->sk_allocation);
+	tp->fastopen_req = kzalloc_obj(struct tcp_fastopen_request,
+				       sk->sk_allocation);
 	if (unlikely(!tp->fastopen_req))
 		return -ENOBUFS;
 	tp->fastopen_req->data = msg;
@@ -1446,7 +1447,7 @@ out_err:
 	err = sk_stream_error(sk, flags, err);
 	/* make sure we wake any epoll edge trigger waiter */
 	if (unlikely(tcp_rtx_and_write_queues_empty(sk) && err == -EAGAIN)) {
-		sk->sk_write_space(sk);
+		READ_ONCE(sk->sk_write_space)(sk);
 		tcp_chrono_stop(sk, TCP_CHRONO_SNDBUF_LIMITED);
 	}
 	if (binding)
@@ -1870,20 +1871,6 @@ int tcp_set_rcvlowat(struct sock *sk, int val)
 	return 0;
 }
 EXPORT_IPV6_MOD(tcp_set_rcvlowat);
-
-void tcp_update_recv_tstamps(struct sk_buff *skb,
-			     struct scm_timestamping_internal *tss)
-{
-	if (skb->tstamp)
-		tss->ts[0] = ktime_to_timespec64(skb->tstamp);
-	else
-		tss->ts[0] = (struct timespec64) {0};
-
-	if (skb_hwtstamps(skb)->hwtstamp)
-		tss->ts[2] = ktime_to_timespec64(skb_hwtstamps(skb)->hwtstamp);
-	else
-		tss->ts[2] = (struct timespec64) {0};
-}
 
 #ifdef CONFIG_MMU
 static const struct vm_operations_struct tcp_vm_ops = {
@@ -2376,22 +2363,23 @@ void tcp_recv_timestamp(struct msghdr *msg, const struct sock *sk,
 {
 	int new_tstamp = sock_flag(sk, SOCK_TSTAMP_NEW);
 	u32 tsflags = READ_ONCE(sk->sk_tsflags);
-	bool has_timestamping = false;
 
-	if (tss->ts[0].tv_sec || tss->ts[0].tv_nsec) {
+	if (tss->ts[0]) {
 		if (sock_flag(sk, SOCK_RCVTSTAMP)) {
+			struct timespec64 tv = ktime_to_timespec64(tss->ts[0]);
+
 			if (sock_flag(sk, SOCK_RCVTSTAMPNS)) {
 				if (new_tstamp) {
 					struct __kernel_timespec kts = {
-						.tv_sec = tss->ts[0].tv_sec,
-						.tv_nsec = tss->ts[0].tv_nsec,
+						.tv_sec = tv.tv_sec,
+						.tv_nsec = tv.tv_nsec,
 					};
 					put_cmsg(msg, SOL_SOCKET, SO_TIMESTAMPNS_NEW,
 						 sizeof(kts), &kts);
 				} else {
 					struct __kernel_old_timespec ts_old = {
-						.tv_sec = tss->ts[0].tv_sec,
-						.tv_nsec = tss->ts[0].tv_nsec,
+						.tv_sec = tv.tv_sec,
+						.tv_nsec = tv.tv_nsec,
 					};
 					put_cmsg(msg, SOL_SOCKET, SO_TIMESTAMPNS_OLD,
 						 sizeof(ts_old), &ts_old);
@@ -2399,41 +2387,37 @@ void tcp_recv_timestamp(struct msghdr *msg, const struct sock *sk,
 			} else {
 				if (new_tstamp) {
 					struct __kernel_sock_timeval stv = {
-						.tv_sec = tss->ts[0].tv_sec,
-						.tv_usec = tss->ts[0].tv_nsec / 1000,
+						.tv_sec = tv.tv_sec,
+						.tv_usec = tv.tv_nsec / 1000,
 					};
 					put_cmsg(msg, SOL_SOCKET, SO_TIMESTAMP_NEW,
 						 sizeof(stv), &stv);
 				} else {
-					struct __kernel_old_timeval tv = {
-						.tv_sec = tss->ts[0].tv_sec,
-						.tv_usec = tss->ts[0].tv_nsec / 1000,
+					struct __kernel_old_timeval otv = {
+						.tv_sec = tv.tv_sec,
+						.tv_usec = tv.tv_nsec / 1000,
 					};
 					put_cmsg(msg, SOL_SOCKET, SO_TIMESTAMP_OLD,
-						 sizeof(tv), &tv);
+						 sizeof(otv), &otv);
 				}
 			}
 		}
 
-		if (tsflags & SOF_TIMESTAMPING_SOFTWARE &&
+		if (!(tsflags & SOF_TIMESTAMPING_SOFTWARE &&
 		    (tsflags & SOF_TIMESTAMPING_RX_SOFTWARE ||
-		     !(tsflags & SOF_TIMESTAMPING_OPT_RX_FILTER)))
-			has_timestamping = true;
-		else
-			tss->ts[0] = (struct timespec64) {0};
+		     !(tsflags & SOF_TIMESTAMPING_OPT_RX_FILTER))))
+			tss->ts[0] = 0;
 	}
 
-	if (tss->ts[2].tv_sec || tss->ts[2].tv_nsec) {
-		if (tsflags & SOF_TIMESTAMPING_RAW_HARDWARE &&
+	if (tss->ts[2]) {
+		if (!(tsflags & SOF_TIMESTAMPING_RAW_HARDWARE &&
 		    (tsflags & SOF_TIMESTAMPING_RX_HARDWARE ||
-		     !(tsflags & SOF_TIMESTAMPING_OPT_RX_FILTER)))
-			has_timestamping = true;
-		else
-			tss->ts[2] = (struct timespec64) {0};
+		     !(tsflags & SOF_TIMESTAMPING_OPT_RX_FILTER))))
+			tss->ts[2] = 0;
 	}
 
-	if (has_timestamping) {
-		tss->ts[1] = (struct timespec64) {0};
+	if (tss->ts[0] | tss->ts[2]) {
+		tss->ts[1] = 0;
 		if (sock_flag(sk, SOCK_TSTAMP_NEW))
 			put_cmsg_scm_timestamping64(msg, tss);
 		else
@@ -2961,14 +2945,13 @@ recv_sndq:
 	goto out;
 }
 
-int tcp_recvmsg(struct sock *sk, struct msghdr *msg, size_t len, int flags,
-		int *addr_len)
+int tcp_recvmsg(struct sock *sk, struct msghdr *msg, size_t len, int flags)
 {
 	int cmsg_flags = 0, ret;
 	struct scm_timestamping_internal tss;
 
 	if (unlikely(flags & MSG_ERRQUEUE))
-		return inet_recv_error(sk, msg, len, addr_len);
+		return inet_recv_error(sk, msg, len);
 
 	if (sk_can_busy_loop(sk) &&
 	    skb_queue_empty_lockless(&sk->sk_receive_queue) &&
@@ -3578,6 +3561,7 @@ static int tcp_repair_set_window(struct tcp_sock *tp, sockptr_t optbuf, int len)
 
 	tp->rcv_wnd	= opt.rcv_wnd;
 	tp->rcv_wup	= opt.rcv_wup;
+	tp->rcv_mwnd_seq = opt.rcv_wup + opt.rcv_wnd;
 
 	return 0;
 }
@@ -4181,7 +4165,7 @@ ao_parse:
 		break;
 	case TCP_NOTSENT_LOWAT:
 		WRITE_ONCE(tp->notsent_lowat, val);
-		sk->sk_write_space(sk);
+		READ_ONCE(sk->sk_write_space)(sk);
 		break;
 	case TCP_INQ:
 		if (val > 1 || val < 0)
@@ -4970,7 +4954,7 @@ tcp_inbound_md5_hash(const struct sock *sk, const struct sk_buff *skb,
 		tcp_v4_md5_hash_skb(newhash, key, NULL, skb);
 	else
 		tp->af_specific->calc_md5_hash(newhash, key, NULL, skb);
-	if (memcmp(hash_location, newhash, 16) != 0) {
+	if (crypto_memneq(hash_location, newhash, 16)) {
 		NET_INC_STATS(sock_net(sk), LINUX_MIB_TCPMD5FAILURE);
 		trace_tcp_hash_md5_mismatch(sk, skb);
 		return SKB_DROP_REASON_TCP_MD5FAILURE;
@@ -4986,6 +4970,60 @@ tcp_inbound_md5_hash(const struct sock *sk, const struct sk_buff *skb,
 	return SKB_NOT_DROPPED_YET;
 }
 
+#endif
+
+#if defined(CONFIG_TCP_MD5SIG) || defined(CONFIG_TCP_AO)
+/*
+ * Parse Signature options
+ */
+int tcp_do_parse_auth_options(const struct tcphdr *th,
+			      const u8 **md5_hash, const u8 **ao_hash)
+{
+	int length = (th->doff << 2) - sizeof(*th);
+	const u8 *ptr = (const u8 *)(th + 1);
+	unsigned int minlen = TCPOLEN_MD5SIG;
+
+	if (IS_ENABLED(CONFIG_TCP_AO))
+		minlen = sizeof(struct tcp_ao_hdr) + 1;
+
+	*md5_hash = NULL;
+	*ao_hash = NULL;
+
+	/* If not enough data remaining, we can short cut */
+	while (length >= minlen) {
+		int opcode = *ptr++;
+		int opsize;
+
+		switch (opcode) {
+		case TCPOPT_EOL:
+			return 0;
+		case TCPOPT_NOP:
+			length--;
+			continue;
+		default:
+			opsize = *ptr++;
+			if (opsize < 2 || opsize > length)
+				return -EINVAL;
+			if (opcode == TCPOPT_MD5SIG) {
+				if (opsize != TCPOLEN_MD5SIG)
+					return -EINVAL;
+				if (unlikely(*md5_hash || *ao_hash))
+					return -EEXIST;
+				*md5_hash = ptr;
+			} else if (opcode == TCPOPT_AO) {
+				if (opsize <= sizeof(struct tcp_ao_hdr))
+					return -EINVAL;
+				if (unlikely(*md5_hash || *ao_hash))
+					return -EEXIST;
+				*ao_hash = ptr;
+			}
+		}
+		ptr += opsize - 2;
+		length -= opsize;
+	}
+	return 0;
+}
+EXPORT_IPV6_MOD(tcp_do_parse_auth_options);
 #endif
 
 /* Called with rcu_read_lock() */
@@ -5238,6 +5276,7 @@ static void __init tcp_struct_check(void)
 	CACHELINE_ASSERT_GROUP_MEMBER(struct tcp_sock, tcp_sock_write_txrx, received_ecn_bytes);
 	CACHELINE_ASSERT_GROUP_MEMBER(struct tcp_sock, tcp_sock_write_txrx, app_limited);
 	CACHELINE_ASSERT_GROUP_MEMBER(struct tcp_sock, tcp_sock_write_txrx, rcv_wnd);
+	CACHELINE_ASSERT_GROUP_MEMBER(struct tcp_sock, tcp_sock_write_txrx, rcv_mwnd_seq);
 	CACHELINE_ASSERT_GROUP_MEMBER(struct tcp_sock, tcp_sock_write_txrx, rcv_tstamp);
 	CACHELINE_ASSERT_GROUP_MEMBER(struct tcp_sock, tcp_sock_write_txrx, rx_opt);
 

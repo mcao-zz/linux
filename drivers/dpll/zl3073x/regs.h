@@ -7,6 +7,18 @@
 #include <linux/bits.h>
 
 /*
+ * Hardware limits for ZL3073x chip family
+ */
+#define ZL3073X_MAX_CHANNELS	5
+#define ZL3073X_NUM_REFS	10
+#define ZL3073X_NUM_OUTS	10
+#define ZL3073X_NUM_SYNTHS	5
+#define ZL3073X_NUM_INPUT_PINS	ZL3073X_NUM_REFS
+#define ZL3073X_NUM_OUTPUT_PINS	(ZL3073X_NUM_OUTS * 2)
+#define ZL3073X_NUM_PINS	(ZL3073X_NUM_INPUT_PINS + \
+				 ZL3073X_NUM_OUTPUT_PINS)
+
+/*
  * Register address structure:
  * ===========================
  *  25        19 18  16 15     7 6           0
@@ -77,6 +89,8 @@
 
 #define ZL_REG_RESET_STATUS			ZL_REG(0, 0x18, 1)
 #define ZL_REG_RESET_STATUS_RESET		BIT(0)
+
+#define ZL_REG_DIE_TEMP_STATUS			ZL_REG(0, 0x44, 2)
 
 /*************************
  * Register Page 2, Status
@@ -194,6 +208,7 @@
 #define ZL_REF_CONFIG_DIFF_EN			BIT(2)
 
 #define ZL_REG_REF_PHASE_OFFSET_COMP		ZL_REG(10, 0x28, 6)
+#define ZL_REG_REF_PHASE_OFFSET_COMP_32	ZL_REG(10, 0x28, 4)
 
 #define ZL_REG_REF_SYNC_CTRL			ZL_REG(10, 0x2e, 1)
 #define ZL_REF_SYNC_CTRL_MODE			GENMASK(2, 0)

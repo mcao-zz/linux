@@ -2031,8 +2031,7 @@ static void tls_rx_reader_unlock(struct sock *sk, struct tls_sw_context_rx *ctx)
 int tls_sw_recvmsg(struct sock *sk,
 		   struct msghdr *msg,
 		   size_t len,
-		   int flags,
-		   int *addr_len)
+		   int flags)
 {
 	struct tls_context *tls_ctx = tls_get_ctx(sk);
 	struct tls_sw_context_rx *ctx = tls_sw_ctx_rx(tls_ctx);
@@ -2533,7 +2532,7 @@ void tls_sw_cancel_work_tx(struct tls_context *tls_ctx)
 
 	set_bit(BIT_TX_CLOSING, &ctx->tx_bitmask);
 	set_bit(BIT_TX_SCHEDULED, &ctx->tx_bitmask);
-	cancel_delayed_work_sync(&ctx->tx_work.work);
+	disable_delayed_work_sync(&ctx->tx_work.work);
 }
 
 void tls_sw_release_resources_tx(struct sock *sk)
@@ -2698,7 +2697,7 @@ static struct tls_sw_context_tx *init_ctx_tx(struct tls_context *ctx, struct soc
 	struct tls_sw_context_tx *sw_ctx_tx;
 
 	if (!ctx->priv_ctx_tx) {
-		sw_ctx_tx = kzalloc(sizeof(*sw_ctx_tx), GFP_KERNEL);
+		sw_ctx_tx = kzalloc_obj(*sw_ctx_tx);
 		if (!sw_ctx_tx)
 			return NULL;
 	} else {
@@ -2719,7 +2718,7 @@ static struct tls_sw_context_rx *init_ctx_rx(struct tls_context *ctx)
 	struct tls_sw_context_rx *sw_ctx_rx;
 
 	if (!ctx->priv_ctx_rx) {
-		sw_ctx_rx = kzalloc(sizeof(*sw_ctx_rx), GFP_KERNEL);
+		sw_ctx_rx = kzalloc_obj(*sw_ctx_rx);
 		if (!sw_ctx_rx)
 			return NULL;
 	} else {

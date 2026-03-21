@@ -1742,9 +1742,7 @@ static int ieee80211_reconfig_nan(struct ieee80211_sub_if_data *sdata)
 	if (WARN_ON(res))
 		return res;
 
-	funcs = kcalloc(sdata->local->hw.max_nan_de_entries + 1,
-			sizeof(*funcs),
-			GFP_KERNEL);
+	funcs = kzalloc_objs(*funcs, sdata->local->hw.max_nan_de_entries + 1);
 	if (!funcs)
 		return -ENOMEM;
 
@@ -3768,12 +3766,11 @@ again:
 int ieee80211_send_action_csa(struct ieee80211_sub_if_data *sdata,
 			      struct cfg80211_csa_settings *csa_settings)
 {
+	int hdr_len = IEEE80211_MIN_ACTION_SIZE(chan_switch);
 	struct sk_buff *skb;
 	struct ieee80211_mgmt *mgmt;
 	struct ieee80211_local *local = sdata->local;
 	int freq;
-	int hdr_len = offsetofend(struct ieee80211_mgmt,
-				  u.action.u.chan_switch);
 	u8 *pos;
 
 	if (sdata->vif.type != NL80211_IFTYPE_ADHOC &&
@@ -3802,7 +3799,7 @@ int ieee80211_send_action_csa(struct ieee80211_sub_if_data *sdata,
 		memcpy(mgmt->bssid, ifibss->bssid, ETH_ALEN);
 	}
 	mgmt->u.action.category = WLAN_CATEGORY_SPECTRUM_MGMT;
-	mgmt->u.action.u.chan_switch.action_code = WLAN_ACTION_SPCT_CHL_SWITCH;
+	mgmt->u.action.action_code = WLAN_ACTION_SPCT_CHL_SWITCH;
 	pos = skb_put(skb, 5);
 	*pos++ = WLAN_EID_CHANNEL_SWITCH;			/* EID */
 	*pos++ = 3;						/* IE length */

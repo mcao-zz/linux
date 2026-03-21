@@ -5146,10 +5146,10 @@ static void rtl8xxxu_dump_action(struct device *dev,
 	if (!(rtl8xxxu_debug & RTL8XXXU_DEBUG_ACTION))
 		return;
 
-	switch (mgmt->u.action.u.addba_resp.action_code) {
+	switch (mgmt->u.action.action_code) {
 	case WLAN_ACTION_ADDBA_RESP:
-		cap = le16_to_cpu(mgmt->u.action.u.addba_resp.capab);
-		timeout = le16_to_cpu(mgmt->u.action.u.addba_resp.timeout);
+		cap = le16_to_cpu(mgmt->u.action.addba_resp.capab);
+		timeout = le16_to_cpu(mgmt->u.action.addba_resp.timeout);
 		dev_info(dev, "WLAN_ACTION_ADDBA_RESP: "
 			 "timeout %i, tid %02x, buf_size %02x, policy %02x, "
 			 "status %02x\n",
@@ -5157,11 +5157,11 @@ static void rtl8xxxu_dump_action(struct device *dev,
 			 (cap & IEEE80211_ADDBA_PARAM_TID_MASK) >> 2,
 			 (cap & IEEE80211_ADDBA_PARAM_BUF_SIZE_MASK) >> 6,
 			 (cap >> 1) & 0x1,
-			 le16_to_cpu(mgmt->u.action.u.addba_resp.status));
+			 le16_to_cpu(mgmt->u.action.addba_resp.status));
 		break;
 	case WLAN_ACTION_ADDBA_REQ:
-		cap = le16_to_cpu(mgmt->u.action.u.addba_req.capab);
-		timeout = le16_to_cpu(mgmt->u.action.u.addba_req.timeout);
+		cap = le16_to_cpu(mgmt->u.action.addba_req.capab);
+		timeout = le16_to_cpu(mgmt->u.action.addba_req.timeout);
 		dev_info(dev, "WLAN_ACTION_ADDBA_REQ: "
 			 "timeout %i, tid %02x, buf_size %02x, policy %02x\n",
 			 timeout,
@@ -5171,7 +5171,7 @@ static void rtl8xxxu_dump_action(struct device *dev,
 		break;
 	default:
 		dev_info(dev, "action frame %02x\n",
-			 mgmt->u.action.u.addba_resp.action_code);
+			 mgmt->u.action.action_code);
 		break;
 	}
 }
@@ -7323,7 +7323,7 @@ static void rtl8xxxu_collect_sta_iter(void *data, struct ieee80211_sta *sta)
 	struct rtl8xxxu_iter_stas_data *iter_stas = data;
 	struct rtl8xxxu_stas_entry *stas_entry;
 
-	stas_entry = kmalloc(sizeof(*stas_entry), GFP_ATOMIC);
+	stas_entry = kmalloc_obj(*stas_entry, GFP_ATOMIC);
 	if (!stas_entry)
 		return;
 
@@ -7381,7 +7381,7 @@ static int rtl8xxxu_start(struct ieee80211_hw *hw)
 	}
 
 	for (i = 0; i < RTL8XXXU_TX_URBS; i++) {
-		tx_urb = kmalloc(sizeof(struct rtl8xxxu_tx_urb), GFP_KERNEL);
+		tx_urb = kmalloc_obj(struct rtl8xxxu_tx_urb);
 		if (!tx_urb) {
 			if (!i)
 				ret = -ENOMEM;
@@ -7402,7 +7402,7 @@ static int rtl8xxxu_start(struct ieee80211_hw *hw)
 	spin_unlock_irqrestore(&priv->rx_urb_lock, flags);
 
 	for (i = 0; i < RTL8XXXU_RX_URBS; i++) {
-		rx_urb = kmalloc(sizeof(struct rtl8xxxu_rx_urb), GFP_KERNEL);
+		rx_urb = kmalloc_obj(struct rtl8xxxu_rx_urb);
 		if (!rx_urb) {
 			if (!i)
 				ret = -ENOMEM;

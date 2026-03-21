@@ -464,7 +464,7 @@ void ath12k_dp_rx_tid_del_func(struct ath12k_dp *dp, void *ctx,
 	ath12k_dp_rx_process_reo_cmd_update_rx_queue_list(dp);
 	spin_unlock_bh(&dp->dp_lock);
 
-	elem = kzalloc(sizeof(*elem), GFP_ATOMIC);
+	elem = kzalloc_obj(*elem, GFP_ATOMIC);
 	if (!elem)
 		goto free_desc;
 
@@ -565,7 +565,7 @@ static int ath12k_dp_prepare_reo_update_elem(struct ath12k_dp *dp,
 
 	lockdep_assert_held(&dp->dp_lock);
 
-	elem = kzalloc(sizeof(*elem), GFP_ATOMIC);
+	elem = kzalloc_obj(*elem, GFP_ATOMIC);
 	if (!elem)
 		return -ENOMEM;
 
@@ -1117,7 +1117,6 @@ static void ath12k_dp_rx_h_undecap_eth(struct ath12k_pdev_dp *dp_pdev,
 }
 
 void ath12k_dp_rx_h_undecap(struct ath12k_pdev_dp *dp_pdev, struct sk_buff *msdu,
-			    struct hal_rx_desc *rx_desc,
 			    enum hal_encrypt_type enctype,
 			    bool decrypted,
 			    struct hal_rx_desc_data *rx_info)
@@ -1393,7 +1392,6 @@ void ath12k_dp_rx_deliver_msdu(struct ath12k_pdev_dp *dp_pdev, struct napi_struc
 EXPORT_SYMBOL(ath12k_dp_rx_deliver_msdu);
 
 bool ath12k_dp_rx_check_nwifi_hdr_len_valid(struct ath12k_dp *dp,
-					    struct hal_rx_desc *rx_desc,
 					    struct sk_buff *msdu,
 					    struct hal_rx_desc_data *rx_info)
 {

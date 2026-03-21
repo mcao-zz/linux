@@ -99,9 +99,8 @@ static int hinic3_setup_num_qps(struct net_device *netdev)
 
 	nic_dev->num_qp_irq = 0;
 
-	nic_dev->qps_msix_entries = kcalloc(nic_dev->max_qps,
-					    sizeof(struct msix_entry),
-					    GFP_KERNEL);
+	nic_dev->qps_msix_entries = kzalloc_objs(struct msix_entry,
+						 nic_dev->max_qps);
 	if (!nic_dev->qps_msix_entries)
 		return -ENOMEM;
 
@@ -127,20 +126,19 @@ static int hinic3_alloc_txrxq_resources(struct net_device *netdev,
 {
 	int err;
 
-	q_params->txqs_res = kcalloc(q_params->num_qps,
-				     sizeof(*q_params->txqs_res), GFP_KERNEL);
+	q_params->txqs_res = kzalloc_objs(*q_params->txqs_res,
+					  q_params->num_qps);
 	if (!q_params->txqs_res)
 		return -ENOMEM;
 
-	q_params->rxqs_res = kcalloc(q_params->num_qps,
-				     sizeof(*q_params->rxqs_res), GFP_KERNEL);
+	q_params->rxqs_res = kzalloc_objs(*q_params->rxqs_res,
+					  q_params->num_qps);
 	if (!q_params->rxqs_res) {
 		err = -ENOMEM;
 		goto err_free_txqs_res_arr;
 	}
 
-	q_params->irq_cfg = kcalloc(q_params->num_qps,
-				    sizeof(*q_params->irq_cfg), GFP_KERNEL);
+	q_params->irq_cfg = kzalloc_objs(*q_params->irq_cfg, q_params->num_qps);
 	if (!q_params->irq_cfg) {
 		err = -ENOMEM;
 		goto err_free_rxqs_res_arr;
@@ -417,13 +415,17 @@ static void hinic3_vport_down(struct net_device *netdev)
 	netif_carrier_off(netdev);
 	netif_tx_disable(netdev);
 
-	glb_func_id = hinic3_global_func_id(nic_dev->hwdev);
-	hinic3_set_vport_enable(nic_dev->hwdev, glb_func_id, false);
+	if (nic_dev->hwdev->chip_present_flag) {
+		hinic3_maybe_set_port_state(netdev, false);
 
-	hinic3_flush_txqs(netdev);
-	/* wait to guarantee that no packets will be sent to host */
-	msleep(100);
-	hinic3_flush_qps_res(nic_dev->hwdev);
+		glb_func_id = hinic3_global_func_id(nic_dev->hwdev);
+		hinic3_set_vport_enable(nic_dev->hwdev, glb_func_id, false);
+
+		hinic3_flush_txqs(netdev);
+		/* wait to guarantee that no packets will be sent to host */
+		msleep(100);
+		hinic3_flush_qps_res(nic_dev->hwdev);
+	}
 }
 
 static int hinic3_open(struct net_device *netdev)

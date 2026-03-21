@@ -438,7 +438,7 @@ static SIMPLE_DEV_PM_OPS(mdio_bus_phy_pm_ops, mdio_bus_phy_suspend,
 static int phy_register_fixup(const char *bus_id, u32 phy_uid, u32 phy_uid_mask,
 			      int (*run)(struct phy_device *))
 {
-	struct phy_fixup *fixup = kzalloc(sizeof(*fixup), GFP_KERNEL);
+	struct phy_fixup *fixup = kzalloc_obj(*fixup);
 
 	if (!fixup)
 		return -ENOMEM;
@@ -754,7 +754,7 @@ struct phy_device *phy_device_create(struct mii_bus *bus, int addr, u32 phy_id,
 	int ret = 0;
 
 	/* We allocate the device, and initialize the default values */
-	dev = kzalloc(sizeof(*dev), GFP_KERNEL);
+	dev = kzalloc_obj(*dev);
 	if (!dev)
 		return ERR_PTR(-ENOMEM);
 
@@ -1866,8 +1866,6 @@ int phy_attach_direct(struct net_device *dev, struct phy_device *phydev,
 		goto error;
 
 	phy_resume(phydev);
-	if (!phydev->is_on_sfp_module)
-		phy_led_triggers_register(phydev);
 
 	/**
 	 * If the external phy used by current mac interface is managed by
@@ -1896,44 +1894,6 @@ error_put_device:
 	return err;
 }
 EXPORT_SYMBOL(phy_attach_direct);
-
-/**
- * phy_attach - attach a network device to a particular PHY device
- * @dev: network device to attach
- * @bus_id: Bus ID of PHY device to attach
- * @interface: PHY device's interface
- *
- * Description: Same as phy_attach_direct() except that a PHY bus_id
- *     string is passed instead of a pointer to a struct phy_device.
- */
-struct phy_device *phy_attach(struct net_device *dev, const char *bus_id,
-			      phy_interface_t interface)
-{
-	struct phy_device *phydev;
-	struct device *d;
-	int rc;
-
-	if (!dev)
-		return ERR_PTR(-EINVAL);
-
-	/* Search the list of PHY devices on the mdio bus for the
-	 * PHY with the requested name
-	 */
-	d = bus_find_device_by_name(&mdio_bus_type, NULL, bus_id);
-	if (!d) {
-		pr_err("PHY %s not found\n", bus_id);
-		return ERR_PTR(-ENODEV);
-	}
-	phydev = to_phy_device(d);
-
-	rc = phy_attach_direct(dev, phydev, phydev->dev_flags, interface);
-	put_device(d);
-	if (rc)
-		return ERR_PTR(rc);
-
-	return phydev;
-}
-EXPORT_SYMBOL(phy_attach);
 
 /**
  * phy_detach - detach a PHY device from its network device
@@ -1981,9 +1941,6 @@ void phy_detach(struct phy_device *phydev)
 
 	phydev->phy_link_change = NULL;
 	phydev->phylink = NULL;
-
-	if (!phydev->is_on_sfp_module)
-		phy_led_triggers_unregister(phydev);
 
 	if (phydev->mdio.dev.driver)
 		module_put(phydev->mdio.dev.driver->owner);
@@ -3778,16 +3735,27 @@ static int phy_probe(struct device *dev)
 	/* Set the state to READY by default */
 	phydev->state = PHY_READY;
 
+	/* Register the PHY LED triggers */
+	if (!phydev->is_on_sfp_module)
+		phy_led_triggers_register(phydev);
+
 	/* Get the LEDs from the device tree, and instantiate standard
 	 * LEDs for them.
 	 */
-	if (IS_ENABLED(CONFIG_PHYLIB_LEDS) && !phy_driver_is_genphy(phydev))
+	if (IS_ENABLED(CONFIG_PHYLIB_LEDS) && !phy_driver_is_genphy(phydev)) {
 		err = of_phy_leds(phydev);
+		if (err)
+			goto out;
+	}
+
+	return 0;
 
 out:
+	if (!phydev->is_on_sfp_module)
+		phy_led_triggers_unregister(phydev);
+
 	/* Re-assert the reset signal on error */
-	if (err)
-		phy_device_reset(phydev, 1);
+	phy_device_reset(phydev, 1);
 
 	return err;
 }
@@ -3800,6 +3768,9 @@ static int phy_remove(struct device *dev)
 
 	if (IS_ENABLED(CONFIG_PHYLIB_LEDS) && !phy_driver_is_genphy(phydev))
 		phy_leds_unregister(phydev);
+
+	if (!phydev->is_on_sfp_module)
+		phy_led_triggers_unregister(phydev);
 
 	phydev->state = PHY_DOWN;
 
@@ -3942,6 +3913,14 @@ static int __init phy_init(void)
 {
 	int rc;
 
+	rc = class_register(&mdio_bus_class);
+	if (rc)
+		return rc;
+
+	rc = bus_register(&mdio_bus_type);
+	if (rc)
+		goto err_class;
+
 	rtnl_lock();
 	ethtool_set_ethtool_phy_ops(&phy_ethtool_phy_ops);
 	phylib_register_stubs();
@@ -3970,6 +3949,9 @@ err_ethtool_phy_ops:
 	phylib_unregister_stubs();
 	ethtool_set_ethtool_phy_ops(NULL);
 	rtnl_unlock();
+	bus_unregister(&mdio_bus_type);
+err_class:
+	class_unregister(&mdio_bus_class);
 
 	return rc;
 }
@@ -3982,6 +3964,8 @@ static void __exit phy_exit(void)
 	phylib_unregister_stubs();
 	ethtool_set_ethtool_phy_ops(NULL);
 	rtnl_unlock();
+	bus_unregister(&mdio_bus_type);
+	class_unregister(&mdio_bus_class);
 }
 
 subsys_initcall(phy_init);

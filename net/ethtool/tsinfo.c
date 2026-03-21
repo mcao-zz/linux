@@ -6,9 +6,9 @@
 #include <linux/ptp_clock_kernel.h>
 #include <net/netdev_lock.h>
 
-#include "netlink.h"
-#include "common.h"
 #include "bitset.h"
+#include "common.h"
+#include "netlink.h"
 #include "ts.h"
 
 struct tsinfo_req_info {
@@ -505,10 +505,10 @@ int ethnl_tsinfo_start(struct netlink_callback *cb)
 
 	BUILD_BUG_ON(sizeof(*ctx) > sizeof(cb->ctx));
 
-	req_info = kzalloc(sizeof(*req_info), GFP_KERNEL);
+	req_info = kzalloc_obj(*req_info);
 	if (!req_info)
 		return -ENOMEM;
-	reply_data = kzalloc(sizeof(*reply_data), GFP_KERNEL);
+	reply_data = kzalloc_obj(*reply_data);
 	if (!reply_data) {
 		ret = -ENOMEM;
 		goto free_req_info;

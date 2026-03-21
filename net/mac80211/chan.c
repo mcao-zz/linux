@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-only
 /*
  * mac80211 - channel management
- * Copyright 2020 - 2025 Intel Corporation
+ * Copyright 2020-2026 Intel Corporation
  */
 
 #include <linux/nl80211.h>
@@ -239,24 +239,45 @@ ieee80211_chanreq_compatible(const struct ieee80211_chan_req *a,
 	return tmp;
 }
 
+/*
+ * When checking for compatible, check against all the links using
+ * the chanctx (except the one passed that might be changing) to
+ * allow changes to the AP's bandwidth for wider bandwidth OFDMA
+ * purposes, which wouldn't be treated as compatible by checking
+ * against the chanctx's oper/ap chandefs.
+ */
 static const struct ieee80211_chan_req *
-ieee80211_chanctx_compatible(struct ieee80211_chanctx *ctx,
+_ieee80211_chanctx_compatible(struct ieee80211_local *local,
+			      struct ieee80211_link_data *skip_link,
+			      struct ieee80211_chanctx *ctx,
+			      const struct ieee80211_chan_req *req,
+			      struct ieee80211_chan_req *tmp)
+{
+	const struct ieee80211_chan_req *ret = req;
+	struct ieee80211_chanctx_user_iter iter;
+
+	lockdep_assert_wiphy(local->hw.wiphy);
+
+	for_each_chanctx_user_all(local, ctx, &iter) {
+		if (iter.link && iter.link == skip_link)
+			continue;
+
+		ret = ieee80211_chanreq_compatible(ret, iter.chanreq, tmp);
+		if (!ret)
+			return NULL;
+	}
+
+	*tmp = *ret;
+	return tmp;
+}
+
+static const struct ieee80211_chan_req *
+ieee80211_chanctx_compatible(struct ieee80211_local *local,
+			     struct ieee80211_chanctx *ctx,
 			     const struct ieee80211_chan_req *req,
 			     struct ieee80211_chan_req *tmp)
 {
-	const struct ieee80211_chan_req *ret;
-	struct ieee80211_chan_req tmp2;
-
-	*tmp = (struct ieee80211_chan_req){
-		.oper = ctx->conf.def,
-		.ap = ctx->conf.ap,
-	};
-
-	ret = ieee80211_chanreq_compatible(tmp, req, &tmp2);
-	if (!ret)
-		return NULL;
-	*tmp = *ret;
-	return tmp;
+	return _ieee80211_chanctx_compatible(local, NULL, ctx, req, tmp);
 }
 
 static const struct ieee80211_chan_req *
@@ -561,14 +582,16 @@ static void ieee80211_chan_bw_change(struct ieee80211_local *local,
 	rcu_read_lock();
 	list_for_each_entry_rcu(sta, &local->sta_list,
 				list) {
-		struct ieee80211_sub_if_data *sdata = sta->sdata;
+		struct ieee80211_sub_if_data *sdata;
 		enum ieee80211_sta_rx_bandwidth new_sta_bw;
 		unsigned int link_id;
 
 		if (!ieee80211_sdata_running(sta->sdata))
 			continue;
 
-		for (link_id = 0; link_id < ARRAY_SIZE(sta->sdata->link); link_id++) {
+		sdata = get_bss_sdata(sta->sdata);
+
+		for (link_id = 0; link_id < ARRAY_SIZE(sdata->link); link_id++) {
 			struct ieee80211_link_data *link =
 				rcu_dereference(sdata->link[link_id]);
 			struct ieee80211_bss_conf *link_conf;
@@ -756,7 +779,8 @@ ieee80211_find_chanctx(struct ieee80211_local *local,
 		if (ctx->mode == IEEE80211_CHANCTX_EXCLUSIVE)
 			continue;
 
-		compat = ieee80211_chanctx_compatible(ctx, chanreq, &tmp);
+		compat = ieee80211_chanctx_compatible(local, ctx, chanreq,
+						      &tmp);
 		if (!compat)
 			continue;
 
@@ -1612,7 +1636,7 @@ static int ieee80211_chsw_switch_vifs(struct ieee80211_local *local,
 
 	lockdep_assert_wiphy(local->hw.wiphy);
 
-	vif_chsw = kcalloc(n_vifs, sizeof(vif_chsw[0]), GFP_KERNEL);
+	vif_chsw = kzalloc_objs(vif_chsw[0], n_vifs);
 	if (!vif_chsw)
 		return -ENOMEM;
 
@@ -2128,40 +2152,6 @@ int ieee80211_link_use_reserved_context(struct ieee80211_link_data *link)
 	return 0;
 }
 
-/*
- * This is similar to ieee80211_chanctx_compatible(), but rechecks
- * against all the links actually using it (except the one that's
- * passed, since that one is changing).
- * This is done in order to allow changes to the AP's bandwidth for
- * wider bandwidth OFDMA purposes, which wouldn't be treated as
- * compatible by ieee80211_chanctx_recheck() but is OK if the link
- * requesting the update is the only one using it.
- */
-static const struct ieee80211_chan_req *
-ieee80211_chanctx_recheck(struct ieee80211_local *local,
-			  struct ieee80211_link_data *skip_link,
-			  struct ieee80211_chanctx *ctx,
-			  const struct ieee80211_chan_req *req,
-			  struct ieee80211_chan_req *tmp)
-{
-	const struct ieee80211_chan_req *ret = req;
-	struct ieee80211_chanctx_user_iter iter;
-
-	lockdep_assert_wiphy(local->hw.wiphy);
-
-	for_each_chanctx_user_all(local, ctx, &iter) {
-		if (iter.link == skip_link)
-			continue;
-
-		ret = ieee80211_chanreq_compatible(ret, iter.chanreq, tmp);
-		if (!ret)
-			return NULL;
-	}
-
-	*tmp = *ret;
-	return tmp;
-}
-
 int ieee80211_link_change_chanreq(struct ieee80211_link_data *link,
 				  const struct ieee80211_chan_req *chanreq,
 				  u64 *changed)
@@ -2198,7 +2188,7 @@ int ieee80211_link_change_chanreq(struct ieee80211_link_data *link,
 
 	ctx = container_of(conf, struct ieee80211_chanctx, conf);
 
-	compat = ieee80211_chanctx_recheck(local, link, ctx, chanreq, &tmp);
+	compat = _ieee80211_chanctx_compatible(local, link, ctx, chanreq, &tmp);
 	if (!compat)
 		return -EINVAL;
 

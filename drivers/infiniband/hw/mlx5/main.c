@@ -26,6 +26,7 @@
 #include <linux/mlx5/fs.h>
 #include <linux/mlx5/eswitch.h>
 #include <linux/mlx5/driver.h>
+#include <linux/mlx5/lag.h>
 #include <linux/list.h>
 #include <rdma/ib_smi.h>
 #include <rdma/ib_umem_odp.h>
@@ -1460,7 +1461,7 @@ static int mlx5_query_hca_port(struct ib_device *ibdev, u32 port,
 	int err;
 	u16 ib_link_width_oper;
 
-	rep = kzalloc(sizeof(*rep), GFP_KERNEL);
+	rep = kzalloc_obj(*rep);
 	if (!rep) {
 		err = -ENOMEM;
 		goto out;
@@ -3121,7 +3122,7 @@ static int mlx5_ib_event(struct notifier_block *nb,
 {
 	struct mlx5_ib_event_work *work;
 
-	work = kmalloc(sizeof(*work), GFP_ATOMIC);
+	work = kmalloc_obj(*work, GFP_ATOMIC);
 	if (!work)
 		return NOTIFY_DONE;
 
@@ -3141,7 +3142,7 @@ static int mlx5_ib_event_slave_port(struct notifier_block *nb,
 {
 	struct mlx5_ib_event_work *work;
 
-	work = kmalloc(sizeof(*work), GFP_ATOMIC);
+	work = kmalloc_obj(*work, GFP_ATOMIC);
 	if (!work)
 		return NOTIFY_DONE;
 
@@ -3188,7 +3189,7 @@ static int mlx5_ib_sys_error_event(struct notifier_block *nb,
 	if (event != MLX5_DEV_EVENT_SYS_ERROR)
 		return NOTIFY_DONE;
 
-	work = kmalloc(sizeof(*work), GFP_ATOMIC);
+	work = kmalloc_obj(*work, GFP_ATOMIC);
 	if (!work)
 		return NOTIFY_DONE;
 
@@ -3678,12 +3679,12 @@ static void mlx5e_lag_event_unregister(struct mlx5_ib_dev *dev)
 
 static int mlx5_eth_lag_init(struct mlx5_ib_dev *dev)
 {
+	struct mlx5_flow_table_attr ft_attr = {};
 	struct mlx5_core_dev *mdev = dev->mdev;
-	struct mlx5_flow_namespace *ns = mlx5_get_flow_namespace(mdev,
-								 MLX5_FLOW_NAMESPACE_LAG);
-	struct mlx5_flow_table *ft;
+	struct mlx5_flow_namespace *ns;
 	int err;
 
+	ns = mlx5_get_flow_namespace(mdev, MLX5_FLOW_NAMESPACE_LAG);
 	if (!ns || !mlx5_lag_is_active(mdev))
 		return 0;
 
@@ -3691,14 +3692,15 @@ static int mlx5_eth_lag_init(struct mlx5_ib_dev *dev)
 	if (err)
 		return err;
 
-	ft = mlx5_create_lag_demux_flow_table(ns, 0, 0);
-	if (IS_ERR(ft)) {
-		err = PTR_ERR(ft);
+	ft_attr.level = 0;
+	ft_attr.prio = 0;
+	ft_attr.max_fte = dev->num_ports;
+
+	err = mlx5_lag_demux_init(mdev, &ft_attr);
+	if (err)
 		goto err_destroy_vport_lag;
-	}
 
 	mlx5e_lag_event_register(dev);
-	dev->flow_db->lag_demux_ft = ft;
 	dev->lag_ports = mlx5_lag_get_num_ports(mdev);
 	dev->lag_active = true;
 	return 0;
@@ -3716,8 +3718,7 @@ static void mlx5_eth_lag_cleanup(struct mlx5_ib_dev *dev)
 		dev->lag_active = false;
 
 		mlx5e_lag_event_unregister(dev);
-		mlx5_destroy_flow_table(dev->flow_db->lag_demux_ft);
-		dev->flow_db->lag_demux_ft = NULL;
+		mlx5_lag_demux_cleanup(mdev);
 
 		mlx5_cmd_destroy_vport_lag(mdev);
 	}
@@ -4042,7 +4043,7 @@ static int mlx5_ib_init_multiport_master(struct mlx5_ib_dev *dev)
 
 		/* build a stub multiport info struct for the native port. */
 		if (i == port_num) {
-			mpi = kzalloc(sizeof(*mpi), GFP_KERNEL);
+			mpi = kzalloc_obj(*mpi);
 			if (!mpi) {
 				mutex_unlock(&mlx5_ib_multiport_mutex);
 				mlx5_nic_vport_disable_roce(dev->mdev);
@@ -4148,7 +4149,7 @@ alloc_var_entry(struct mlx5_ib_ucontext *c)
 	int err;
 
 	var_table = &to_mdev(c->ibucontext.device)->var_table;
-	entry = kzalloc(sizeof(*entry), GFP_KERNEL);
+	entry = kzalloc_obj(*entry);
 	if (!entry)
 		return ERR_PTR(-ENOMEM);
 
@@ -4269,7 +4270,7 @@ alloc_uar_entry(struct mlx5_ib_ucontext *c,
 	u32 uar_index;
 	int err;
 
-	entry = kzalloc(sizeof(*entry), GFP_KERNEL);
+	entry = kzalloc_obj(*entry);
 	if (!entry)
 		return ERR_PTR(-ENOMEM);
 
@@ -5204,8 +5205,8 @@ static struct ib_device *mlx5_ib_add_sub_dev(struct ib_device *parent,
 	if (!mplane)
 		return ERR_PTR(-ENOMEM);
 
-	mplane->port = kcalloc(mparent->num_plane * mparent->num_ports,
-			       sizeof(*mplane->port), GFP_KERNEL);
+	mplane->port = kzalloc_objs(*mplane->port,
+				    mparent->num_plane * mparent->num_ports);
 	if (!mplane->port) {
 		ret = -ENOMEM;
 		goto fail_kcalloc;
@@ -5249,7 +5250,7 @@ static int mlx5r_mp_probe(struct auxiliary_device *adev,
 	bool bound = false;
 	int err;
 
-	mpi = kzalloc(sizeof(*mpi), GFP_KERNEL);
+	mpi = kzalloc_obj(*mpi);
 	if (!mpi)
 		return -ENOMEM;
 
@@ -5325,8 +5326,7 @@ static int mlx5r_probe(struct auxiliary_device *adev,
 			goto fail;
 	}
 
-	dev->port = kcalloc(num_ports, sizeof(*dev->port),
-			     GFP_KERNEL);
+	dev->port = kzalloc_objs(*dev->port, num_ports);
 	if (!dev->port) {
 		ret = -ENOMEM;
 		goto fail;

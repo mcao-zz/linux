@@ -1341,6 +1341,13 @@ static void phylink_major_config(struct phylink *pl, bool restart,
 	}
 
 	if (pl->phydev && pl->phy_ib_mode) {
+		phylink_dbg(pl, "configuring PHY for inband%s%s%s\n",
+			    pl->phy_ib_mode & LINK_INBAND_DISABLE ?
+				" disable" : "",
+			    pl->phy_ib_mode & LINK_INBAND_ENABLE ?
+				" enable" : "",
+			    pl->phy_ib_mode & LINK_INBAND_BYPASS ?
+				" bypass" : "");
 		err = phy_config_inband(pl->phydev, pl->phy_ib_mode);
 		if (err < 0) {
 			phylink_err(pl, "phy_config_inband: %pe\n",
@@ -1853,7 +1860,7 @@ struct phylink *phylink_create(struct phylink_config *config,
 		return ERR_PTR(-EINVAL);
 	}
 
-	pl = kzalloc(sizeof(*pl), GFP_KERNEL);
+	pl = kzalloc_obj(*pl);
 	if (!pl)
 		return ERR_PTR(-ENOMEM);
 

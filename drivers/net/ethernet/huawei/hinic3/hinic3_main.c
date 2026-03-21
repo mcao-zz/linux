@@ -18,6 +18,7 @@
 
 #define HINIC3_NIC_DRV_DESC  "Intelligent Network Interface Card Driver"
 
+#define HINIC3_DEFAULT_MSG_ENABLE  (NETIF_MSG_DRV | NETIF_MSG_LINK)
 #define HINIC3_RX_BUF_LEN          2048
 #define HINIC3_LRO_REPLENISH_THLD  256
 #define HINIC3_NIC_DEV_WQ_NAME     "hinic3_nic_dev_wq"
@@ -57,9 +58,8 @@ static int hinic3_init_intr_coalesce(struct net_device *netdev)
 {
 	struct hinic3_nic_dev *nic_dev = netdev_priv(netdev);
 
-	nic_dev->intr_coalesce = kcalloc(nic_dev->max_qps,
-					 sizeof(*nic_dev->intr_coalesce),
-					 GFP_KERNEL);
+	nic_dev->intr_coalesce = kzalloc_objs(*nic_dev->intr_coalesce,
+					      nic_dev->max_qps);
 
 	if (!nic_dev->intr_coalesce)
 		return -ENOMEM;
@@ -144,6 +144,7 @@ static int hinic3_init_nic_dev(struct net_device *netdev,
 	nic_dev->hwdev = hwdev;
 	nic_dev->pdev = pdev;
 
+	nic_dev->msg_enable = HINIC3_DEFAULT_MSG_ENABLE;
 	nic_dev->rx_buf_len = HINIC3_RX_BUF_LEN;
 	nic_dev->lro_replenish_thld = HINIC3_LRO_REPLENISH_THLD;
 	nic_dev->vlan_bitmap = kzalloc(HINIC3_VLAN_BITMAP_SIZE(nic_dev),
@@ -242,6 +243,7 @@ static void hinic3_sw_uninit(struct net_device *netdev)
 static void hinic3_assign_netdev_ops(struct net_device *netdev)
 {
 	hinic3_set_netdev_ops(netdev);
+	hinic3_set_ethtool_ops(netdev);
 }
 
 static void netdev_feature_init(struct net_device *netdev)

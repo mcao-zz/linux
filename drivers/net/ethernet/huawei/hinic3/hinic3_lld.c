@@ -60,7 +60,7 @@ static struct hinic3_adev *hinic3_add_one_adev(struct hinic3_hwdev *hwdev,
 	const char *svc_name;
 	int ret;
 
-	hadev = kzalloc(sizeof(*hadev), GFP_KERNEL);
+	hadev = kzalloc_obj(*hadev);
 	if (!hadev)
 		return NULL;
 
@@ -250,7 +250,7 @@ static int hinic3_pci_init(struct pci_dev *pdev)
 	struct hinic3_pcidev *pci_adapter;
 	int err;
 
-	pci_adapter = kzalloc(sizeof(*pci_adapter), GFP_KERNEL);
+	pci_adapter = kzalloc_obj(*pci_adapter);
 	if (!pci_adapter)
 		return -ENOMEM;
 
@@ -426,6 +426,7 @@ static void hinic3_remove(struct pci_dev *pdev)
 }
 
 static const struct pci_device_id hinic3_pci_table[] = {
+	{PCI_VDEVICE(HUAWEI, PCI_DEV_ID_HINIC3_PF), 0},
 	{PCI_VDEVICE(HUAWEI, PCI_DEV_ID_HINIC3_VF), 0},
 	{0, 0}
 

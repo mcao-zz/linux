@@ -3983,7 +3983,7 @@ static void ksz9477_phylink_mac_link_up(struct phylink_config *config,
 	if (dev->info->internal_phy[port])
 		return;
 
-	p->phydev.speed = speed;
+	p->speed = speed;
 
 	ksz_port_set_xmii_speed(dev, port, speed);
 
@@ -4835,7 +4835,7 @@ int ksz_switch_macaddr_get(struct dsa_switch *ds, int port,
 		return 0;
 	}
 
-	switch_macaddr = kzalloc(sizeof(*switch_macaddr), GFP_KERNEL);
+	switch_macaddr = kzalloc_obj(*switch_macaddr);
 	if (!switch_macaddr)
 		return -ENOMEM;
 
