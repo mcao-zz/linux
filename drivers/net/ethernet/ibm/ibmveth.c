@@ -343,6 +343,131 @@ static void ibmveth_cleanup_rx_resources(struct ibmveth_adapter *adapter)
 	}
 }
 
+/**
+ * ibmveth_disable_irq - Disable interrupt for a specific queue
+ * @adapter: ibmveth adapter structure
+ * @queue_index: Index of the queue (0 for primary, 1+ for subordinate)
+ *
+ * Uses H_VIOCTL with H_DISABLE_VIO_INTERRUPT for per-queue interrupt control.
+ * This works for both primary queue (queue 0) and subordinate queues.
+ * Note: H_VIOCTL on queue 0 is equivalent to h_vio_signal(VIO_IRQ_DISABLE).
+ *
+ * Return: 0 on success, error code otherwise
+ */
+static int ibmveth_disable_irq(struct ibmveth_adapter *adapter, int queue_index)
+{
+	unsigned long rc;
+	unsigned long irq = adapter->queue_irq[queue_index];
+
+	rc = plpar_hcall_norets(H_VIOCTL,
+				adapter->vdev->unit_address,
+				H_DISABLE_VIO_INTERRUPT,
+				irq, 0, 0);
+	if (rc)
+		netdev_err(adapter->netdev,
+			   "Failed to disable IRQ 0x%lx for queue %d, rc=%ld\n",
+			   irq, queue_index, rc);
+	return rc;
+}
+
+/**
+ * ibmveth_enable_irq - Enable interrupt for a specific queue
+ * @adapter: ibmveth adapter structure
+ * @queue_index: Index of the queue (0 for primary, 1+ for subordinate)
+ *
+ * Uses H_VIOCTL with H_ENABLE_VIO_INTERRUPT for per-queue interrupt control.
+ * This works for both primary queue (queue 0) and subordinate queues.
+ * Note: H_VIOCTL on queue 0 is equivalent to h_vio_signal(VIO_IRQ_ENABLE).
+ *
+ * Return: 0 on success, error code otherwise
+ */
+static int ibmveth_enable_irq(struct ibmveth_adapter *adapter, int queue_index)
+{
+	unsigned long rc;
+	unsigned long irq = adapter->queue_irq[queue_index];
+
+	rc = plpar_hcall_norets(H_VIOCTL,
+				adapter->vdev->unit_address,
+				H_ENABLE_VIO_INTERRUPT,
+				irq, 0, 0);
+	if (rc)
+		netdev_err(adapter->netdev,
+			   "Failed to enable IRQ 0x%lx for queue %d, rc=%ld\n",
+			   irq, queue_index, rc);
+	return rc;
+}
+
+/**
+ * ibmveth_disable_irqs - Disable interrupts for all queues
+ * @adapter: ibmveth adapter structure
+ *
+ * Convenience wrapper that disables interrupts for all active RX queues
+ */
+static void ibmveth_disable_irqs(struct ibmveth_adapter *adapter)
+{
+	int i;
+
+	/* Disable interrupts for all queues before registration */
+	for (i = 0; i < adapter->num_rx_queues; i++)
+		ibmveth_disable_irq(adapter, i);
+}
+
+/**
+ * ibmveth_setup_rx_interrupts - Register IRQs and enable NAPI
+ * @adapter: ibmveth adapter structure
+ *
+ * Return: 0 on success, negative error code on failure
+ */
+static int ibmveth_setup_rx_interrupts(struct ibmveth_adapter *adapter)
+{
+	struct net_device *netdev = adapter->netdev;
+	int i, rc;
+
+	for (i = 0; i < adapter->num_rx_queues; i++) {
+		netdev_dbg(netdev, "registering queue irq 0x%x\n",
+			   adapter->queue_irq[i]);
+		rc = request_irq(adapter->queue_irq[i], ibmveth_interrupt,
+				 IRQF_NO_AUTOEN,
+				 netdev->name, adapter);
+		if (rc != 0) {
+			netdev_err(netdev, "unable to request irq 0x%x, rc %d\n",
+				   adapter->queue_irq[i], rc);
+			goto err_free_irqs;
+		}
+	}
+
+	for (i = 0; i < adapter->num_rx_queues; i++)
+		napi_enable(&adapter->napi[i]);
+
+	netdev_dbg(netdev, "registered IRQs and enabled NAPI for %d queue(s)\n",
+		  adapter->num_rx_queues);
+
+	return 0;
+
+err_free_irqs:
+	while (--i >= 0)
+		free_irq(adapter->queue_irq[i], adapter);
+	return rc;
+}
+
+/**
+ * ibmveth_cleanup_rx_interrupts - Disable NAPI and free IRQs
+ * @adapter: ibmveth adapter structure
+ */
+static void ibmveth_cleanup_rx_interrupts(struct ibmveth_adapter *adapter)
+{
+	int i;
+
+	netdev_dbg(adapter->netdev, "disabling NAPI and freeing IRQs for %d queue(s)\n",
+		   adapter->num_rx_queues);
+
+	for (i = 0; i < adapter->num_rx_queues; i++)
+		napi_disable(&adapter->napi[i]);
+
+	for (i = 0; i < adapter->num_rx_queues; i++)
+		free_irq(adapter->queue_irq[i], &adapter->napi[i]);
+}
+
 /* setup the initial settings for a buffer pool */
 static void ibmveth_init_buffer_pool(struct ibmveth_buff_pool *pool,
 				     u32 pool_index, u32 pool_size,
@@ -1242,7 +1367,7 @@ static int ibmveth_open(struct net_device *netdev)
 	netdev_dbg(netdev, "registering queue irq 0x%x\n",
 		   adapter->queue_irq);
 	rc = request_irq(adapter->queue_irq, ibmveth_interrupt, 0,
-			 netdev->name, netdev);
+			 netdev->name, adapter);
 
 	if (rc != 0) {
 		netdev_err(netdev, "unable to request irq 0x%x, rc %d\n",
@@ -2122,17 +2247,37 @@ out:
 	return frames_processed;
 }
 
+/**
+ * ibmveth_interrupt - Interrupt handler for RX queue
+ * @irq: IRQ number that triggered the interrupt
+ * @dev_instance: Pointer to ibmveth_adapter structure
+ *
+ * For multi-queue mode, each queue has its own IRQ and NAPI context.
+ * The queue index is determined by matching the IRQ number against
+ * the adapter's queue_irq[] array.
+ *
+ * Return: IRQ_HANDLED if interrupt was handled, IRQ_NONE if IRQ not recognized
+ */
 static irqreturn_t ibmveth_interrupt(int irq, void *dev_instance)
 {
-	struct net_device *netdev = dev_instance;
-	struct ibmveth_adapter *adapter = netdev_priv(netdev);
+	struct ibmveth_adapter *adapter = dev_instance;
 	unsigned long lpar_rc;
+	int qindex;
 
-	if (napi_schedule_prep(&adapter->napi)) {
-		lpar_rc = h_vio_signal(adapter->vdev->unit_address,
-				       VIO_IRQ_DISABLE);
+	/* Find which queue triggered this interrupt */
+	for (qindex = 0; qindex < adapter->num_rx_queues; qindex++) {
+		if (adapter->queue_irq[qindex] == irq)
+			break;
+	}
+
+	/* Sanity check - should never happen */
+	if (WARN_ON(qindex >= adapter->num_rx_queues))
+		return IRQ_NONE;
+
+	if (napi_schedule_prep(&adapter->napi[qindex])) {
+		lpar_rc = ibmveth_disable_irq(adapter, qindex);
 		WARN_ON(lpar_rc != H_SUCCESS);
-		__napi_schedule(&adapter->napi);
+		__napi_schedule(&adapter->napi[qindex]);
 	}
 	return IRQ_HANDLED;
 }
@@ -2238,9 +2383,15 @@ static int ibmveth_change_mtu(struct net_device *dev, int new_mtu)
 #ifdef CONFIG_NET_POLL_CONTROLLER
 static void ibmveth_poll_controller(struct net_device *dev)
 {
+	struct ibmveth_adapter *adapter = netdev_priv(dev);
+	int i;
+
 	ibmveth_replenish_task(netdev_priv(dev));
-	ibmveth_interrupt(dev->irq, dev);
-}
+
+	/* Poll all RX queues */
+	for (i = 0; i < adapter->num_rx_queues; i++)
+		ibmveth_interrupt(adapter->queue_irq[i], adapter);
+ }
 #endif
 
 /**
@@ -2379,7 +2530,8 @@ static int ibmveth_probe(struct vio_dev *dev, const struct vio_device_id *id)
 	adapter->mcastFilterSize = be32_to_cpu(*mcastFilterSize_p);
 	ibmveth_init_link_settings(netdev);
 
-	netif_napi_add_weight(netdev, &adapter->napi, ibmveth_poll, 16);
+	for (i = 0; i < IBMVETH_MAX_QUEUES; i++)
+		netif_napi_add_weight(netdev, &adapter->napi[i], ibmveth_poll, 16);
 
 	netdev->irq = dev->irq;
 	netdev->netdev_ops = &ibmveth_netdev_ops;
@@ -2745,7 +2897,7 @@ static ssize_t veth_pool_store(struct kobject *kobj, struct attribute *attr,
 	rtnl_unlock();
 
 	/* kick the interrupt handler to allocate/deallocate pools */
-	ibmveth_interrupt(netdev->irq, netdev);
+	ibmveth_interrupt(adapter->queue_irq[0], adapter);
 	return count;
 
 unlock_err:
@@ -2785,7 +2937,9 @@ static struct kobj_type ktype_veth_pool = {
 static int ibmveth_resume(struct device *dev)
 {
 	struct net_device *netdev = dev_get_drvdata(dev);
-	ibmveth_interrupt(netdev->irq, netdev);
+	struct ibmveth_adapter *adapter = netdev_priv(netdev);
+
+	ibmveth_interrupt(adapter->queue_irq[0], adapter);
 	return 0;
 }
 
