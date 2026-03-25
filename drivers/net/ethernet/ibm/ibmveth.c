@@ -848,7 +848,7 @@ static int ibmveth_register_logical_lan(struct ibmveth_adapter *adapter,
 	 */
 retry:
 	rc = h_register_logical_lan(adapter->vdev->unit_address,
-				    adapter->buffer_list_dma, rxq_desc.desc,
+				    adapter->buffer_list_dma[0], rxq_desc.desc,
 				    adapter->filter_list_dma, mac_address);
 	adapter->hcall_stats.reg_lan++;
 
@@ -877,7 +877,8 @@ retry:
  * Return: H_SUCCESS on success, error code otherwise
  */
 static int ibmveth_register_logical_lan_queue(struct ibmveth_adapter *adapter,
-					      union ibmveth_buf_desc rxq_desc)
+					      union ibmveth_buf_desc rxq_desc,
+					      int queue_index)
 {
 	int rc, try_again = 1;
 	unsigned long retbuf[PLPAR_HCALL9_BUFSIZE];
@@ -886,21 +887,22 @@ static int ibmveth_register_logical_lan_queue(struct ibmveth_adapter *adapter,
 retry:
 	rc = plpar_hcall9(H_REG_LOGICAL_LAN_QUEUE, retbuf,
 			  adapter->vdev->unit_address,
-			  adapter->buffer_list_dma,
+			  adapter->buffer_list_dma[queue_index],
 			  rxq_desc.desc);
 	adapter->hcall_stats.reg_queue++;
 
 	if (rc == H_SUCCESS) {
-		adapter->queue_handle = retbuf[0];	/* R4 */
-		adapter->queue_irq = retbuf[1];		/* R5 */
+		adapter->queue_handle[queue_index] = retbuf[0];		/* R4 */
+		adapter->queue_irq[queue_index] = retbuf[1];		/* R5 */
 
 		netdev_dbg(adapter->netdev,
-			   "queue registered: handle=0x%llx irq=%u\n",
-			   adapter->queue_handle, adapter->queue_irq);
+			   "queue %d registered: handle=0x%llx irq=%u\n",
+			   queue_index, adapter->queue_handle[queue_index],
+			   adapter->queue_irq[queue_index]);
 	} else if (rc == H_FUNCTION) {
 		/* Hypervisor doesn't support subordinate queue mode */
 		netdev_info(adapter->netdev,
-			    "Subordinate queue mode not supported by firmware, falling back to regular mode\n");
+			    "Multi queue mode failed, falling back to regular mode\n");
 		adapter->use_subordinate_queue = 0;
 		return rc;
 	} else if (try_again) {
@@ -918,6 +920,145 @@ retry:
 			   rc);
 	}
 
+	return rc;
+}
+
+/**
+ * ibmveth_free_queues - Unregister all RX queues from hypervisor
+ * @adapter: ibmveth adapter structure
+ */
+static void ibmveth_free_queues(struct ibmveth_adapter *adapter,
+				int num_queues)
+{
+	unsigned long lpar_rc;
+	int i;
+
+	netdev_dbg(adapter->netdev, "freeing %d RX queue(s) (%s mode)\n",
+		   num_queues,
+		   adapter->use_subordinate_queue ? "multi-queue" : "single-queue");
+
+	if (adapter->use_subordinate_queue) {
+		for (i = 0; i < num_queues; i++) {
+			if (!adapter->queue_handle[i])
+				continue;
+
+			do {
+				lpar_rc = h_free_logical_lan_queue(
+					adapter->vdev->unit_address,
+					adapter->queue_handle[i]);
+				adapter->hcall_stats.free_queue++;
+			} while (H_IS_LONG_BUSY(lpar_rc) || (lpar_rc == H_BUSY));
+
+			if (lpar_rc != H_SUCCESS) {
+				netdev_err(adapter->netdev,
+					   "h_free_logical_lan_queue failed: %ld\n",
+					   lpar_rc);
+			}
+			adapter->queue_handle[i] = 0;
+		}
+	} else {
+		do {
+			lpar_rc = h_free_logical_lan(adapter->vdev->unit_address);
+			adapter->hcall_stats.free_lan++;
+		} while (H_IS_LONG_BUSY(lpar_rc) || (lpar_rc == H_BUSY));
+
+		if (lpar_rc != H_SUCCESS) {
+			netdev_err(adapter->netdev,
+				   "h_free_logical_lan failed: %ld\n", lpar_rc);
+		}
+	}
+
+	/* Clear queue handles and IRQs after unregistration */
+	for (i = 0; i < num_queues; i++) {
+		adapter->queue_handle[i] = 0;
+		adapter->queue_irq[i] = 0;
+	}
+}
+
+/**
+ * ibmveth_register_rx_queues - Register RX queues with hypervisor
+ * @adapter: ibmveth adapter structure
+ * @mac_address: MAC address for device registration
+ *
+ * Return: 0 on success, negative error code on failure
+ */
+static int ibmveth_register_rx_queues(struct ibmveth_adapter *adapter,
+				      u64 mac_address)
+{
+	struct net_device *netdev = adapter->netdev;
+	unsigned long lpar_rc;
+	int i, rc;
+
+	for (i = 0; i < adapter->num_rx_queues; i++) {
+		union ibmveth_buf_desc rxq_desc;
+
+		rxq_desc.fields.flags_len = IBMVETH_BUF_VALID |
+					    adapter->rx_queue[i].queue_len;
+		rxq_desc.fields.address = adapter->rx_queue[i].queue_dma;
+		adapter->queue_irq[i] = netdev->irq;
+
+		if (adapter->use_subordinate_queue) {
+			lpar_rc = ibmveth_register_logical_lan_queue(adapter,
+								     rxq_desc,
+								     i);
+			if (lpar_rc == H_FUNCTION) {
+				if (i == 0) {
+					/* First queue failed, can safely fall back */
+					netdev_info(netdev,
+						    "Subordinate queue mode not supported, using regular mode\n");
+					adapter->use_subordinate_queue = 0;
+					adapter->num_rx_queues = 1;
+					lpar_rc = ibmveth_register_logical_lan(adapter,
+									       rxq_desc,
+								       mac_address);
+				} else {
+					/* Already registered some queues in subordinate mode.
+					 * Cannot mix modes - this is a fatal error.
+					 */
+					netdev_err(netdev,
+						   "Subordinate queue registration failed after %d queues already registered\n",
+						   i);
+					rc = -ENODEV;
+					goto err_unregister;
+				}
+			} else if (lpar_rc == H_SUCCESS) {
+				/* Validate subordinate queue registration */
+				if (!adapter->queue_handle[i] || !adapter->queue_irq[i]) {
+					netdev_err(netdev,
+						   "Invalid hypervisor return: handle=0x%llx irq=%u\n",
+						   adapter->queue_handle[i],
+						   adapter->queue_irq[i]);
+					rc = -EINVAL;
+					goto err_unregister;
+				}
+			}
+		} else {
+			lpar_rc = ibmveth_register_logical_lan(adapter, rxq_desc,
+							       mac_address);
+		}
+
+		if (lpar_rc != H_SUCCESS) {
+			netdev_err(netdev, "h_register_logical_lan%s failed: %ld\n",
+				   adapter->use_subordinate_queue ? "_queue" : "",
+				   lpar_rc);
+			netdev_err(netdev,
+				   "buffer TCE:0x%llx filter TCE:0x%llx rxq desc:0x%llx MAC:0x%llx\n",
+				   adapter->buffer_list_dma[i],
+				   adapter->filter_list_dma,
+				   rxq_desc.desc, mac_address);
+			rc = -ENONET;
+			goto err_unregister;
+		}
+	}
+	netdev_dbg(netdev, "registered %d RX queue(s) with hypervisor (%s mode)\n",
+		   adapter->num_rx_queues,
+		   adapter->use_subordinate_queue ? "multi-queue" : "single-queue");
+
+	return 0;
+
+err_unregister:
+	/* Unregister any queues that were successfully registered */
+	ibmveth_free_queues(adapter, i);
 	return rc;
 }
 
@@ -999,8 +1140,8 @@ static int ibmveth_open(struct net_device *netdev)
 	h_vio_signal(adapter->vdev->unit_address, VIO_IRQ_DISABLE);
 
 	if (adapter->use_subordinate_queue) {
-		lpar_rc = ibmveth_register_logical_lan_queue(adapter, rxq_desc);
-
+		lpar_rc = ibmveth_register_logical_lan_queue(adapter,
+							     rxq_desc, i);
 		/* If H_FUNCTION, adapter doesn't support it - fall back */
 		if (lpar_rc == H_FUNCTION) {
 			adapter->use_subordinate_queue = 0;
