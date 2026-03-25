@@ -1062,6 +1062,58 @@ err_unregister:
 	return rc;
 }
 
+/**
+ * ibmveth_alloc_buffer_pools - Allocate all active buffer pools
+ * @adapter: ibmveth adapter structure
+ *
+ * Return: 0 on success, negative error code on failure
+ */
+static int ibmveth_alloc_buffer_pools(struct ibmveth_adapter *adapter)
+{
+	struct net_device *netdev = adapter->netdev;
+	int i;
+
+	for (i = 0; i < IBMVETH_NUM_BUFF_POOLS; i++) {
+		if (!adapter->rx_buff_pool[i].active)
+			continue;
+
+		if (ibmveth_alloc_buffer_pool(&adapter->rx_buff_pool[i])) {
+			netdev_err(netdev, "unable to allocate buffer pool %d (size=%u, count=%u)\n",
+				   i, adapter->rx_buff_pool[i].buff_size,
+				   adapter->rx_buff_pool[i].size);
+			adapter->rx_buff_pool[i].active = 0;
+			goto err_free_pools;
+		}
+	}
+
+	netdev_dbg(netdev, "allocated buffer pool(s)\n");
+	return 0;
+
+err_free_pools:
+	while (--i >= 0) {
+		if (adapter->rx_buff_pool[i].active)
+			ibmveth_free_buffer_pool(adapter,
+						 &adapter->rx_buff_pool[i]);
+	}
+	return -ENOMEM;
+}
+
+/**
+ * ibmveth_free_buffer_pools - Free all buffer pools
+ * @adapter: ibmveth adapter structure
+ */
+static void ibmveth_free_buffer_pools(struct ibmveth_adapter *adapter)
+{
+	int i;
+
+	for (i = 0; i < IBMVETH_NUM_BUFF_POOLS; i++) {
+		if (adapter->rx_buff_pool[i].active)
+			ibmveth_free_buffer_pool(adapter,
+						 &adapter->rx_buff_pool[i]);
+	}
+	netdev_dbg(adapter->netdev, "freed buffer pool(s)\n");
+}
+
 static int ibmveth_open(struct net_device *netdev)
 {
 	struct ibmveth_adapter *adapter = netdev_priv(netdev);
