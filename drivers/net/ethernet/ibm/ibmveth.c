@@ -800,16 +800,28 @@ hcall_failure:
 	atomic_add(buffers_added, &(pool->available));
 }
 
-/*
- * The final 8 bytes of the buffer list is a counter of frames dropped
- * because there was not a buffer in the buffer list capable of holding
- * the frame.
+/**
+ * ibmveth_update_rx_no_buffer - Update per-queue dropped frame counters
+ * @adapter: ibmveth adapter
+ *
+ * Reads the hypervisor-maintained dropped frame counter from the end of each
+ * queue's buffer list (last 8 bytes) and updates the corresponding per-queue
+ * statistics. The hypervisor increments these counters when frames are dropped
+ * due to insufficient buffers in the buffer list.
+ *
+ * Called during buffer replenishment and device close to capture the latest
+ * drop counts for each active queue.
  */
 static void ibmveth_update_rx_no_buffer(struct ibmveth_adapter *adapter)
 {
-	__be64 *p = adapter->buffer_list_addr + 4096 - 8;
+	int i;
 
-	adapter->rx_no_buffer = be64_to_cpup(p);
+	/* Update per-queue no_buffer counters from hypervisor */
+	for (i = 0; i < adapter->num_rx_queues; i++) {
+		__be64 *p = adapter->buffer_list_addr[i] + 4096 - 8;
+		if (adapter->rx_qstats)
+			adapter->rx_qstats[i].no_buffer_drops = be64_to_cpup(p);
+	}
 }
 
 /* replenish routine */
@@ -2136,6 +2148,9 @@ static int ibmveth_poll(struct napi_struct *napi, int budget)
 	if (WARN_ON(queue_index >= adapter->num_rx_queues))
 		return 0;
 
+	/* Track poll calls for this queue */
+	adapter->rx_qstats[queue_index].polls++;
+
 restart_poll:
 	while (frames_processed < budget) {
 		if (!ibmveth_rxq_pending_buffer(adapter, queue_index))
@@ -2144,7 +2159,7 @@ restart_poll:
 		smp_rmb();
 		if (!ibmveth_rxq_buffer_valid(adapter, queue_index)) {
 			wmb(); /* suggested by larson1 */
-			adapter->rx_invalid_buffer++;
+			adapter->rx_qstats[queue_index].invalid_buffers++;
 			netdev_dbg(netdev, "recycling invalid buffer\n");
 			if (unlikely(ibmveth_rxq_harvest_buffer(adapter, queue_index, true)))
 				break;
@@ -2206,7 +2221,7 @@ restart_poll:
 			if ((length > netdev->mtu + ETH_HLEN) ||
 			    lrg_pkt || iph_check == 0xffff) {
 				ibmveth_rx_mss_helper(skb, mss, lrg_pkt);
-				adapter->rx_large_packets++;
+				adapter->rx_qstats[queue_index].large_packets++;
 			}
 
 			if (csum_good) {
@@ -2215,6 +2230,10 @@ restart_poll:
 			}
 
 			napi_gro_receive(napi, skb);	/* send it up */
+
+			/* Update per-queue stats (hot path - no global updates) */
+			adapter->rx_qstats[queue_index].packets++;
+			adapter->rx_qstats[queue_index].bytes += length;
 
 			netdev->stats.rx_packets++;
 			netdev->stats.rx_bytes += length;
