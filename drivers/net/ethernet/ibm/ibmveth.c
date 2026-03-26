@@ -777,6 +777,10 @@ static void ibmveth_replenish_task(struct ibmveth_adapter *adapter)
 	int i;
 
 	adapter->replenish_task_cycles++;
+	/* In multi-queue mode, protect buffer pool access with spinlock
+	 * to prevent concurrent replenishment from multiple NAPI instances
+	 */
+	spin_lock(&adapter->replenish_lock);
 
 	for (i = (IBMVETH_NUM_BUFF_POOLS - 1); i >= 0; i--) {
 		struct ibmveth_buff_pool *pool = &adapter->rx_buff_pool[i];
@@ -787,6 +791,8 @@ static void ibmveth_replenish_task(struct ibmveth_adapter *adapter)
 	}
 
 	ibmveth_update_rx_no_buffer(adapter);
+
+	spin_unlock(&adapter->replenish_lock);
 }
 
 /* empty and free ana buffer pool - also used to do cleanup in error paths */
@@ -2483,6 +2489,7 @@ static int ibmveth_probe(struct vio_dev *dev, const struct vio_device_id *id)
 	netdev->netdev_ops = &ibmveth_netdev_ops;
 	netdev->ethtool_ops = &netdev_ethtool_ops;
 	SET_NETDEV_DEV(netdev, &dev->dev);
+	spin_lock_init(&adapter->replenish_lock);
 	netdev->hw_features = NETIF_F_SG;
 	if (vio_get_attribute(dev, "ibm,illan-options", NULL) != NULL) {
 		netdev->hw_features |= NETIF_F_IP_CSUM | NETIF_F_IPV6_CSUM |
