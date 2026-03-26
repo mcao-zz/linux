@@ -1239,6 +1239,49 @@ static void ibmveth_free_buffer_pools(struct ibmveth_adapter *adapter)
 	netdev_dbg(adapter->netdev, "freed buffer pool(s)\n");
 }
 
+/**
+ * ibmveth_alloc_tx_resources - Allocate TX resources
+ * @adapter: ibmveth adapter structure
+ *
+ * Return: 0 on success, negative error code on failure
+ */
+static int ibmveth_alloc_tx_resources(struct ibmveth_adapter *adapter)
+{
+	struct net_device *netdev = adapter->netdev;
+	int i;
+
+	for (i = 0; i < netdev->real_num_tx_queues; i++) {
+		if (ibmveth_allocate_tx_ltb(adapter, i))
+			goto err_free_ltbs;
+	}
+
+	netdev_dbg(netdev, "allocated TX resources for %d queue(s)\n",
+		   netdev->real_num_tx_queues);
+
+	return 0;
+
+err_free_ltbs:
+	while (--i >= 0)
+		ibmveth_free_tx_ltb(adapter, i);
+	return -ENOMEM;
+}
+
+/**
+ * ibmveth_free_tx_resources - Free TX resources
+ * @adapter: ibmveth adapter structure
+ */
+static void ibmveth_free_tx_resources(struct ibmveth_adapter *adapter)
+{
+	struct net_device *netdev = adapter->netdev;
+	int i;
+
+	netdev_dbg(netdev, "freeing TX resources for %d queue(s)\n",
+		   netdev->real_num_tx_queues);
+
+	for (i = 0; i < netdev->real_num_tx_queues; i++)
+		ibmveth_free_tx_ltb(adapter, i);
+}
+
 static int ibmveth_open(struct net_device *netdev)
 {
 	struct ibmveth_adapter *adapter = netdev_priv(netdev);
