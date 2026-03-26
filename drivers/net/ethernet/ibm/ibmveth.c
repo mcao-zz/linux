@@ -346,6 +346,44 @@ static void ibmveth_cleanup_rx_resources(struct ibmveth_adapter *adapter)
 }
 
 /**
+ * ibmveth_alloc_rx_qstats - Allocate per-queue RX statistics
+ * @adapter: ibmveth adapter
+ *
+ * Allocates statistics buffers for all possible queues. These buffers
+ * are updated in the packet processing hot path, with each queue updating
+ * only its own statistics to avoid cache line contention.
+ *
+ * Must be called before queue registration.
+ *
+ * Return: 0 on success, -ENOMEM on failure
+ */
+static int ibmveth_alloc_rx_qstats(struct ibmveth_adapter *adapter)
+{
+	adapter->rx_qstats = kcalloc(IBMVETH_MAX_QUEUES,
+				     sizeof(struct ibmveth_rx_queue_stats),
+				     GFP_KERNEL);
+	if (!adapter->rx_qstats)
+		return -ENOMEM;
+
+	netdev_dbg(adapter->netdev, "Allocated RX queue stats for %d queues\n",
+		   IBMVETH_MAX_QUEUES);
+	return 0;
+}
+
+/**
+ * ibmveth_free_rx_qstats - Free per-queue RX statistics
+ * @adapter: ibmveth adapter
+ *
+ * Frees the per-queue statistics buffers. Should be called after
+ * all queues have been deregistered and packet processing has stopped.
+ */
+static void ibmveth_free_rx_qstats(struct ibmveth_adapter *adapter)
+{
+	kfree(adapter->rx_qstats);
+	adapter->rx_qstats = NULL;
+}
+
+/**
  * ibmveth_disable_irq - Disable interrupt for a specific queue
  * @adapter: ibmveth adapter structure
  * @queue_index: Index of the queue (0 for primary, 1+ for subordinate)
@@ -1333,10 +1371,15 @@ static int ibmveth_open(struct net_device *netdev)
 	 * 4. Fill buffer pools
 	 */
 
+	/* Allocate per-queue RX statistics */
+	rc = ibmveth_alloc_rx_qstats(adapter);
+	if (rc)
+		goto out;
+
 	/* Allocate filter list (shared across all queues) */
 	rc = ibmveth_alloc_filter_list(adapter);
 	if (rc)
-		goto out;
+		goto out_free_rx_qstats;
 
 	/* Allocate per-queue RX resources */
 	rc = ibmveth_alloc_rx_queues(adapter, rxq_entries);
@@ -1395,6 +1438,8 @@ out_free_queue_mem:
 	ibmveth_cleanup_rx_resources(adapter);
 out_free_filter_list:
 	ibmveth_free_filter_list(adapter);
+out_free_rx_qstats:
+	ibmveth_free_rx_qstats(adapter);
 out:
 	return rc;
 }
@@ -1427,6 +1472,7 @@ static int ibmveth_close(struct net_device *netdev)
 	ibmveth_free_queues(adapter, adapter->num_rx_queues);
 	ibmveth_cleanup_rx_resources(adapter);
 	ibmveth_free_filter_list(adapter);
+	ibmveth_free_rx_qstats(adapter);
 
 	/* Update stats before closing */
 	ibmveth_update_rx_no_buffer(adapter);

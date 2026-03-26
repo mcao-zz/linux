@@ -313,6 +313,20 @@ struct ibmveth_hcall_stats {
 	u64 send_lan_failed;
 };
 
+struct ibmveth_rx_queue_stats {
+	u64 packets;
+	u64 bytes;
+	u64 interrupts;
+	u64 polls;
+	u64 large_packets;
+	u64 invalid_buffers;
+	u64 buffer_starvation;
+	u64 no_buffer_drops;
+};
+
+#define IBMVETH_NUM_RX_QSTATS \
+	(sizeof(struct ibmveth_rx_queue_stats) / sizeof(u64))
+
 struct ibmveth_adapter {
 	struct vio_dev *vdev;
 	struct net_device *netdev;
@@ -353,6 +367,7 @@ struct ibmveth_adapter {
 	u64 tx_large_packets;
 	u64 rx_large_packets;
 	struct ibmveth_hcall_stats hcall_stats;
+	struct ibmveth_rx_queue_stats *rx_qstats;
 
 	/* Ethtool settings */
 	u8 duplex;
