@@ -1807,7 +1807,7 @@ static void ibmveth_get_strings(struct net_device *dev, u32 stringset, u8 *data)
 		p += ETH_GSTRING_LEN;
 	}
 
-	/* Per-queue statistics */
+	/* Per-queue RX statistics */
 	for (i = 0; i < adapter->num_rx_queues; i++) {
 		ethtool_sprintf(&p, "rx%d_packets", i);
 		ethtool_sprintf(&p, "rx%d_bytes", i);
@@ -1818,6 +1818,16 @@ static void ibmveth_get_strings(struct net_device *dev, u32 stringset, u8 *data)
 		ethtool_sprintf(&p, "rx%d_buffer_starvation", i);
 		ethtool_sprintf(&p, "rx%d_no_buffer_drops", i);
 	}
+
+	/* Per-queue TX statistics */
+	for (i = 0; i < dev->real_num_tx_queues; i++) {
+		ethtool_sprintf(&p, "tx%d_packets", i);
+		ethtool_sprintf(&p, "tx%d_bytes", i);
+		ethtool_sprintf(&p, "tx%d_large_packets", i);
+		ethtool_sprintf(&p, "tx%d_dropped_packets", i);
+		ethtool_sprintf(&p, "tx%d_send_failures", i);
+		ethtool_sprintf(&p, "tx%d_checksum_offload", i);
+	}
 }
 
 static int ibmveth_get_sset_count(struct net_device *dev, int sset)
@@ -1827,10 +1837,42 @@ static int ibmveth_get_sset_count(struct net_device *dev, int sset)
 	switch (sset) {
 	case ETH_SS_STATS:
 		return ARRAY_SIZE(ibmveth_stats) +
-		       adapter->num_rx_queues * IBMVETH_NUM_RX_QSTATS;
+		       adapter->num_rx_queues * IBMVETH_NUM_RX_QSTATS +
+		       dev->real_num_tx_queues * IBMVETH_NUM_TX_QSTATS;
 	default:
 		return -EOPNOTSUPP;
 	}
+}
+
+/**
+ * ibmveth_aggregate_tx_qstats - Aggregate per-queue TX stats to global
+ * @adapter: ibmveth adapter
+ *
+ * Sums per-queue TX statistics to global counters for backward compatibility
+ * with existing monitoring tools and scripts. This function is called only
+ * when statistics are read (cold path), never in packet processing hot path.
+ *
+ * The aggregation maintains API compatibility while allowing the hot path
+ * to update only per-queue counters for optimal performance.
+ *
+ * Context: Can be called from any context (uses simple reads, no locks)
+ */
+static void ibmveth_aggregate_tx_qstats(struct ibmveth_adapter *adapter)
+{
+	struct net_device *netdev = adapter->netdev;
+	u64 total_large = 0;
+	u64 total_send_failed = 0;
+	int i;
+
+	/* Sum across all active TX queues */
+	for (i = 0; i < netdev->real_num_tx_queues; i++) {
+		total_large += adapter->tx_qstats[i].large_packets;
+		total_send_failed += adapter->tx_qstats[i].send_failures;
+	}
+
+	/* Update global counters for backward compatibility */
+	adapter->tx_large_packets = total_large;
+	adapter->tx_send_failed = total_send_failed;
 }
 /**
  * ibmveth_aggregate_rx_qstats - Aggregate per-queue stats to global counters
@@ -1875,12 +1917,13 @@ static void ibmveth_get_ethtool_stats(struct net_device *dev,
 
 	/* Aggregate per-queue stats to global counters (cold path only) */
 	ibmveth_aggregate_rx_qstats(adapter);
+	ibmveth_aggregate_tx_qstats(adapter);
 
 	/* Output global statistics */
 	for (i = 0; i < ARRAY_SIZE(ibmveth_stats); i++)
 		data[i] = IBMVETH_GET_STAT(adapter, ibmveth_stats[i].offset);
 
-	/* Output per-queue statistics */
+	/* Output per-queue RX statistics */
 	for (j = 0; j < adapter->num_rx_queues; j++) {
 		data[i++] = adapter->rx_qstats[j].packets;
 		data[i++] = adapter->rx_qstats[j].bytes;
@@ -1890,6 +1933,16 @@ static void ibmveth_get_ethtool_stats(struct net_device *dev,
 		data[i++] = adapter->rx_qstats[j].invalid_buffers;
 		data[i++] = adapter->rx_qstats[j].buffer_starvation;
 		data[i++] = adapter->rx_qstats[j].no_buffer_drops;
+	}
+
+	/* Output per-queue TX statistics */
+	for (j = 0; j < dev->real_num_tx_queues; j++) {
+		data[i++] = adapter->tx_qstats[j].packets;
+		data[i++] = adapter->tx_qstats[j].bytes;
+		data[i++] = adapter->tx_qstats[j].large_packets;
+		data[i++] = adapter->tx_qstats[j].dropped_packets;
+		data[i++] = adapter->tx_qstats[j].send_failures;
+		data[i++] = adapter->tx_qstats[j].checksum_offload;
 	}
 }
 
@@ -2633,11 +2686,17 @@ static void ibmveth_get_stats64(struct net_device *dev,
 		}
 	}
 
-	/* TX stats are maintained by network stack */
-	stats->tx_packets = dev->stats.tx_packets;
-	stats->tx_bytes = dev->stats.tx_bytes;
+	if (adapter->rx_qstats) {
+		/* Aggregate TX stats from all queues */
+		for (i = 0; i < dev->real_num_tx_queues; i++) {
+			stats->tx_packets += adapter->tx_qstats[i].packets;
+			stats->tx_bytes += adapter->tx_qstats[i].bytes;
+			stats->tx_dropped += adapter->tx_qstats[i].dropped_packets;
+		}
+	}
+
+	/* TX errors maintained by network stack */
 	stats->tx_errors = dev->stats.tx_errors;
-	stats->tx_dropped = dev->stats.tx_dropped;
 }
 
 
