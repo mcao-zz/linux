@@ -279,6 +279,40 @@ struct ibmveth_rx_q {
     struct ibmveth_rx_q_entry *queue_addr;
 };
 
+/**
+ * struct ibmveth_hcall_stats - Hypervisor call statistics
+ * @reg_queue: H_REG_LOGICAL_LAN_QUEUE calls
+ * @reg_lan: H_REGISTER_LOGICAL_LAN calls
+ * @add_buf_queue: H_ADD_LOGICAL_LAN_BUFFERS_QUEUE calls
+ * @add_buf_lan_buffers: H_ADD_LOGICAL_LAN_BUFFERS (multi) calls
+ * @add_buf_lan_buffer: H_ADD_LOGICAL_LAN_BUFFER (single) calls
+ * @free_queue: H_FREE_LOGICAL_LAN_QUEUE calls
+ * @free_lan: H_FREE_LOGICAL_LAN calls
+ * @send_lan_calls: H_SEND_LOGICAL_LAN attempts
+ * @send_lan_packets: Successful packets sent
+ * @send_lan_busy_retries: H_BUSY retry count
+ * @send_lan_dropped: H_DROPPED count
+ * @send_lan_failed: Other failures
+ *
+ * Tracks hypervisor call usage for debugging and performance analysis.
+ * All statistics are global (not per-queue) as hcalls are infrequent
+ * operations not in the packet processing hot path.
+ */
+struct ibmveth_hcall_stats {
+	u64 reg_queue;
+	u64 reg_lan;
+	u64 add_buf_queue;
+	u64 add_buf_lan_buffers;
+	u64 add_buf_lan_buffer;
+	u64 free_queue;
+	u64 free_lan;
+	u64 send_lan_calls;
+	u64 send_lan_packets;
+	u64 send_lan_busy_retries;
+	u64 send_lan_dropped;
+	u64 send_lan_failed;
+};
+
 struct ibmveth_adapter {
 	struct vio_dev *vdev;
 	struct net_device *netdev;
@@ -316,6 +350,8 @@ struct ibmveth_adapter {
 	u64 tx_send_failed;
 	u64 tx_large_packets;
 	u64 rx_large_packets;
+	struct ibmveth_hcall_stats hcall_stats;
+
 	/* Ethtool settings */
 	u8 duplex;
 	u32 speed;

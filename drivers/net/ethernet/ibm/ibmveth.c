@@ -95,7 +95,19 @@ static struct ibmveth_stat ibmveth_stats[] = {
 	{ "fw_enabled_ipv6_csum", IBMVETH_STAT_OFF(fw_ipv6_csum_support) },
 	{ "tx_large_packets", IBMVETH_STAT_OFF(tx_large_packets) },
 	{ "rx_large_packets", IBMVETH_STAT_OFF(rx_large_packets) },
-	{ "fw_enabled_large_send", IBMVETH_STAT_OFF(fw_large_send_support) }
+	{ "fw_enabled_large_send", IBMVETH_STAT_OFF(fw_large_send_support) },
+	{ "h_reg_queue_calls", IBMVETH_STAT_OFF(hcall_stats.reg_queue) },
+	{ "h_reg_lan_calls", IBMVETH_STAT_OFF(hcall_stats.reg_lan) },
+	{ "h_add_buf_queue_calls", IBMVETH_STAT_OFF(hcall_stats.add_buf_queue) },
+	{ "h_add_buf_lan_buffer_calls", IBMVETH_STAT_OFF(hcall_stats.add_buf_lan_buffer) },
+	{ "h_add_buf_lan_buffers_calls", IBMVETH_STAT_OFF(hcall_stats.add_buf_lan_buffers) },
+	{ "h_free_queue_calls", IBMVETH_STAT_OFF(hcall_stats.free_queue) },
+	{ "h_free_lan_calls", IBMVETH_STAT_OFF(hcall_stats.free_lan) },
+	{ "h_send_lan_calls", IBMVETH_STAT_OFF(hcall_stats.send_lan_calls) },
+	{ "h_send_lan_packets", IBMVETH_STAT_OFF(hcall_stats.send_lan_packets) },
+	{ "h_send_lan_busy_retries", IBMVETH_STAT_OFF(hcall_stats.send_lan_busy_retries) },
+	{ "h_send_lan_dropped", IBMVETH_STAT_OFF(hcall_stats.send_lan_dropped) },
+	{ "h_send_lan_failed", IBMVETH_STAT_OFF(hcall_stats.send_lan_failed) }
 };
 
 /* simple methods of getting data from the current rxq entry */
@@ -254,10 +266,12 @@ static int ibmveth_add_logical_lan_buffers(struct ibmveth_adapter *adapter,
 						     ioba12, ioba34,
 						     ioba56, ioba78,
 						     ioba910, ioba1112);
+		adapter->hcall_stats.add_buf_queue++;
 	} else if (filled == 1) {
 		/* Single buffer: use dedicated hcall */
 		rc = h_add_logical_lan_buffer(vdev->unit_address,
 					      descs[0].desc);
+		adapter->hcall_stats.add_buf_lan_buffer++;
 	} else {
 		/* Regular multi-buffer mode: up to 8 buffers per call */
 		rc = h_add_logical_lan_buffers(vdev->unit_address,
@@ -265,6 +279,7 @@ static int ibmveth_add_logical_lan_buffers(struct ibmveth_adapter *adapter,
 					       descs[2].desc, descs[3].desc,
 					       descs[4].desc, descs[5].desc,
 					       descs[6].desc, descs[7].desc);
+		adapter->hcall_stats.add_buf_lan_buffers++;
 	}
 
 	return rc;
@@ -651,10 +666,12 @@ retry:
 	rc = h_register_logical_lan(adapter->vdev->unit_address,
 				    adapter->buffer_list_dma, rxq_desc.desc,
 				    adapter->filter_list_dma, mac_address);
+	adapter->hcall_stats.reg_lan++;
 
 	if (rc != H_SUCCESS && try_again) {
 		do {
 			rc = h_free_logical_lan(adapter->vdev->unit_address);
+			adapter->hcall_stats.free_lan++;
 		} while (H_IS_LONG_BUSY(rc) || (rc == H_BUSY));
 
 		try_again = 0;
@@ -681,11 +698,13 @@ static int ibmveth_register_logical_lan_queue(struct ibmveth_adapter *adapter,
 	int rc, try_again = 1;
 	unsigned long retbuf[PLPAR_HCALL9_BUFSIZE];
 
+	/* Registration - stats count all hcall attempts */
 retry:
 	rc = plpar_hcall9(H_REG_LOGICAL_LAN_QUEUE, retbuf,
 			  adapter->vdev->unit_address,
 			  adapter->buffer_list_dma,
 			  rxq_desc.desc);
+	adapter->hcall_stats.reg_queue++;
 
 	if (rc == H_SUCCESS) {
 		adapter->queue_handle = retbuf[0];	/* R4 */
@@ -872,11 +891,14 @@ out_free_buffer_pools:
 						 &adapter->rx_buff_pool[i]);
 	}
 	do {
-		if (adapter->use_subordinate_queue)
+		if (adapter->use_subordinate_queue) {
 			lpar_rc = h_free_logical_lan_queue(adapter->vdev->unit_address,
 							   adapter->queue_handle);
-		else
+			adapter->hcall_stats.free_queue++;
+		} else {
 			lpar_rc = h_free_logical_lan(adapter->vdev->unit_address);
+			adapter->hcall_stats.free_lan++;
+		}
 	} while (H_IS_LONG_BUSY(lpar_rc) || (lpar_rc == H_BUSY));
 
 out_unmap_filter_list:
@@ -920,11 +942,14 @@ static int ibmveth_close(struct net_device *netdev)
 	h_vio_signal(adapter->vdev->unit_address, VIO_IRQ_DISABLE);
 
 	do {
-		if (adapter->use_subordinate_queue)
+		if (adapter->use_subordinate_queue) {
 			lpar_rc = h_free_logical_lan_queue(adapter->vdev->unit_address,
 							   adapter->queue_handle);
-		else
+			adapter->hcall_stats.free_queue++;
+		} else {
 			lpar_rc = h_free_logical_lan(adapter->vdev->unit_address);
+			adapter->hcall_stats.free_lan++;
+		}
 	} while (H_IS_LONG_BUSY(lpar_rc) || (lpar_rc == H_BUSY));
 
 	if (lpar_rc != H_SUCCESS) {
@@ -1342,15 +1367,27 @@ static int ibmveth_send(struct ibmveth_adapter *adapter,
 		ret = h_send_logical_lan(adapter->vdev->unit_address, desc,
 					 correlator, &correlator, mss,
 					 adapter->fw_large_send_support);
+		adapter->hcall_stats.send_lan_calls++;
+		if (ret == H_BUSY)
+			adapter->hcall_stats.send_lan_busy_retries++;
 	} while ((ret == H_BUSY) && (retry_count--));
 
-	if (ret != H_SUCCESS && ret != H_DROPPED) {
-		netdev_err(adapter->netdev, "tx: h_send_logical_lan failed "
-			   "with rc=%ld\n", ret);
-		return 1;
+	if (ret == H_SUCCESS) {
+		adapter->hcall_stats.send_lan_packets++;
+		return 0;
 	}
 
-	return 0;
+	if (ret == H_DROPPED) {
+		adapter->hcall_stats.send_lan_dropped++;
+		netdev_warn_once(adapter->netdev,
+				 "tx: hypervisor dropped packet (H_DROPPED)\n");
+		return 0;
+	}
+
+	adapter->hcall_stats.send_lan_failed++;
+	netdev_err(adapter->netdev,
+		   "tx: h_send_logical_lan failed with rc=%ld\n", ret);
+	return 1;
 }
 
 static int ibmveth_is_packet_unsupported(struct sk_buff *skb,
