@@ -547,7 +547,8 @@ static inline void ibmveth_flush_buffer(void *addr, unsigned long length)
 static int ibmveth_add_logical_lan_buffers(struct ibmveth_adapter *adapter,
 					   union ibmveth_buf_desc *descs,
 					   int filled,
-					   unsigned long buff_size)
+					   unsigned long buff_size,
+					   int queue_index)
 {
 	struct vio_dev *vdev = adapter->vdev;
 	unsigned long rc;
@@ -572,7 +573,7 @@ static int ibmveth_add_logical_lan_buffers(struct ibmveth_adapter *adapter,
 			  ((unsigned long)descs[11].fields.address << 32));
 
 		rc = h_add_logical_lan_buffers_queue(vdev->unit_address,
-						     adapter->queue_handle,
+						     adapter->queue_handle[queue_index],
 						     buffersznum,
 						     ioba12, ioba34,
 						     ioba56, ioba78,
@@ -600,7 +601,8 @@ static int ibmveth_add_logical_lan_buffers(struct ibmveth_adapter *adapter,
  * skb_reserve these since they are used for incoming...
  */
 static void ibmveth_replenish_buffer_pool(struct ibmveth_adapter *adapter,
-					  struct ibmveth_buff_pool *pool)
+					  struct ibmveth_buff_pool *pool,
+					  int queue_index)
 {
 	union ibmveth_buf_desc descs[IBMVETH_MAX_RX_PER_HCALL] = {0};
 	u32 remaining = pool->size - atomic_read(&pool->available);
@@ -687,7 +689,8 @@ static void ibmveth_replenish_buffer_pool(struct ibmveth_adapter *adapter,
 			break;
 		lpar_rc = ibmveth_add_logical_lan_buffers(adapter, descs,
 							  filled,
-							  pool->buff_size);
+							  pool->buff_size,
+							  queue_index);
 
 		if (lpar_rc != H_SUCCESS) {
 			dev_warn_ratelimited(dev,
@@ -772,7 +775,7 @@ static void ibmveth_update_rx_no_buffer(struct ibmveth_adapter *adapter)
 }
 
 /* replenish routine */
-static void ibmveth_replenish_task(struct ibmveth_adapter *adapter)
+static void ibmveth_replenish_task(struct ibmveth_adapter *adapter, int queue_index)
 {
 	int i;
 
@@ -787,7 +790,7 @@ static void ibmveth_replenish_task(struct ibmveth_adapter *adapter)
 
 		if (pool->active &&
 		    (atomic_read(&pool->available) < pool->threshold))
-			ibmveth_replenish_buffer_pool(adapter, pool);
+			ibmveth_replenish_buffer_pool(adapter, pool, queue_index);
 	}
 
 	ibmveth_update_rx_no_buffer(adapter);
@@ -2173,7 +2176,7 @@ restart_poll:
 		}
 	}
 
-	ibmveth_replenish_task(adapter);
+	ibmveth_replenish_task(adapter, queue_index);
 
 	if (frames_processed == budget)
 		goto out;
@@ -2338,7 +2341,9 @@ static void ibmveth_poll_controller(struct net_device *dev)
 	struct ibmveth_adapter *adapter = netdev_priv(dev);
 	int i;
 
-	ibmveth_replenish_task(netdev_priv(dev));
+	/* Replenish buffers for all queues */
+	for (i = 0; i < adapter->num_rx_queues; i++)
+		ibmveth_replenish_task(adapter, i);
 
 	/* Poll all RX queues */
 	for (i = 0; i < adapter->num_rx_queues; i++)
