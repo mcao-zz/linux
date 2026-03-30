@@ -2525,10 +2525,13 @@ static int ibmveth_probe(struct vio_dev *dev, const struct vio_device_id *id)
 	if (ret == H_SUCCESS &&
 	    (ret_attr & IBMVETH_ILLAN_RX_MULTI_QUEUE_SUPPORT)) {
 		adapter->use_subordinate_queue = 1;
-		netdev_info(netdev, "RX multi queue mode enabled\n");
+		adapter->num_rx_queues = min(num_online_cpus(), IBMVETH_MAX_QUEUES);
+		netdev_info(netdev, "RX multi queue mode enabled: %d queues\n",
+			    adapter->num_rx_queues);
 	} else {
 		adapter->use_subordinate_queue = 0;
-		netdev_info(netdev, "RX multi queue mode disabled\n");
+		adapter->num_rx_queues = 1;
+		netdev_info(netdev, "RX multi queue mode disabled: 1 queue\n");
 	}
 
 	if (ret == H_SUCCESS &&
