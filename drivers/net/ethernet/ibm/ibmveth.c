@@ -384,6 +384,44 @@ static void ibmveth_free_rx_qstats(struct ibmveth_adapter *adapter)
 }
 
 /**
+ * ibmveth_alloc_tx_qstats - Allocate per-queue TX statistics
+ * @adapter: ibmveth adapter
+ *
+ * Allocates statistics buffers for all possible TX queues. These buffers
+ * are updated in the packet transmission hot path, with each queue updating
+ * only its own statistics to avoid cache line contention.
+ *
+ * Must be called before TX queue setup.
+ *
+ * Return: 0 on success, -ENOMEM on failure
+ */
+static int ibmveth_alloc_tx_qstats(struct ibmveth_adapter *adapter)
+{
+	adapter->tx_qstats = kcalloc(IBMVETH_MAX_QUEUES,
+				     sizeof(struct ibmveth_tx_queue_stats),
+				     GFP_KERNEL);
+	if (!adapter->tx_qstats)
+		return -ENOMEM;
+
+	netdev_dbg(adapter->netdev, "Allocated TX queue stats for %d queues\n",
+		   IBMVETH_MAX_QUEUES);
+	return 0;
+}
+
+/**
+ * ibmveth_free_tx_qstats - Free per-queue TX statistics
+ * @adapter: ibmveth adapter
+ *
+ * Frees the per-queue TX statistics buffers. Should be called after
+ * all TX activity has stopped.
+ */
+static void ibmveth_free_tx_qstats(struct ibmveth_adapter *adapter)
+{
+	kfree(adapter->tx_qstats);
+	adapter->tx_qstats = NULL;
+}
+
+/**
  * ibmveth_disable_irq - Disable interrupt for a specific queue
  * @adapter: ibmveth adapter structure
  * @queue_index: Index of the queue (0 for primary, 1+ for subordinate)
@@ -1432,6 +1470,11 @@ static int ibmveth_open(struct net_device *netdev)
 	if (rc)
 		goto out_cleanup_rx_interrupts;
 
+	/* Allocate per-queue TX statistics */
+	rc = ibmveth_alloc_tx_qstats(adapter);
+	if (rc)
+		goto out_free_tx_resources;
+
 	/* Start TX queues */
 	netif_tx_start_all_queues(netdev);
 
@@ -1440,6 +1483,8 @@ static int ibmveth_open(struct net_device *netdev)
 	return 0;
 
 	/* Error Cleanup */
+out_free_tx_resources:
+    ibmveth_free_tx_resources(adapter);
 out_cleanup_rx_interrupts:
 	ibmveth_cleanup_rx_interrupts(adapter);
 out_free_buffer_pools:
@@ -1478,6 +1523,7 @@ static int ibmveth_close(struct net_device *netdev)
 	ibmveth_disable_irqs(adapter);
 
 	/* Clean up in reverse order of open() */
+	ibmveth_free_tx_qstats(adapter);
 	ibmveth_free_tx_resources(adapter);
 	ibmveth_cleanup_rx_interrupts(adapter);
 	ibmveth_free_buffer_pools(adapter);

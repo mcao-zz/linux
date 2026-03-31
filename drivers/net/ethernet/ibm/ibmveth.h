@@ -324,8 +324,20 @@ struct ibmveth_rx_queue_stats {
 	u64 no_buffer_drops;
 };
 
+struct ibmveth_tx_queue_stats {
+	u64 packets;
+	u64 bytes;
+	u64 large_packets;
+	u64 dropped_packets;
+	u64 send_failures;
+	u64 checksum_offload;
+};
+
 #define IBMVETH_NUM_RX_QSTATS \
 	(sizeof(struct ibmveth_rx_queue_stats) / sizeof(u64))
+
+#define IBMVETH_NUM_TX_QSTATS \
+	(sizeof(struct ibmveth_tx_queue_stats) / sizeof(u64))
 
 struct ibmveth_adapter {
 	struct vio_dev *vdev;
@@ -368,6 +380,7 @@ struct ibmveth_adapter {
 	u64 rx_large_packets;
 	struct ibmveth_hcall_stats hcall_stats;
 	struct ibmveth_rx_queue_stats *rx_qstats;
+	struct ibmveth_tx_queue_stats *tx_qstats;
 
 	/* Ethtool settings */
 	u8 duplex;
