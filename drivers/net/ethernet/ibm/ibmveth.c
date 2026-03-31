@@ -1748,33 +1748,103 @@ static int ibmveth_set_features(struct net_device *dev,
 
 static void ibmveth_get_strings(struct net_device *dev, u32 stringset, u8 *data)
 {
+	struct ibmveth_adapter *adapter = netdev_priv(dev);
+	u8 *p = data;
 	int i;
 
 	if (stringset != ETH_SS_STATS)
 		return;
 
-	for (i = 0; i < ARRAY_SIZE(ibmveth_stats); i++, data += ETH_GSTRING_LEN)
-		memcpy(data, ibmveth_stats[i].name, ETH_GSTRING_LEN);
+	/* Global statistics */
+	for (i = 0; i < ARRAY_SIZE(ibmveth_stats); i++) {
+		memcpy(p, ibmveth_stats[i].name, ETH_GSTRING_LEN);
+		p += ETH_GSTRING_LEN;
+	}
+
+	/* Per-queue statistics */
+	for (i = 0; i < adapter->num_rx_queues; i++) {
+		ethtool_sprintf(&p, "rx%d_packets", i);
+		ethtool_sprintf(&p, "rx%d_bytes", i);
+		ethtool_sprintf(&p, "rx%d_interrupts", i);
+		ethtool_sprintf(&p, "rx%d_polls", i);
+		ethtool_sprintf(&p, "rx%d_large_packets", i);
+		ethtool_sprintf(&p, "rx%d_invalid_buffers", i);
+		ethtool_sprintf(&p, "rx%d_buffer_starvation", i);
+		ethtool_sprintf(&p, "rx%d_no_buffer_drops", i);
+	}
 }
 
 static int ibmveth_get_sset_count(struct net_device *dev, int sset)
 {
+	struct ibmveth_adapter *adapter = netdev_priv(dev);
+
 	switch (sset) {
 	case ETH_SS_STATS:
-		return ARRAY_SIZE(ibmveth_stats);
+		return ARRAY_SIZE(ibmveth_stats) +
+		       adapter->num_rx_queues * IBMVETH_NUM_RX_QSTATS;
 	default:
 		return -EOPNOTSUPP;
 	}
 }
+/**
+ * ibmveth_aggregate_rx_qstats - Aggregate per-queue stats to global counters
+ * @adapter: ibmveth adapter
+ *
+ * Sums per-queue RX statistics to global counters for backward compatibility
+ * with existing monitoring tools and scripts. This function is called only
+ * when statistics are read (cold path), never in packet processing hot path.
+ *
+ * The aggregation maintains API compatibility while allowing the hot path
+ * to update only per-queue counters for optimal performance.
+ *
+ * Context: Can be called from any context (uses simple reads, no locks)
+ */
+static void ibmveth_aggregate_rx_qstats(struct ibmveth_adapter *adapter)
+{
+	u64 total_invalid = 0;
+	u64 total_large = 0;
+	int i;
+
+	/* Sum across all active queues */
+	for (i = 0; i < adapter->num_rx_queues; i++) {
+		total_invalid += adapter->rx_qstats[i].invalid_buffers;
+		total_large += adapter->rx_qstats[i].large_packets;
+	}
+
+	/* Update global counters for backward compatibility */
+	adapter->rx_invalid_buffer = total_invalid;
+	adapter->rx_large_packets = total_large;
+
+	/* Note: rx_no_buffer is already aggregated by ibmveth_update_rx_no_buffer()
+	 * which reads from the hypervisor's buffer pool statistics.
+	 */
+}
+
 
 static void ibmveth_get_ethtool_stats(struct net_device *dev,
 				      struct ethtool_stats *stats, u64 *data)
 {
-	int i;
 	struct ibmveth_adapter *adapter = netdev_priv(dev);
+	int i, j;
 
+	/* Aggregate per-queue stats to global counters (cold path only) */
+	ibmveth_aggregate_rx_qstats(adapter);
+
+	/* Output global statistics */
 	for (i = 0; i < ARRAY_SIZE(ibmveth_stats); i++)
 		data[i] = IBMVETH_GET_STAT(adapter, ibmveth_stats[i].offset);
+
+	/* Output per-queue statistics */
+	for (j = 0; j < adapter->num_rx_queues; j++) {
+		data[i++] = adapter->rx_qstats[j].packets;
+		data[i++] = adapter->rx_qstats[j].bytes;
+		data[i++] = adapter->rx_qstats[j].interrupts;
+		data[i++] = adapter->rx_qstats[j].polls;
+		data[i++] = adapter->rx_qstats[j].large_packets;
+		data[i++] = adapter->rx_qstats[j].invalid_buffers;
+		data[i++] = adapter->rx_qstats[j].buffer_starvation;
+		data[i++] = adapter->rx_qstats[j].no_buffer_drops;
+	}
 }
 
 static void ibmveth_get_channels(struct net_device *netdev,
@@ -2483,6 +2553,38 @@ static int ibmveth_set_mac_addr(struct net_device *dev, void *p)
 
 	return 0;
 }
+/**
+ * ibmveth_get_stats64 - Get network device statistics
+ * @dev: network device
+ * @stats: storage for statistics
+ *
+ * Aggregates per-queue RX statistics and provides them to the network
+ * stack for tools like sar, ifconfig, and /proc/net/dev. This ensures
+ * accurate packet and byte counts in multi-queue mode.
+ *
+ * TX statistics are maintained by the network stack in dev->stats.
+ */
+static void ibmveth_get_stats64(struct net_device *dev,
+				struct rtnl_link_stats64 *stats)
+{
+	struct ibmveth_adapter *adapter = netdev_priv(dev);
+	int i;
+
+	if (adapter->rx_qstats) {
+		/* Aggregate RX stats from all queues */
+		for (i = 0; i < adapter->num_rx_queues; i++) {
+			stats->rx_packets += adapter->rx_qstats[i].packets;
+			stats->rx_bytes += adapter->rx_qstats[i].bytes;
+		}
+	}
+
+	/* TX stats are maintained by network stack */
+	stats->tx_packets = dev->stats.tx_packets;
+	stats->tx_bytes = dev->stats.tx_bytes;
+	stats->tx_errors = dev->stats.tx_errors;
+	stats->tx_dropped = dev->stats.tx_dropped;
+}
+
 
 static const struct net_device_ops ibmveth_netdev_ops = {
 	.ndo_open		= ibmveth_open,
@@ -2495,6 +2597,7 @@ static const struct net_device_ops ibmveth_netdev_ops = {
 	.ndo_set_features	= ibmveth_set_features,
 	.ndo_validate_addr	= eth_validate_addr,
 	.ndo_set_mac_address    = ibmveth_set_mac_addr,
+	.ndo_get_stats64	= ibmveth_get_stats64,
 #ifdef CONFIG_NET_POLL_CONTROLLER
 	.ndo_poll_controller	= ibmveth_poll_controller,
 #endif
