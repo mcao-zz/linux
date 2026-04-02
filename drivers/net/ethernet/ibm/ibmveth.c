@@ -1265,18 +1265,38 @@ static netdev_tx_t ibmveth_start_xmit(struct sk_buff *skb,
 		/* Need to zero out the checksum */
 		buf[0] = 0;
 		buf[1] = 0;
-
-		if (skb_is_gso(skb) && adapter->fw_large_send_support)
-			desc_flags |= IBMVETH_BUF_LRG_SND;
 	}
 
 	if (skb->ip_summed == CHECKSUM_PARTIAL && skb_is_gso(skb)) {
 		if (adapter->fw_large_send_support) {
 			mss = (unsigned long)skb_shinfo(skb)->gso_size;
+
+			/* Validate MSS meets adapter requirements.
+			 * Shasta adapters (EN2X/EN2W) require 64 <= MSS <= 9668.
+			 * Drop packets with invalid MSS to prevent adapter freeze.
+			 * Small packets shouldn't use LSO path anyway.
+			 */
+			if (unlikely(mss < 64 || mss > 9668)) {
+				netdev_err_once(netdev,
+						"tx: invalid MSS %lu for LSO, dropping\n",
+						mss);
+				dev_dstats_tx_dropped(netdev);
+				goto out;
+			}
+
+			desc_flags |= IBMVETH_BUF_LRG_SND;
 			adapter->tx_large_packets++;
 		} else if (!skb_is_gso_v6(skb)) {
-			/* Put -1 in the IP checksum to tell phyp it
-			 * is a largesend packet. Put the mss in
+			/* Legacy path for older firmware without large_send_support.
+			 * Validate MSS before using legacy method.
+			 */
+			mss = (unsigned long)skb_shinfo(skb)->gso_size;
+			if (unlikely(mss < 64 || mss > 9668)) {
+				dev_dstats_tx_dropped(netdev);
+				goto out;
+			}
+			/* Put -1 in IP checksum to tell phyp it
+			 * is a largesend packet. Put the MSS in
 			 * the TCP checksum.
 			 */
 			ip_hdr(skb)->check = 0xffff;
