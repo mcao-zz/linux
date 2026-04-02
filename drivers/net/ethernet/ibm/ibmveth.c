@@ -435,13 +435,13 @@ static void ibmveth_free_tx_qstats(struct ibmveth_adapter *adapter)
 static int ibmveth_disable_irq(struct ibmveth_adapter *adapter, int queue_index)
 {
 	unsigned long rc;
+	unsigned long irq = adapter->queue_irq[queue_index];
 
 	if (adapter->num_rx_queues == 1) {
 		/* Single queue: use traditional h_vio_signal - ORIGINAL BEHAVIOR */
 		rc = h_vio_signal(adapter->vdev->unit_address, VIO_IRQ_DISABLE);
 	} else {
 		/* Multi-queue: use H_VIOCTL for per-queue control */
-		unsigned long irq = adapter->queue_irq[queue_index];
 		rc = plpar_hcall_norets(H_VIOCTL,
 					adapter->vdev->unit_address,
 					H_DISABLE_VIO_INTERRUPT,
@@ -469,13 +469,13 @@ static int ibmveth_disable_irq(struct ibmveth_adapter *adapter, int queue_index)
 static int ibmveth_enable_irq(struct ibmveth_adapter *adapter, int queue_index)
 {
 	unsigned long rc;
+	unsigned long irq = adapter->queue_irq[queue_index];
 
 	if (adapter->num_rx_queues == 1) {
         	/* Single queue: use traditional h_vio_signal - ORIGINAL BEHAVIOR */
         	rc = h_vio_signal(adapter->vdev->unit_address, VIO_IRQ_ENABLE);
 	}else {
 		/* Multi-queue: use H_VIOCTL for per-queue control */
-        	unsigned long irq = adapter->queue_irq[queue_index];
 		rc = plpar_hcall_norets(H_VIOCTL,
 					adapter->vdev->unit_address,
 					H_ENABLE_VIO_INTERRUPT,
@@ -2826,9 +2826,13 @@ static int ibmveth_probe(struct vio_dev *dev, const struct vio_device_id *id)
 		netdev_info(netdev, "RX multi queue mode enabled: %d queues\n",
 			    adapter->num_rx_queues);
 	} else {
-		adapter->use_subordinate_queue = 0;
-		adapter->num_rx_queues = 1;
-		netdev_info(netdev, "RX multi queue mode disabled: 1 queue\n");
+		/* TESTING: Force use_subordinate_queue=1 but keep 1 queue */
+		/* This tests H_VIOCTL code path on queue 0 */
+		adapter->use_subordinate_queue = 1;  /* Use H_VIOCTL instead of h_vio_signal */
+		adapter->num_rx_queues = 1;          /* But only 1 queue */
+
+		netdev_info(netdev, "TESTING: Single queue using H_VIOCTL (IRQ 0x%lx)\n",
+			    adapter->queue_irq[0]);
 	}
 
 	if (ret == H_SUCCESS &&
