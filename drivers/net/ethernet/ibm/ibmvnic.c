@@ -5530,20 +5530,48 @@ static void handle_request_cap_rsp(union ibmvnic_crq *crq,
 	case SUCCESS:
 		break;
 	case PARTIALSUCCESS:
-		dev_info(dev, "req=%lld, rsp=%ld in %s queue, retrying.\n",
+		/* VIOS returns PARTIALSUCCESS for MTU when the backend VF
+		 * is already configured with the requested MTU. This is
+		 * actually a success condition - the VIOS is confirming
+		 * the MTU is set correctly.
+		 *
+		 * For other capabilities, PARTIALSUCCESS means the VIOS
+		 * adjusted the value and we should retry with the adjusted
+		 * value.
+		 */
+		if (be16_to_cpu(crq->request_capability_rsp.capability) == REQ_MTU) {
+			u64 requested_mtu = *req_value;
+			u64 backend_mtu = be64_to_cpu(crq->request_capability_rsp.number);
+
+			dev_info(dev, "MTU PARTIALSUCCESS: requested=%lld, backend=%lld\n",
+				 requested_mtu, backend_mtu);
+
+			/* Accept the requested MTU as successful.
+			 * The backend VF MTU is already set correctly.
+			 * Update our cached min/max if backend reports
+			 * different value.
+			 */
+			if (backend_mtu != requested_mtu) {
+				dev_info(dev, "Backend MTU %lld differs from requested %lld, accepting requested value\n",
+					 backend_mtu, requested_mtu);
+
+				/* Update cached min/max MTU if backend reports different values */
+				if (backend_mtu < adapter->min_mtu)
+					adapter->min_mtu = backend_mtu;
+				if (backend_mtu > adapter->max_mtu)
+					adapter->max_mtu = backend_mtu;
+			}
+
+			/* Treat as SUCCESS - don't retry, don't change req_value */
+			break;
+		}
+
+		/* For non-MTU capabilities, use existing retry logic */
+		dev_info(dev, "req=%lld, rsp=%ld in %s capability, retrying.\n",
 			 *req_value,
 			 (long)be64_to_cpu(crq->request_capability_rsp.number),
 			 name);
-
-		if (be16_to_cpu(crq->request_capability_rsp.capability) ==
-		    REQ_MTU) {
-			pr_err("mtu of %llu is not supported. Reverting.\n",
-			       *req_value);
-			*req_value = adapter->fallback.mtu;
-		} else {
-			*req_value =
-				be64_to_cpu(crq->request_capability_rsp.number);
-		}
+		*req_value = be64_to_cpu(crq->request_capability_rsp.number);
 
 		send_request_cap(adapter, 1);
 		return;
