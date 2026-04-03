@@ -3680,9 +3680,50 @@ out:
 static int ibmvnic_change_mtu(struct net_device *netdev, int new_mtu)
 {
 	struct ibmvnic_adapter *adapter = netdev_priv(netdev);
+	int new_mtu_with_hdr = new_mtu + ETH_HLEN;
+	int old_buff_size, new_buff_size;
 
-	adapter->desired.mtu = new_mtu + ETH_HLEN;
+	/* Validate MTU range against cached capabilities */
+	if (new_mtu_with_hdr < adapter->min_mtu ||
+	    new_mtu_with_hdr > adapter->max_mtu) {
+		netdev_err(netdev, "Invalid MTU %d (range: %d-%d)\n",
+			   new_mtu, adapter->min_mtu - ETH_HLEN,
+			   adapter->max_mtu - ETH_HLEN);
+		return -EINVAL;
+	}
 
+	/* No change needed */
+	if (adapter->req_mtu == new_mtu_with_hdr) {
+		netdev_dbg(netdev, "MTU unchanged at %d\n", new_mtu);
+		return 0;
+	}
+
+	/* Calculate buffer sizes (same logic as init_tx_pools) */
+	old_buff_size = adapter->prev_mtu + VLAN_HLEN;
+	old_buff_size = ALIGN(old_buff_size, L1_CACHE_BYTES);
+
+	new_buff_size = new_mtu_with_hdr + VLAN_HLEN;
+	new_buff_size = ALIGN(new_buff_size, L1_CACHE_BYTES);
+
+	/* FAST PATH: New packets fit in existing buffers */
+	if (new_buff_size <= old_buff_size) {
+		netdev_info(netdev, "MTU change %d->%d: fast path (no reset)\n",
+			    netdev->mtu, new_mtu);
+
+		/* Update MTU that network stack enforces */
+		WRITE_ONCE(netdev->mtu, new_mtu);
+
+		/* Update driver's MTU tracking */
+		adapter->req_mtu = new_mtu_with_hdr;
+
+		return 0;  /* Success - no reset needed */
+	}
+
+	/* SLOW PATH: Need larger buffers, must reset */
+	netdev_info(netdev, "MTU change %d->%d: slow path (reset required)\n",
+		    netdev->mtu, new_mtu);
+
+	adapter->desired.mtu = new_mtu_with_hdr;
 	return wait_for_reset(adapter);
 }
 
