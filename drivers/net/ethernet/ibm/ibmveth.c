@@ -1255,6 +1255,11 @@ static int ibmveth_register_rx_queues(struct ibmveth_adapter *adapter,
 	rxq_desc.fields.address = adapter->rx_queue[0].queue_dma;
 	adapter->queue_irq[0] = netdev->irq;
 
+	/* Disable IRQ for queue 0 before registration (matches legacy behavior) */
+	rc = ibmveth_disable_irq(adapter, 0);
+	if (rc != H_SUCCESS)
+		netdev_dbg(netdev, "Failed to disable IRQ for queue 0 before registration, rc=%d\n", rc);
+
 	lpar_rc = ibmveth_register_logical_lan(adapter, rxq_desc, mac_address);
 	if (lpar_rc != H_SUCCESS) {
 		netdev_err(netdev, "h_register_logical_lan failed: %ld\n", lpar_rc);
@@ -1277,7 +1282,6 @@ static int ibmveth_register_rx_queues(struct ibmveth_adapter *adapter,
 		rxq_desc.fields.flags_len = IBMVETH_BUF_VALID |
 					    adapter->rx_queue[i].queue_len;
 		rxq_desc.fields.address = adapter->rx_queue[i].queue_dma;
-		adapter->queue_irq[i] = netdev->irq;
 
 		lpar_rc = ibmveth_register_logical_lan_queue(adapter, rxq_desc, i);
 
@@ -1473,15 +1477,10 @@ static int ibmveth_open(struct net_device *netdev)
 	if (rc)
 		goto out_free_filter_list;
 
-	/* Initialize queue IRQs to device IRQ for all queues */
-	for (i = 0; i < adapter->num_rx_queues; i++) {
- 		adapter->queue_irq[i] = netdev->irq;
-	}
-
-	/* Disable interrupts at hypervisor level for all queues */
-	ibmveth_disable_irqs(adapter);
-
-	/* Register RX queues with hypervisor */
+	/* Register RX queues with hypervisor.
+	 * Queue 0 IRQ will be set to netdev->irq and disabled before registration.
+	 * Subordinate queue IRQs (1..N) will be returned by hypervisor during registration.
+	 */
 	rc = ibmveth_register_rx_queues(adapter, mac_address);
 	if (rc)
 		goto out_free_queue_mem;
