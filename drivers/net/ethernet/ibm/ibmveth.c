@@ -529,7 +529,7 @@ static int ibmveth_setup_rx_interrupts(struct ibmveth_adapter *adapter)
 		netdev_dbg(netdev, "registering queue irq 0x%x\n",
 			   adapter->queue_irq[i]);
 		rc = request_irq(adapter->queue_irq[i], ibmveth_interrupt,
-				 0, netdev->name, adapter);
+				 0, netdev->name, &adapter->napi[i]);
 		if (rc != 0) {
 			netdev_err(netdev, "unable to request irq 0x%x, rc %d\n",
 				   adapter->queue_irq[i], rc);
@@ -547,7 +547,7 @@ static int ibmveth_setup_rx_interrupts(struct ibmveth_adapter *adapter)
 
 err_free_irqs:
 	while (--i >= 0)
-		free_irq(adapter->queue_irq[i], adapter);
+		free_irq(adapter->queue_irq[i], &adapter->napi[i]);
 	return rc;
 }
 
@@ -566,7 +566,7 @@ static void ibmveth_cleanup_rx_interrupts(struct ibmveth_adapter *adapter)
 		napi_disable(&adapter->napi[i]);
 
 	for (i = 0; i < adapter->num_rx_queues; i++)
-		free_irq(adapter->queue_irq[i], adapter);
+		free_irq(adapter->queue_irq[i], &adapter->napi[i]);
 }
 
 /* setup the initial settings for a buffer pool */
@@ -1508,7 +1508,7 @@ static int ibmveth_open(struct net_device *netdev)
 
 	/* Initial buffer replenishment (shared pools, trigger via first queue) */
 	netdev_dbg(netdev, "initial replenish cycle\n");
-	ibmveth_interrupt(adapter->queue_irq[0], adapter);
+	ibmveth_interrupt(adapter->queue_irq[0], &adapter->napi[0]);
 
 	netdev_dbg(netdev, "RX setup complete: %d queues, %d buffer pools\n",
 		   adapter->num_rx_queues, IBMVETH_NUM_BUFF_POOLS);
@@ -2367,13 +2367,10 @@ static int ibmveth_poll(struct napi_struct *napi, int budget)
 	int queue_index;
 	u16 mss = 0;
 
-	/* Find which queue this NAPI belongs to */
-	for (queue_index = 0; queue_index < adapter->num_rx_queues; queue_index++) {
-		if (&adapter->napi[queue_index] == napi)
-			break;
-	}
+	/* Calculate which queue this NAPI belongs to using pointer arithmetic */
+	queue_index = napi - adapter->napi;
 
-	if (WARN_ON(queue_index >= adapter->num_rx_queues))
+	if (WARN_ON(queue_index < 0 || queue_index >= adapter->num_rx_queues))
 		return 0;
 
 	/* Track poll calls for this queue */
@@ -2508,24 +2505,23 @@ out:
  */
 static irqreturn_t ibmveth_interrupt(int irq, void *dev_instance)
 {
-	struct ibmveth_adapter *adapter = dev_instance;
+	struct napi_struct *napi = dev_instance;
+	struct net_device *netdev = napi->dev;
+	struct ibmveth_adapter *adapter = netdev_priv(netdev);
 	unsigned long lpar_rc;
 	int qindex;
 
-	/* Find which queue triggered this interrupt */
-	for (qindex = 0; qindex < adapter->num_rx_queues; qindex++) {
-		if (adapter->queue_irq[qindex] == irq)
-			break;
-	}
+	/* Calculate queue index from NAPI pointer using pointer arithmetic */
+	qindex = napi - adapter->napi;
 
 	/* Sanity check - should never happen */
-	if (WARN_ON(qindex >= adapter->num_rx_queues))
+	if (WARN_ON(qindex < 0 || qindex >= adapter->num_rx_queues))
 		return IRQ_NONE;
 
-	if (napi_schedule_prep(&adapter->napi[qindex])) {
+	if (napi_schedule_prep(napi)) {
 		lpar_rc = ibmveth_disable_irq(adapter, qindex);
 		WARN_ON(lpar_rc != H_SUCCESS);
-		__napi_schedule(&adapter->napi[qindex]);
+		__napi_schedule(napi);
 	}
 	return IRQ_HANDLED;
 }
@@ -2640,8 +2636,8 @@ static void ibmveth_poll_controller(struct net_device *dev)
 
 	/* Poll all RX queues */
 	for (i = 0; i < adapter->num_rx_queues; i++)
-		ibmveth_interrupt(adapter->queue_irq[i], adapter);
- }
+		ibmveth_interrupt(adapter->queue_irq[i], &adapter->napi[i]);
+	}
 #endif
 
 /**
@@ -3190,7 +3186,7 @@ static ssize_t veth_pool_store(struct kobject *kobj, struct attribute *attr,
 	rtnl_unlock();
 
 	/* kick the interrupt handler to allocate/deallocate pools */
-	ibmveth_interrupt(adapter->queue_irq[0], adapter);
+	ibmveth_interrupt(adapter->queue_irq[0], &adapter->napi[0]);
 	return count;
 
 unlock_err:
@@ -3232,7 +3228,7 @@ static int ibmveth_resume(struct device *dev)
 	struct net_device *netdev = dev_get_drvdata(dev);
 	struct ibmveth_adapter *adapter = netdev_priv(netdev);
 
-	ibmveth_interrupt(adapter->queue_irq[0], adapter);
+	ibmveth_interrupt(adapter->queue_irq[0], &adapter->napi[0]);
 	return 0;
 }
 
