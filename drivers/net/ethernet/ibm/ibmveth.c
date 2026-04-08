@@ -2856,7 +2856,7 @@ static int ibmveth_probe(struct vio_dev *dev, const struct vio_device_id *id)
 		adapter->use_subordinate_queue = 1;  /* Use H_VIOCTL instead of h_vio_signal */
 		adapter->num_rx_queues = 1;          /* But only 1 queue */
 
-		netdev_info(netdev, "TESTING: Single queue using H_VIOCTL (IRQ 0x%lx)\n",
+		netdev_info(netdev, "TESTING: Single queue using H_VIOCTL (IRQ 0x%x)\n",
 			    adapter->queue_irq[0]);
 	}
 
