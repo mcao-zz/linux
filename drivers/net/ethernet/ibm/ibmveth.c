@@ -437,11 +437,14 @@ static int ibmveth_disable_irq(struct ibmveth_adapter *adapter, int queue_index)
 	unsigned long rc;
 	unsigned long irq = adapter->queue_irq[queue_index];
 
-	if (adapter->num_rx_queues == 1) {
-		/* Single queue: use traditional h_vio_signal - ORIGINAL BEHAVIOR */
+	if (adapter->num_rx_queues == 1 || queue_index == 0) {
+		/* Single queue OR queue 0: use traditional h_vio_signal
+		 * Queue 0 is special - it's registered with h_register_logical_lan,
+		 * not h_register_logical_lan_queue, so use h_vio_signal for it.
+		 */
 		rc = h_vio_signal(adapter->vdev->unit_address, VIO_IRQ_DISABLE);
 	} else {
-		/* Multi-queue: use H_VIOCTL for per-queue control */
+		/* Subordinate queues (1..N): use H_VIOCTL for per-queue control */
 		rc = plpar_hcall_norets(H_VIOCTL,
 					adapter->vdev->unit_address,
 					H_DISABLE_VIO_INTERRUPT,
@@ -471,16 +474,19 @@ static int ibmveth_enable_irq(struct ibmveth_adapter *adapter, int queue_index)
 	unsigned long rc;
 	unsigned long irq = adapter->queue_irq[queue_index];
 
-	if (adapter->num_rx_queues == 1) {
-        	/* Single queue: use traditional h_vio_signal - ORIGINAL BEHAVIOR */
-        	rc = h_vio_signal(adapter->vdev->unit_address, VIO_IRQ_ENABLE);
-	}else {
-		/* Multi-queue: use H_VIOCTL for per-queue control */
+	if (adapter->num_rx_queues == 1 || queue_index == 0) {
+		/* Single queue OR queue 0: use traditional h_vio_signal
+		 * Queue 0 is special - it's registered with h_register_logical_lan,
+		 * not h_register_logical_lan_queue, so use h_vio_signal for it.
+		 */
+		rc = h_vio_signal(adapter->vdev->unit_address, VIO_IRQ_ENABLE);
+	} else {
+		/* Subordinate queues (1..N): use H_VIOCTL for per-queue control */
 		rc = plpar_hcall_norets(H_VIOCTL,
 					adapter->vdev->unit_address,
 					H_ENABLE_VIO_INTERRUPT,
 					irq, 0, 0);
-		}
+	}
 	if (rc)
 		netdev_err(adapter->netdev,
 			   "Failed to enable IRQ 0x%lx for queue %d, rc=%ld\n",
@@ -492,15 +498,20 @@ static int ibmveth_enable_irq(struct ibmveth_adapter *adapter, int queue_index)
  * ibmveth_disable_irqs - Disable interrupts for all queues
  * @adapter: ibmveth adapter structure
  *
- * Convenience wrapper that disables interrupts for all active RX queues
+ * Convenience wrapper that disables interrupts for all active RX queues.
+ * Only disables IRQs for queues that have valid IRQ values (non-zero).
+ * Subordinate queue IRQs are set by hypervisor during registration, so
+ * they may be zero before registration completes.
  */
 static void ibmveth_disable_irqs(struct ibmveth_adapter *adapter)
 {
 	int i;
 
-	/* Disable interrupts for all queues before registration */
-	for (i = 0; i < adapter->num_rx_queues; i++)
-		ibmveth_disable_irq(adapter, i);
+	/* Disable interrupts for all queues with valid IRQs */
+	for (i = 0; i < adapter->num_rx_queues; i++) {
+		if (adapter->queue_irq[i])
+			ibmveth_disable_irq(adapter, i);
+	}
 }
 
 /**
@@ -2850,13 +2861,9 @@ static int ibmveth_probe(struct vio_dev *dev, const struct vio_device_id *id)
 		netdev_info(netdev, "RX multi queue mode enabled: %d queues\n",
 			    adapter->num_rx_queues);
 	} else {
-		/* TESTING: Force use_subordinate_queue=1 but keep 1 queue */
-		/* This tests H_VIOCTL code path on queue 0 */
-		adapter->use_subordinate_queue = 1;  /* Use H_VIOCTL instead of h_vio_signal */
-		adapter->num_rx_queues = 1;          /* But only 1 queue */
-
-		netdev_info(netdev, "TESTING: Single queue using H_VIOCTL (IRQ 0x%x)\n",
-			    adapter->queue_irq[0]);
+		/* Single queue mode: use legacy hcalls */
+		adapter->use_subordinate_queue = 0;
+		adapter->num_rx_queues = 1;
 	}
 
 	if (ret == H_SUCCESS &&
