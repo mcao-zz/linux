@@ -526,13 +526,23 @@ static int ibmveth_setup_rx_interrupts(struct ibmveth_adapter *adapter)
 	int i, rc;
 
 	for (i = 0; i < adapter->num_rx_queues; i++) {
-		netdev_dbg(netdev, "registering queue irq 0x%x\n",
-			   adapter->queue_irq[i]);
+		netdev_dbg(netdev, "registering irq 0x%x for queue %d\n",
+			   adapter->queue_irq[i], i);
+
+		if (!adapter->queue_irq[i]) {
+			netdev_err(netdev, "queue %d has invalid IRQ (0)\n", i);
+			rc = -EINVAL;
+			goto err_free_irqs;
+		}
+
 		rc = request_irq(adapter->queue_irq[i], ibmveth_interrupt,
 				 0, netdev->name, &adapter->napi[i]);
 		if (rc != 0) {
 			netdev_err(netdev, "unable to request irq 0x%x, rc %d\n",
 				   adapter->queue_irq[i], rc);
+			netdev_err(netdev, "unable to request irq 0x%x for queue %d, rc %d\n",
+				   adapter->queue_irq[i], i, rc);
+
 			goto err_free_irqs;
 		}
 	}
@@ -1135,6 +1145,11 @@ static int ibmveth_register_logical_lan_queue(struct ibmveth_adapter *adapter,
 
 	/* Registration - stats count all hcall attempts */
 retry:
+	netdev_dbg(adapter->netdev,
+		  "Attempting to register queue %d: unit_addr=0x%x buffer_list_dma=0x%llx rxq_desc=0x%llx\n",
+		  queue_index, adapter->vdev->unit_address,
+		  adapter->buffer_list_dma[queue_index], rxq_desc.desc);
+
 	rc = plpar_hcall9(H_REG_LOGICAL_LAN_QUEUE, retbuf,
 			  adapter->vdev->unit_address,
 			  adapter->buffer_list_dma[queue_index],
@@ -1168,6 +1183,10 @@ retry:
 		netdev_err(adapter->netdev,
 			   "h_reg_logical_lan_queue failed with %d after retry\n",
 			   rc);
+		netdev_err(adapter->netdev,
+			  "queue %d params: unit_addr=0x%x buffer_list_dma=0x%llx rxq_desc=0x%llx\n",
+			   queue_index, adapter->vdev->unit_address,
+			   adapter->buffer_list_dma[queue_index], rxq_desc.desc);
 	}
 
 	return rc;
@@ -1213,8 +1232,9 @@ static void ibmveth_free_queues(struct ibmveth_adapter *adapter,
 
 			if (lpar_rc != H_SUCCESS) {
 				netdev_err(adapter->netdev,
-					   "h_free_logical_lan_queue failed: %ld\n",
-					   lpar_rc);
+					   "h_free_logical_lan_queue failed for queue %d: %ld\n",
+					   i, lpar_rc);
+
 			}
 			adapter->queue_handle[i] = 0;
 		}
@@ -1289,6 +1309,10 @@ static int ibmveth_register_rx_queues(struct ibmveth_adapter *adapter,
 	}
 
 	/* Register subordinate queues (1..N) in multiqueue mode */
+	netdev_dbg(netdev, "Registering %d subordinate queues (1-%d)\n",
+		   adapter->num_rx_queues - 1, adapter->num_rx_queues - 1);
+
+	/* Register subordinate queues (1..N) in multiqueue mode */
 	for (i = 1; i < adapter->num_rx_queues; i++) {
 		rxq_desc.fields.flags_len = IBMVETH_BUF_VALID |
 					    adapter->rx_queue[i].queue_len;
@@ -1301,22 +1325,23 @@ static int ibmveth_register_rx_queues(struct ibmveth_adapter *adapter,
 			 * This is a fatal error - cannot mix modes.
 			 */
 			netdev_err(netdev,
-				   "Subordinate queue registration failed after queue 0 already registered\n");
+				   "Subordinate queue %d registration failed after queue 0 already registered\n",
+				   i);
 			rc = -ENODEV;
 			goto err_unregister;
 		} else if (lpar_rc == H_SUCCESS) {
 			/* Validate subordinate queue registration */
 			if (!adapter->queue_handle[i] || !adapter->queue_irq[i]) {
 				netdev_err(netdev,
-					   "Invalid hypervisor return: handle=0x%llx irq=%u\n",
-					   adapter->queue_handle[i],
+					   "Invalid hypervisor return for queue %d: handle=0x%llx irq=%u\n",
+					   i, adapter->queue_handle[i],
 					   adapter->queue_irq[i]);
 				rc = -EINVAL;
 				goto err_unregister;
 			}
 		} else {
-			netdev_err(netdev, "h_register_logical_lan_queue failed: %ld\n",
-				   lpar_rc);
+			netdev_err(netdev, "h_register_logical_lan_queue failed for queue %d: %ld\n",
+				   i, lpar_rc);
 			netdev_err(netdev,
 				   "buffer TCE:0x%llx filter TCE:0x%llx rxq desc:0x%llx MAC:0x%llx\n",
 				   adapter->buffer_list_dma[i],
@@ -1327,9 +1352,8 @@ static int ibmveth_register_rx_queues(struct ibmveth_adapter *adapter,
 		}
 	}
 
-	netdev_dbg(netdev, "registered %d RX queue(s) with hypervisor (multi-queue mode)\n",
+	netdev_dbg(netdev, "registered %d RX queues with hypervisor (multi-queue mode)\n",
 		   adapter->num_rx_queues);
-
 	return 0;
 
 err_unregister:
