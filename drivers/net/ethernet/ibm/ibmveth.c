@@ -666,8 +666,8 @@ static int ibmveth_add_logical_lan_buffers(struct ibmveth_adapter *adapter,
 	struct vio_dev *vdev = adapter->vdev;
 	unsigned long rc;
 
-	if (adapter->use_subordinate_queue) {
-		/* Pack buffer addresses in pairs for queue mode */
+	if (adapter->use_subordinate_queue && queue_index > 0) {
+		/* Pack buffer addresses in pairs for subordinate queues (1..N) */
 		unsigned long buffersznum = (buff_size << 32) | filled;
 		unsigned long ioba12, ioba34, ioba56;
 		unsigned long ioba78, ioba910, ioba1112;
