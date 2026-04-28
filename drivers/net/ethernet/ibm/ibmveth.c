@@ -526,6 +526,9 @@ static int ibmveth_setup_rx_interrupts(struct ibmveth_adapter *adapter)
 	int i, rc;
 
 	for (i = 0; i < adapter->num_rx_queues; i++) {
+		netdev_info(netdev, "DEBUG: About to request IRQ for queue %d, IRQ=0x%x (%u)\n",
+			    i, adapter->queue_irq[i], adapter->queue_irq[i]);
+
 		netdev_dbg(netdev, "registering irq 0x%x for queue %d\n",
 			   adapter->queue_irq[i], i);
 
@@ -1145,6 +1148,8 @@ static int ibmveth_register_logical_lan_queue(struct ibmveth_adapter *adapter,
 
 	/* Registration - stats count all hcall attempts */
 retry:
+	netdev_info(adapter->netdev, "DEBUG: Attempting to register queue %d\n", queue_index);
+
 	netdev_dbg(adapter->netdev,
 		  "Attempting to register queue %d: unit_addr=0x%x buffer_list_dma=0x%llx rxq_desc=0x%llx\n",
 		  queue_index, adapter->vdev->unit_address,
@@ -1159,6 +1164,11 @@ retry:
 	if (rc == H_SUCCESS) {
 		adapter->queue_handle[queue_index] = retbuf[0];		/* R4 */
 		adapter->queue_irq[queue_index] = retbuf[1];		/* R5 */
+
+		netdev_info(adapter->netdev,
+			    "DEBUG: Queue %d registered: handle=0x%llx irq=0x%x (%u)\n",
+			    queue_index, adapter->queue_handle[queue_index],
+			    adapter->queue_irq[queue_index], adapter->queue_irq[queue_index]);
 
 		netdev_dbg(adapter->netdev,
 			   "queue %d registered: handle=0x%llx irq=%u\n",
@@ -1285,6 +1295,9 @@ static int ibmveth_register_rx_queues(struct ibmveth_adapter *adapter,
 				    adapter->rx_queue[0].queue_len;
 	rxq_desc.fields.address = adapter->rx_queue[0].queue_dma;
 	adapter->queue_irq[0] = netdev->irq;
+
+	netdev_info(netdev, "DEBUG: Queue 0 IRQ set to netdev->irq = 0x%x (%u)\n",
+		    adapter->queue_irq[0], adapter->queue_irq[0]);
 
 	/* Disable IRQ for queue 0 before registration (matches legacy behavior) */
 	rc = ibmveth_disable_irq(adapter, 0);
