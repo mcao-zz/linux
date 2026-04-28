@@ -21,6 +21,7 @@
 #include <linux/skbuff.h>
 #include <linux/init.h>
 #include <linux/interrupt.h>
+#include <linux/irqdomain.h>
 #include <linux/mm.h>
 #include <linux/pm.h>
 #include <linux/ethtool.h>
@@ -1162,13 +1163,26 @@ retry:
 	adapter->hcall_stats.reg_queue++;
 
 	if (rc == H_SUCCESS) {
+		unsigned int hwirq, virq;
+
 		adapter->queue_handle[queue_index] = retbuf[0];		/* R4 */
-		adapter->queue_irq[queue_index] = retbuf[1];		/* R5 */
+		hwirq = retbuf[1];					/* R5 - hardware IRQ */
+
+		/* Map hardware IRQ to virtual IRQ using default IRQ domain */
+		virq = irq_create_mapping(NULL, hwirq);
+		if (!virq) {
+			netdev_err(adapter->netdev,
+				   "Failed to map IRQ for queue %d (hwirq=%u)\n",
+				   queue_index, hwirq);
+			return -EINVAL;
+		}
+
+		adapter->queue_irq[queue_index] = virq;
 
 		netdev_info(adapter->netdev,
-			    "DEBUG: Queue %d registered: handle=0x%llx irq=0x%x (%u)\n",
+			    "DEBUG: Queue %d registered: handle=0x%llx hwirq=0x%x virq=%u\n",
 			    queue_index, adapter->queue_handle[queue_index],
-			    adapter->queue_irq[queue_index], adapter->queue_irq[queue_index]);
+			    hwirq, virq);
 
 		netdev_dbg(adapter->netdev,
 			   "queue %d registered: handle=0x%llx irq=%u\n",
@@ -1246,6 +1260,13 @@ static void ibmveth_free_queues(struct ibmveth_adapter *adapter,
 					   i, lpar_rc);
 
 			}
+
+			/* Dispose of the IRQ mapping we created for this subordinate queue */
+			if (adapter->queue_irq[i]) {
+				irq_dispose_mapping(adapter->queue_irq[i]);
+				adapter->queue_irq[i] = 0;
+			}
+
 			adapter->queue_handle[i] = 0;
 		}
 	}
