@@ -685,6 +685,14 @@ static int ibmveth_add_logical_lan_buffers(struct ibmveth_adapter *adapter,
 		ioba1112 = (descs[10].fields.address |
 			  ((unsigned long)descs[11].fields.address << 32));
 
+		netdev_info(adapter->netdev,
+			    "DEBUG: h_add_logical_lan_buffers_queue: unit=0x%x qhandle=0x%llx bufsznum=0x%lx filled=%d buffsize=%lu queue=%d\n",
+			    vdev->unit_address, adapter->queue_handle[queue_index],
+			    buffersznum, filled, buff_size, queue_index);
+		netdev_info(adapter->netdev,
+			    "DEBUG: ioba12=0x%lx ioba34=0x%lx ioba56=0x%lx ioba78=0x%lx ioba910=0x%lx ioba1112=0x%lx\n",
+			    ioba12, ioba34, ioba56, ioba78, ioba910, ioba1112);
+
 		rc = h_add_logical_lan_buffers_queue(vdev->unit_address,
 						     adapter->queue_handle[queue_index],
 						     buffersznum,
