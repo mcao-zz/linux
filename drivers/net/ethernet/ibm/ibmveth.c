@@ -1562,6 +1562,13 @@ static int ibmveth_open(struct net_device *netdev)
 	if (rc)
 		goto out_free_queue_mem;
 
+	/* Update kernel's RX queue count to match registered queues */
+	rc = netif_set_real_num_rx_queues(netdev, adapter->num_rx_queues);
+	if (rc) {
+		netdev_err(netdev, "failed to set number of rx queues\n");
+		goto out_unregister_queues;
+	}
+
 	/* Allocate buffer pools (shared across all queues) */
 	rc = ibmveth_alloc_buffer_pools(adapter);
 	if (rc)
