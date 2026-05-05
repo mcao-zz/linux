@@ -1416,29 +1416,56 @@ err_unregister:
 static int ibmveth_alloc_buffer_pools(struct ibmveth_adapter *adapter)
 {
 	struct net_device *netdev = adapter->netdev;
-	int i;
+	int i, j, q;
 
-	for (i = 0; i < IBMVETH_NUM_BUFF_POOLS; i++) {
-		if (!adapter->rx_buff_pool[0][i].active)
-			continue;
+	/* Initialize pool metadata for queues 1-15 from queue 0 settings */
+	for (q = 1; q < adapter->num_rx_queues; q++) {
+		for (i = 0; i < IBMVETH_NUM_BUFF_POOLS; i++) {
+			struct ibmveth_buff_pool *src = &adapter->rx_buff_pool[0][i];
+			struct ibmveth_buff_pool *dst = &adapter->rx_buff_pool[q][i];
 
-		if (ibmveth_alloc_buffer_pool(&adapter->rx_buff_pool[0][i])) {
-			netdev_err(netdev, "unable to allocate buffer pool %d (size=%u, count=%u)\n",
-				   i, adapter->rx_buff_pool[0][i].buff_size,
-				   adapter->rx_buff_pool[0][i].size);
-			adapter->rx_buff_pool[0][i].active = 0;
-			goto err_free_pools;
+			dst->size = src->size;
+			dst->index = src->index;
+			dst->buff_size = src->buff_size;
+			dst->threshold = src->threshold;
+			dst->active = src->active;
 		}
 	}
 
-	netdev_dbg(netdev, "allocated buffer pool(s)\n");
+	/* Allocate actual buffers for all queues */
+	for (q = 0; q < adapter->num_rx_queues; q++) {
+		for (i = 0; i < IBMVETH_NUM_BUFF_POOLS; i++) {
+			if (!adapter->rx_buff_pool[q][i].active)
+				continue;
+
+			if (ibmveth_alloc_buffer_pool(&adapter->rx_buff_pool[q][i])) {
+				netdev_err(netdev, "unable to allocate buffer pool %d for queue %d (size=%u, count=%u)\n",
+					   i, q, adapter->rx_buff_pool[q][i].buff_size,
+					   adapter->rx_buff_pool[q][i].size);
+				adapter->rx_buff_pool[q][i].active = 0;
+				goto err_free_pools;
+			}
+		}
+	}
+
+	netdev_dbg(netdev, "allocated buffer pools for %d queue(s)\n",
+		   adapter->num_rx_queues);
 	return 0;
 
 err_free_pools:
+	/* Free pools for current queue */
 	while (--i >= 0) {
-		if (adapter->rx_buff_pool[0][i].active)
+		if (adapter->rx_buff_pool[q][i].active)
 			ibmveth_free_buffer_pool(adapter,
-						 &adapter->rx_buff_pool[0][i]);
+						 &adapter->rx_buff_pool[q][i]);
+	}
+	/* Free pools for all previous queues */
+	for (j = q - 1; j >= 0; j--) {
+		for (i = 0; i < IBMVETH_NUM_BUFF_POOLS; i++) {
+			if (adapter->rx_buff_pool[j][i].active)
+				ibmveth_free_buffer_pool(adapter,
+							 &adapter->rx_buff_pool[j][i]);
+		}
 	}
 	return -ENOMEM;
 }
@@ -1449,14 +1476,18 @@ err_free_pools:
  */
 static void ibmveth_free_buffer_pools(struct ibmveth_adapter *adapter)
 {
-	int i;
+	int i, q;
 
-	for (i = 0; i < IBMVETH_NUM_BUFF_POOLS; i++) {
-		if (adapter->rx_buff_pool[0][i].active)
-			ibmveth_free_buffer_pool(adapter,
-						 &adapter->rx_buff_pool[0][i]);
+	/* Free buffer pools for all queues */
+	for (q = 0; q < adapter->num_rx_queues; q++) {
+		for (i = 0; i < IBMVETH_NUM_BUFF_POOLS; i++) {
+			if (adapter->rx_buff_pool[q][i].active)
+				ibmveth_free_buffer_pool(adapter,
+							 &adapter->rx_buff_pool[q][i]);
+		}
 	}
-	netdev_dbg(adapter->netdev, "freed buffer pool(s)\n");
+	netdev_dbg(adapter->netdev, "freed buffer pools for %d queue(s)\n",
+		   adapter->num_rx_queues);
 }
 
 /**
