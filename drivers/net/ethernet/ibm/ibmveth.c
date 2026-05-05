@@ -1016,7 +1016,7 @@ static int ibmveth_remove_buffer_from_pool(struct ibmveth_adapter *adapter,
 
 	mb();
 
-	atomic_dec(&(adapter->rx_buff_pool[queue_index][pool].available));
+	atomic_dec(&adapter->rx_buff_pool[queue_index][pool].available);
 
 	return 0;
 }
@@ -2757,7 +2757,6 @@ static unsigned long ibmveth_get_desired_dma(struct vio_dev *vdev)
 	struct iommu_table *tbl;
 	unsigned long ret;
 	int i, q;
-	int rxqentries = 1;
 
 	tbl = get_iommu_table_base(&vdev->dev);
 
@@ -2774,18 +2773,20 @@ static unsigned long ibmveth_get_desired_dma(struct vio_dev *vdev)
 
 	/* Calculate DMA requirements for all RX queues */
 	for (q = 0; q < adapter->num_rx_queues; q++) {
+		int queue_entries = 1;
+
 		for (i = 0; i < IBMVETH_NUM_BUFF_POOLS; i++) {
 			/* add the size of the active receive buffers */
 			if (adapter->rx_buff_pool[q][i].active)
 				ret +=
 				    adapter->rx_buff_pool[q][i].size *
-				    IOMMU_PAGE_ALIGN(adapter->rx_buff_pool[q][i].
-						     buff_size, tbl);
-			rxqentries += adapter->rx_buff_pool[q][i].size;
+				    IOMMU_PAGE_ALIGN(adapter->rx_buff_pool[q][i].buff_size,
+						     tbl);
+			queue_entries += adapter->rx_buff_pool[q][i].size;
 		}
 		/* add the size of the receive queue entries */
-		ret += IOMMU_PAGE_ALIGN(
-			rxqentries * sizeof(struct ibmveth_rx_q_entry), tbl);
+		ret += IOMMU_PAGE_ALIGN(queue_entries *
+					sizeof(struct ibmveth_rx_q_entry), tbl);
 	}
 
 	return ret;
