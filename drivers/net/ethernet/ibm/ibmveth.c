@@ -2684,7 +2684,7 @@ static int ibmveth_change_mtu(struct net_device *dev, int new_mtu)
 	struct ibmveth_adapter *adapter = netdev_priv(dev);
 	struct vio_dev *viodev = adapter->vdev;
 	int new_mtu_oh = new_mtu + IBMVETH_BUFF_OH;
-	int i, rc;
+	int i, q, rc;
 	int need_restart = 0;
 
 	for (i = 0; i < IBMVETH_NUM_BUFF_POOLS; i++)
@@ -2701,9 +2701,12 @@ static int ibmveth_change_mtu(struct net_device *dev, int new_mtu)
 		ibmveth_close(adapter->netdev);
 	}
 
-	/* Look for an active buffer pool that can hold the new MTU */
+	/* Look for an active buffer pool that can hold the new MTU.
+	 * Update all queues' pools to maintain consistency.
+	 */
 	for (i = 0; i < IBMVETH_NUM_BUFF_POOLS; i++) {
-		adapter->rx_buff_pool[0][i].active = 1;
+		for (q = 0; q < adapter->num_rx_queues; q++)
+			adapter->rx_buff_pool[q][i].active = 1;
 
 		if (new_mtu_oh <= adapter->rx_buff_pool[0][i].buff_size) {
 			WRITE_ONCE(dev->mtu, new_mtu);
@@ -2753,7 +2756,7 @@ static unsigned long ibmveth_get_desired_dma(struct vio_dev *vdev)
 	struct ibmveth_adapter *adapter;
 	struct iommu_table *tbl;
 	unsigned long ret;
-	int i;
+	int i, q;
 	int rxqentries = 1;
 
 	tbl = get_iommu_table_base(&vdev->dev);
@@ -2769,18 +2772,21 @@ static unsigned long ibmveth_get_desired_dma(struct vio_dev *vdev)
 	/* add size of mapped tx buffers */
 	ret += IOMMU_PAGE_ALIGN(IBMVETH_MAX_TX_BUF_SIZE, tbl);
 
-	for (i = 0; i < IBMVETH_NUM_BUFF_POOLS; i++) {
-		/* add the size of the active receive buffers */
-		if (adapter->rx_buff_pool[0][i].active)
-			ret +=
-			    adapter->rx_buff_pool[0][i].size *
-			    IOMMU_PAGE_ALIGN(adapter->rx_buff_pool[0][i].
-					     buff_size, tbl);
-		rxqentries += adapter->rx_buff_pool[0][i].size;
+	/* Calculate DMA requirements for all RX queues */
+	for (q = 0; q < adapter->num_rx_queues; q++) {
+		for (i = 0; i < IBMVETH_NUM_BUFF_POOLS; i++) {
+			/* add the size of the active receive buffers */
+			if (adapter->rx_buff_pool[q][i].active)
+				ret +=
+				    adapter->rx_buff_pool[q][i].size *
+				    IOMMU_PAGE_ALIGN(adapter->rx_buff_pool[q][i].
+						     buff_size, tbl);
+			rxqentries += adapter->rx_buff_pool[q][i].size;
+		}
+		/* add the size of the receive queue entries */
+		ret += IOMMU_PAGE_ALIGN(
+			rxqentries * sizeof(struct ibmveth_rx_q_entry), tbl);
 	}
-	/* add the size of the receive queue entries */
-	ret += IOMMU_PAGE_ALIGN(
-		rxqentries * sizeof(struct ibmveth_rx_q_entry), tbl);
 
 	return ret;
 }
