@@ -1605,9 +1605,11 @@ static int ibmveth_open(struct net_device *netdev)
 	if (rc)
 		goto out_free_buffer_pools;
 
-	/* Initial buffer replenishment (shared pools, trigger via first queue) */
-	netdev_dbg(netdev, "initial replenish cycle\n");
-	ibmveth_interrupt(adapter->queue_irq[0], &adapter->napi[0]);
+	/* Initial buffer replenishment for all queues - must be synchronous */
+	for (i = 0; i < adapter->num_rx_queues; i++) {
+		netdev_dbg(netdev, "initial replenish cycle for queue %d\n", i);
+		ibmveth_replenish_task(adapter, i);
+	}
 
 	netdev_dbg(netdev, "RX setup complete: %d queues, %d buffer pools\n",
 		   adapter->num_rx_queues, IBMVETH_NUM_BUFF_POOLS);
