@@ -913,13 +913,9 @@ static void ibmveth_replenish_task(struct ibmveth_adapter *adapter, int queue_in
 	int i;
 
 	adapter->replenish_task_cycles++;
-	/* In multi-queue mode, protect buffer pool access with spinlock
-	 * to prevent concurrent replenishment from multiple NAPI instances
-	 */
-	spin_lock(&adapter->replenish_lock);
 
 	for (i = (IBMVETH_NUM_BUFF_POOLS - 1); i >= 0; i--) {
-		struct ibmveth_buff_pool *pool = &adapter->rx_buff_pool[0][i];
+		struct ibmveth_buff_pool *pool = &adapter->rx_buff_pool[queue_index][i];
 
 		if (pool->active &&
 		    (atomic_read(&pool->available) < pool->threshold))
@@ -927,8 +923,6 @@ static void ibmveth_replenish_task(struct ibmveth_adapter *adapter, int queue_in
 	}
 
 	ibmveth_update_rx_no_buffer(adapter);
-
-	spin_unlock(&adapter->replenish_lock);
 }
 
 /* empty and free ana buffer pool - also used to do cleanup in error paths */
