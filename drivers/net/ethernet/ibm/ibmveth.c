@@ -1114,9 +1114,21 @@ static int ibmveth_register_logical_lan(struct ibmveth_adapter *adapter,
 	 * try again, but only once.
 	 */
 retry:
-	rc = h_register_logical_lan(adapter->vdev->unit_address,
-				    adapter->buffer_list_dma[0], rxq_desc.desc,
-				    adapter->filter_list_dma, mac_address);
+	/* In multi-queue mode, use plpar_hcall9 to get queue handle for queue 0.
+	 * This enables uniform treatment of all queues using queue-specific hypercalls.
+	 */
+	if (adapter->use_subordinate_queue) {
+		rc = h_register_logical_lan_with_handle(adapter->vdev->unit_address,
+							adapter->buffer_list_dma[0],
+							rxq_desc.desc,
+							adapter->filter_list_dma,
+							mac_address,
+							&adapter->queue_handle[0]);
+	} else {
+		rc = h_register_logical_lan(adapter->vdev->unit_address,
+					    adapter->buffer_list_dma[0], rxq_desc.desc,
+					    adapter->filter_list_dma, mac_address);
+	}
 	adapter->hcall_stats.reg_lan++;
 
 	if (rc != H_SUCCESS && try_again) {
