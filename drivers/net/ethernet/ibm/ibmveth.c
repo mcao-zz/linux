@@ -666,8 +666,11 @@ static int ibmveth_add_logical_lan_buffers(struct ibmveth_adapter *adapter,
 	struct vio_dev *vdev = adapter->vdev;
 	unsigned long rc;
 
-	if (adapter->use_subordinate_queue && queue_index > 0) {
-		/* Pack buffer addresses in pairs for subordinate queues (1..N) */
+	if (adapter->use_subordinate_queue) {
+		/* Multi-queue mode: use queue-specific hypercall for ALL queues (0..N).
+		 * Per Tristan: "you can (and should) use H_ADD_LOGICAL_LAN_BUFFERS_QUEUE
+		 * for the primary rxq as well" in multi-queue mode.
+		 */
 		unsigned long buffersznum = (buff_size << 32) | filled;
 		unsigned long ioba12, ioba34, ioba56;
 		unsigned long ioba78, ioba910, ioba1112;
