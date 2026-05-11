@@ -672,21 +672,38 @@ static int ibmveth_add_logical_lan_buffers(struct ibmveth_adapter *adapter,
 		 * for the primary rxq as well" in multi-queue mode.
 		 */
 		unsigned long buffersznum = (buff_size << 32) | filled;
-		unsigned long ioba12, ioba34, ioba56;
-		unsigned long ioba78, ioba910, ioba1112;
+		unsigned long ioba12 = 0, ioba34 = 0, ioba56 = 0;
+		unsigned long ioba78 = 0, ioba910 = 0, ioba1112 = 0;
 
-		ioba12 = descs[0].fields.address |
-			 ((unsigned long)descs[1].fields.address << 32);
-		ioba34 = descs[2].fields.address |
-			 ((unsigned long)descs[3].fields.address << 32);
-		ioba56 = descs[4].fields.address |
-			 ((unsigned long)descs[5].fields.address << 32);
-		ioba78 = descs[6].fields.address |
-			 ((unsigned long)descs[7].fields.address << 32);
-		ioba910 = (descs[8].fields.address |
-			  ((unsigned long)descs[9].fields.address << 32));
-		ioba1112 = (descs[10].fields.address |
-			  ((unsigned long)descs[11].fields.address << 32));
+		/* Pack IOBAs only for valid descriptors to avoid H_PARAMETER.
+		 * PHYP validates all IOBAs based on 'filled' count, so we must
+		 * ensure unused slots are zero and only pack addresses for
+		 * descriptors that were actually filled.
+		 */
+		if (filled >= 1)
+			ioba12 = descs[0].fields.address;
+		if (filled >= 2)
+			ioba12 |= ((unsigned long)descs[1].fields.address << 32);
+		if (filled >= 3)
+			ioba34 = descs[2].fields.address;
+		if (filled >= 4)
+			ioba34 |= ((unsigned long)descs[3].fields.address << 32);
+		if (filled >= 5)
+			ioba56 = descs[4].fields.address;
+		if (filled >= 6)
+			ioba56 |= ((unsigned long)descs[5].fields.address << 32);
+		if (filled >= 7)
+			ioba78 = descs[6].fields.address;
+		if (filled >= 8)
+			ioba78 |= ((unsigned long)descs[7].fields.address << 32);
+		if (filled >= 9)
+			ioba910 = descs[8].fields.address;
+		if (filled >= 10)
+			ioba910 |= ((unsigned long)descs[9].fields.address << 32);
+		if (filled >= 11)
+			ioba1112 = descs[10].fields.address;
+		if (filled >= 12)
+			ioba1112 |= ((unsigned long)descs[11].fields.address << 32);
 
 		netdev_info(adapter->netdev,
 			    "DEBUG: h_add_logical_lan_buffers_queue: unit=0x%x qhandle=0x%llx bufsznum=0x%lx filled=%d buffsize=%lu queue=%d\n",
