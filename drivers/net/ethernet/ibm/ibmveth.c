@@ -2990,6 +2990,16 @@ static int ibmveth_probe(struct vio_dev *dev, const struct vio_device_id *id)
 		netdev->features |= NETIF_F_FRAGLIST;
 	}
 
+	/* Debug: Print firmware capability bits */
+	netdev_info(netdev, "DEBUG: H_ILLAN_ATTRIBUTES ret=0x%lx ret_attr=0x%lx\n",
+		    ret, ret_attr);
+	netdev_info(netdev, "DEBUG: MULTI_QUEUE_SUPPORT bit (0x%lx) is %s\n",
+		    IBMVETH_ILLAN_RX_MULTI_QUEUE_SUPPORT,
+		    (ret_attr & IBMVETH_ILLAN_RX_MULTI_QUEUE_SUPPORT) ? "SET" : "NOT SET");
+	netdev_info(netdev, "DEBUG: MULTI_BUFF_SUPPORT bit (0x%lx) is %s\n",
+		    IBMVETH_ILLAN_RX_MULTI_BUFF_SUPPORT,
+		    (ret_attr & IBMVETH_ILLAN_RX_MULTI_BUFF_SUPPORT) ? "SET" : "NOT SET");
+
 	/* Check for multi queue support */
 	if (ret == H_SUCCESS &&
 	    (ret_attr & IBMVETH_ILLAN_RX_MULTI_QUEUE_SUPPORT)) {
