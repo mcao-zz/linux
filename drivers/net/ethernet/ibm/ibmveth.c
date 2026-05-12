@@ -1371,6 +1371,17 @@ static int ibmveth_register_rx_queues(struct ibmveth_adapter *adapter,
 		return -ENONET;
 	}
 
+	/* Log queue 0 registration details */
+	if (adapter->use_subordinate_queue) {
+		netdev_info(netdev,
+			    "DEBUG: Queue 0 registered: handle=0x%llx irq=%u (from netdev->irq)\n",
+			    adapter->queue_handle[0], adapter->queue_irq[0]);
+	} else {
+		netdev_info(netdev,
+			    "DEBUG: Queue 0 registered (single-queue mode): irq=%u\n",
+			    adapter->queue_irq[0]);
+	}
+
 	/* If single-queue mode, we're done */
 	if (adapter->num_rx_queues == 1 || !adapter->use_subordinate_queue) {
 		netdev_dbg(netdev, "registered 1 RX queue with hypervisor (single-queue mode)\n");
