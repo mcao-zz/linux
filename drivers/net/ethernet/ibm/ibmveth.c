@@ -445,11 +445,24 @@ static int ibmveth_disable_irq(struct ibmveth_adapter *adapter, int queue_index)
 		 */
 		rc = h_vio_signal(adapter->vdev->unit_address, VIO_IRQ_DISABLE);
 	} else {
-		/* Subordinate queues (1..N): use H_VIOCTL for per-queue control */
+		/* Subordinate queues (1..N): use H_VIOCTL for per-queue control
+		 * H_VIOCTL requires the hardware IRQ number, not the virtual IRQ.
+		 */
+		struct irq_data *irq_data = irq_get_irq_data(irq);
+		unsigned long hwirq;
+
+		if (!irq_data) {
+			netdev_err(adapter->netdev,
+				   "Failed to get IRQ data for queue %d (virq=%lu)\n",
+				   queue_index, irq);
+			return -EINVAL;
+		}
+
+		hwirq = irqd_to_hwirq(irq_data);
 		rc = plpar_hcall_norets(H_VIOCTL,
 					adapter->vdev->unit_address,
 					H_DISABLE_VIO_INTERRUPT,
-					irq, 0, 0);
+					hwirq, 0, 0);
 	}
 
 	if (rc)
@@ -482,11 +495,24 @@ static int ibmveth_enable_irq(struct ibmveth_adapter *adapter, int queue_index)
 		 */
 		rc = h_vio_signal(adapter->vdev->unit_address, VIO_IRQ_ENABLE);
 	} else {
-		/* Subordinate queues (1..N): use H_VIOCTL for per-queue control */
+		/* Subordinate queues (1..N): use H_VIOCTL for per-queue control
+		 * H_VIOCTL requires the hardware IRQ number, not the virtual IRQ.
+		 */
+		struct irq_data *irq_data = irq_get_irq_data(irq);
+		unsigned long hwirq;
+
+		if (!irq_data) {
+			netdev_err(adapter->netdev,
+				   "Failed to get IRQ data for queue %d (virq=%lu)\n",
+				   queue_index, irq);
+			return -EINVAL;
+		}
+
+		hwirq = irqd_to_hwirq(irq_data);
 		rc = plpar_hcall_norets(H_VIOCTL,
 					adapter->vdev->unit_address,
 					H_ENABLE_VIO_INTERRUPT,
-					irq, 0, 0);
+					hwirq, 0, 0);
 	}
 	if (rc)
 		netdev_err(adapter->netdev,
@@ -1434,6 +1460,21 @@ static int ibmveth_register_rx_queues(struct ibmveth_adapter *adapter,
 
 	netdev_dbg(netdev, "registered %d RX queues with hypervisor (multi-queue mode)\n",
 		   adapter->num_rx_queues);
+
+	/* Enable interrupts at hypervisor level for all queues.
+	 * Queue 0 was disabled before registration (line 1332), and subordinate
+	 * queues need to be enabled after registration completes.
+	 */
+	for (i = 0; i < adapter->num_rx_queues; i++) {
+		rc = ibmveth_enable_irq(adapter, i);
+		if (rc != H_SUCCESS) {
+			netdev_err(netdev,
+				   "Failed to enable IRQ for queue %d after registration, rc=%d\n",
+				   i, rc);
+			goto err_unregister;
+		}
+	}
+
 	return 0;
 
 err_unregister:
