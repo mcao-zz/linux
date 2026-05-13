@@ -1561,7 +1561,7 @@ static int ibmveth_setup_single_rx_interrupt(struct ibmveth_adapter *adapter,
 	int rc;
 
 	rc = request_irq(adapter->queue_irq[queue_idx],
-			 ibmveth_interrupt, 0, netdev->name, adapter);
+			 ibmveth_interrupt, 0, netdev->name, &adapter->napi[queue_idx]);
 	if (rc) {
 		netdev_err(netdev, "Failed to request IRQ for queue %d: %d\n",
 			   queue_idx, rc);
@@ -1584,7 +1584,7 @@ static void ibmveth_cleanup_single_rx_interrupt(struct ibmveth_adapter *adapter,
 						int queue_idx)
 {
 	if (adapter->queue_irq[queue_idx]) {
-		free_irq(adapter->queue_irq[queue_idx], adapter);
+		free_irq(adapter->queue_irq[queue_idx], &adapter->napi[queue_idx]);
 		netdev_dbg(adapter->netdev, "Freed IRQ for queue %d\n", queue_idx);
 	}
 }
