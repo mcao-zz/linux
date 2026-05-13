@@ -2233,40 +2233,42 @@ static int ibmveth_set_channels(struct net_device *netdev,
 	/* We have IBMVETH_MAX_QUEUES netdev_queue's allocated
 	 * but we may need to alloc/free the ltb's.
 	 */
-	netif_tx_stop_all_queues(netdev);
+	if (goal != old) {
+		netif_tx_stop_all_queues(netdev);
 
-	/* Allocate any queue that we need */
-	for (i = old; i < goal; i++) {
-		if (adapter->tx_ltb_ptr[i])
-			continue;
+		/* Allocate any queue that we need */
+		for (i = old; i < goal; i++) {
+			if (adapter->tx_ltb_ptr[i])
+				continue;
 
-		rc = ibmveth_allocate_tx_ltb(adapter, i);
-		if (!rc)
-			continue;
+			rc = ibmveth_allocate_tx_ltb(adapter, i);
+			if (!rc)
+				continue;
 
-		/* if something goes wrong, free everything we just allocated */
-		netdev_err(netdev, "Failed to allocate more tx queues, returning to %d queues\n",
-			   old);
-		goal = old;
-		old = i;
-		break;
+			/* if something goes wrong, free everything we just allocated */
+			netdev_err(netdev, "Failed to allocate more tx queues, returning to %d queues\n",
+				   old);
+			goal = old;
+			old = i;
+			break;
+		}
+		rc = netif_set_real_num_tx_queues(netdev, goal);
+		if (rc) {
+			netdev_err(netdev, "Failed to set real tx queues, returning to %d queues\n",
+				   old);
+			goal = old;
+			old = i;
+		}
+		/* Free any that are no longer needed */
+		for (i = old; i > goal; i--) {
+			if (adapter->tx_ltb_ptr[i - 1])
+				ibmveth_free_tx_ltb(adapter, i - 1);
+		}
+
+		netif_tx_wake_all_queues(netdev);
 	}
-	rc = netif_set_real_num_tx_queues(netdev, goal);
-	if (rc) {
-		netdev_err(netdev, "Failed to set real tx queues, returning to %d queues\n",
-			   old);
-		goal = old;
-		old = i;
-	}
-	/* Free any that are no longer needed */
-	for (i = old; i > goal; i--) {
-		if (adapter->tx_ltb_ptr[i - 1])
-			ibmveth_free_tx_ltb(adapter, i - 1);
-	}
 
-	netif_tx_wake_all_queues(netdev);
-
-	return rc;
+	return 0;
 }
 
 static const struct ethtool_ops netdev_ethtool_ops = {
