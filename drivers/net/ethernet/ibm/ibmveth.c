@@ -1278,61 +1278,24 @@ retry:
 }
 
 /**
- * ibmveth_free_queues - Unregister all RX queues from hypervisor
- * @adapter: ibmveth adapter structure
- * @num_queues: number of queues to unregister
+ * ibmveth_free_all_queues - Free all RX queues at once
+ * @adapter: ibmveth adapter
  *
- * For multiqueue mode:
- *   1. Unregister subordinate queues (1..N) with h_free_logical_lan_queue
- *   2. Unregister queue 0 and power off adapter with h_free_logical_lan
- * For single-queue mode:
- *   1. Unregister queue 0 and power off adapter with h_free_logical_lan
+ * Uses H_FREE_LOGICAL_LAN to free all queues in a single hypercall.
+ * This is much faster than freeing queues individually (per PHYP team).
+ * Used during interface close/removal when shutting down completely.
  *
- * Note: h_free_logical_lan will clean up all queues, so step 1 is technically
- * optional. However, we explicitly free subordinate queues for symmetry with
- * registration and better error reporting.
+ * H_FREE_LOGICAL_LAN powers off the adapter and frees all queues
+ * (both queue 0 and subordinate queues 1-15) in one operation.
  */
-static void ibmveth_free_queues(struct ibmveth_adapter *adapter,
-				int num_queues)
+static void ibmveth_free_all_queues(struct ibmveth_adapter *adapter)
 {
 	unsigned long lpar_rc;
 	int i;
 
-	netdev_dbg(adapter->netdev, "freeing %d RX queue(s) (%s mode)\n",
-		   num_queues,
-		   adapter->use_subordinate_queue ? "multi-queue" : "single-queue");
+	netdev_dbg(adapter->netdev, "freeing all RX queues at once\n");
 
-	/* Free subordinate queues first (queues 1..N) in multiqueue mode */
-	if (adapter->use_subordinate_queue) {
-		for (i = 1; i < num_queues; i++) {
-			if (!adapter->queue_handle[i])
-				continue;
-
-			do {
-				lpar_rc = h_free_logical_lan_queue(
-					adapter->vdev->unit_address,
-					adapter->queue_handle[i]);
-				adapter->hcall_stats.free_queue++;
-			} while (H_IS_LONG_BUSY(lpar_rc) || (lpar_rc == H_BUSY));
-
-			if (lpar_rc != H_SUCCESS) {
-				netdev_err(adapter->netdev,
-					   "h_free_logical_lan_queue failed for queue %d: %ld\n",
-					   i, lpar_rc);
-
-			}
-
-			/* Dispose of the IRQ mapping we created for this subordinate queue */
-			if (adapter->queue_irq[i]) {
-				irq_dispose_mapping(adapter->queue_irq[i]);
-				adapter->queue_irq[i] = 0;
-			}
-
-			adapter->queue_handle[i] = 0;
-		}
-	}
-
-	/* Always call h_free_logical_lan to power off adapter and clean up queue 0 */
+	/* H_FREE_LOGICAL_LAN powers off adapter and frees ALL queues */
 	do {
 		lpar_rc = h_free_logical_lan(adapter->vdev->unit_address);
 		adapter->hcall_stats.free_lan++;
@@ -1343,8 +1306,19 @@ static void ibmveth_free_queues(struct ibmveth_adapter *adapter,
 			   "h_free_logical_lan failed: %ld\n", lpar_rc);
 	}
 
-	/* Clear queue handles and IRQs after unregistration */
-	for (i = 0; i < num_queues; i++) {
+	/* Clean up IRQ mappings for subordinate queues (1-15).
+	 * Queue 0 uses netdev->irq (not created by us), so skip it.
+	 * In legacy mode (num_rx_queues=1), this loop doesn't execute.
+	 */
+	for (i = 1; i < adapter->num_rx_queues; i++) {
+		if (adapter->queue_irq[i]) {
+			irq_dispose_mapping(adapter->queue_irq[i]);
+			adapter->queue_irq[i] = 0;
+		}
+	}
+
+	/* Clear all queue handles and IRQs */
+	for (i = 0; i < adapter->num_rx_queues; i++) {
 		adapter->queue_handle[i] = 0;
 		adapter->queue_irq[i] = 0;
 	}
@@ -1478,11 +1452,12 @@ static int ibmveth_register_rx_queues(struct ibmveth_adapter *adapter,
 	return 0;
 
 err_unregister:
-	/* Unregister any queues that were successfully registered.
-	 * Note: i is the failed queue index, so we need to unregister
-	 * queues 0 through i-1, which means passing i as num_queues.
+	/* Unregister all queues and power off adapter.
+	 * Registration failed, so we abort and return to powered-off state.
+	 * H_FREE_LOGICAL_LAN will free all queues (including partially
+	 * registered ones) in a single fast hypercall.
 	 */
-	ibmveth_free_queues(adapter, i);
+	ibmveth_free_all_queues(adapter);
 	return rc;
 }
 
@@ -1725,7 +1700,7 @@ out_cleanup_rx_interrupts:
 out_free_buffer_pools:
 	ibmveth_free_buffer_pools(adapter);
 out_unregister_queues:
-	ibmveth_free_queues(adapter, adapter->num_rx_queues);
+	ibmveth_free_all_queues(adapter);
 out_free_queue_mem:
 	ibmveth_cleanup_rx_resources(adapter);
 out_free_filter_list:
@@ -1762,7 +1737,7 @@ static int ibmveth_close(struct net_device *netdev)
 	ibmveth_free_tx_resources(adapter);
 	ibmveth_cleanup_rx_interrupts(adapter);
 	ibmveth_free_buffer_pools(adapter);
-	ibmveth_free_queues(adapter, adapter->num_rx_queues);
+	ibmveth_free_all_queues(adapter);
 	ibmveth_cleanup_rx_resources(adapter);
 	ibmveth_free_filter_list(adapter);
 	ibmveth_free_rx_qstats(adapter);
