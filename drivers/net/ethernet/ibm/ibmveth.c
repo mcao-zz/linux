@@ -1167,6 +1167,145 @@ static int ibmveth_drain_rx_queue(struct ibmveth_adapter *adapter,
 	return drained;
 }
 
+/**
+ * ibmveth_alloc_single_rx_queue - Allocate resources for a single RX queue
+ * @adapter: ibmveth adapter
+ * @queue_idx: Queue index to allocate
+ * @rxq_entries: Number of entries for this queue
+ *
+ * Allocates buffer list, RX queue, and per-queue buffer pools for a single
+ * queue. Used during incremental scale-up to add new queues without affecting
+ * existing ones.
+ *
+ * Return: 0 on success, negative error code on failure
+ */
+static int ibmveth_alloc_single_rx_queue(struct ibmveth_adapter *adapter,
+					 int queue_idx, int rxq_entries)
+{
+	struct device *dev = &adapter->vdev->dev;
+	struct net_device *netdev = adapter->netdev;
+	int i, rc;
+
+	/* Allocate buffer list page */
+	adapter->buffer_list_addr[queue_idx] = (void *)get_zeroed_page(GFP_KERNEL);
+	if (!adapter->buffer_list_addr[queue_idx]) {
+		netdev_err(netdev, "unable to allocate buffer list for queue %d\n",
+			   queue_idx);
+		return -ENOMEM;
+	}
+
+	/* Allocate RX queue */
+	adapter->rx_queue[queue_idx].queue_len =
+		sizeof(struct ibmveth_rx_q_entry) * rxq_entries;
+	adapter->rx_queue[queue_idx].queue_addr =
+		dma_alloc_coherent(dev, adapter->rx_queue[queue_idx].queue_len,
+				   &adapter->rx_queue[queue_idx].queue_dma,
+				   GFP_KERNEL);
+	if (!adapter->rx_queue[queue_idx].queue_addr) {
+		netdev_err(netdev, "unable to allocate RX queue for queue %d\n",
+			   queue_idx);
+		free_page((unsigned long)adapter->buffer_list_addr[queue_idx]);
+		adapter->buffer_list_addr[queue_idx] = NULL;
+		return -ENOMEM;
+	}
+
+	/* Map buffer list */
+	adapter->buffer_list_dma[queue_idx] =
+		dma_map_single(dev, adapter->buffer_list_addr[queue_idx],
+			       4096, DMA_BIDIRECTIONAL);
+	if (dma_mapping_error(dev, adapter->buffer_list_dma[queue_idx])) {
+		netdev_err(netdev, "unable to map buffer list for queue %d\n",
+			   queue_idx);
+		dma_free_coherent(dev, adapter->rx_queue[queue_idx].queue_len,
+				  adapter->rx_queue[queue_idx].queue_addr,
+				  adapter->rx_queue[queue_idx].queue_dma);
+		free_page((unsigned long)adapter->buffer_list_addr[queue_idx]);
+		adapter->buffer_list_addr[queue_idx] = NULL;
+		adapter->rx_queue[queue_idx].queue_addr = NULL;
+		return -ENOMEM;
+	}
+
+	/* Allocate per-queue buffer pools */
+	for (i = 0; i < IBMVETH_NUM_BUFF_POOLS; i++) {
+		rc = ibmveth_alloc_buffer_pool(&adapter->rx_buff_pool[queue_idx][i]);
+		if (rc) {
+			netdev_err(netdev,
+				   "unable to allocate buffer pool %d for queue %d\n",
+				   i, queue_idx);
+			/* Free already-allocated pools */
+			while (--i >= 0)
+				ibmveth_free_buffer_pool(adapter,
+							 &adapter->rx_buff_pool[queue_idx][i]);
+			/* Free queue resources */
+			dma_unmap_single(dev, adapter->buffer_list_dma[queue_idx],
+					 4096, DMA_BIDIRECTIONAL);
+			dma_free_coherent(dev, adapter->rx_queue[queue_idx].queue_len,
+					  adapter->rx_queue[queue_idx].queue_addr,
+					  adapter->rx_queue[queue_idx].queue_dma);
+			free_page((unsigned long)adapter->buffer_list_addr[queue_idx]);
+			adapter->buffer_list_addr[queue_idx] = NULL;
+			adapter->rx_queue[queue_idx].queue_addr = NULL;
+			adapter->buffer_list_dma[queue_idx] = 0;
+			return rc;
+		}
+	}
+
+	/* Initialize queue state */
+	adapter->rx_queue[queue_idx].index = 0;
+	adapter->rx_queue[queue_idx].num_slots = rxq_entries;
+	adapter->rx_queue[queue_idx].toggle = 1;
+
+	netdev_dbg(netdev, "Allocated queue %d: buffer_list @ 0x%p (DMA: 0x%llx), rx_queue @ 0x%p (DMA: 0x%llx), %d entries\n",
+		   queue_idx, adapter->buffer_list_addr[queue_idx],
+		   (unsigned long long)adapter->buffer_list_dma[queue_idx],
+		   adapter->rx_queue[queue_idx].queue_addr,
+		   (unsigned long long)adapter->rx_queue[queue_idx].queue_dma,
+		   rxq_entries);
+
+	return 0;
+}
+
+/**
+ * ibmveth_free_single_rx_queue - Free resources for a single RX queue
+ * @adapter: ibmveth adapter
+ * @queue_idx: Queue index to free
+ *
+ * Frees buffer list, RX queue, and per-queue buffer pools for a single queue.
+ * Used during incremental scale-down to remove excess queues without affecting
+ * remaining ones.
+ */
+static void ibmveth_free_single_rx_queue(struct ibmveth_adapter *adapter,
+					 int queue_idx)
+{
+	struct device *dev = &adapter->vdev->dev;
+	int i;
+
+	/* Free per-queue buffer pools */
+	for (i = 0; i < IBMVETH_NUM_BUFF_POOLS; i++)
+		ibmveth_free_buffer_pool(adapter,
+					 &adapter->rx_buff_pool[queue_idx][i]);
+
+	if (adapter->buffer_list_dma[queue_idx]) {
+		dma_unmap_single(dev, adapter->buffer_list_dma[queue_idx],
+				 4096, DMA_BIDIRECTIONAL);
+		adapter->buffer_list_dma[queue_idx] = 0;
+	}
+
+	if (adapter->rx_queue[queue_idx].queue_addr) {
+		dma_free_coherent(dev, adapter->rx_queue[queue_idx].queue_len,
+				  adapter->rx_queue[queue_idx].queue_addr,
+				  adapter->rx_queue[queue_idx].queue_dma);
+		adapter->rx_queue[queue_idx].queue_addr = NULL;
+	}
+
+	if (adapter->buffer_list_addr[queue_idx]) {
+		free_page((unsigned long)adapter->buffer_list_addr[queue_idx]);
+		adapter->buffer_list_addr[queue_idx] = NULL;
+	}
+
+	netdev_dbg(adapter->netdev, "Freed queue %d resources\n", queue_idx);
+}
+
 static void ibmveth_free_tx_ltb(struct ibmveth_adapter *adapter, int idx)
 {
 	dma_unmap_single(&adapter->vdev->dev, adapter->tx_ltb_dma[idx],
@@ -1325,6 +1464,129 @@ retry:
 	}
 
 	return rc;
+}
+
+
+/**
+ * ibmveth_register_single_rx_queue - Register a single RX queue with hypervisor
+ * @adapter: ibmveth adapter
+ * @queue_idx: Queue index to register
+ * @mac_address: MAC address for registration
+ *
+ * Registers a single queue with the hypervisor. Used during incremental
+ * scale-up to add new queues.
+ *
+ * Return: 0 on success, negative error code on failure
+ */
+static int ibmveth_register_single_rx_queue(struct ibmveth_adapter *adapter,
+					    int queue_idx, u64 mac_address)
+{
+	struct net_device *netdev = adapter->netdev;
+	union ibmveth_buf_desc rxq_desc;
+	unsigned long lpar_rc;
+
+	rxq_desc.fields.flags_len = IBMVETH_BUF_VALID |
+				    adapter->rx_queue[queue_idx].queue_len;
+	rxq_desc.fields.address = adapter->rx_queue[queue_idx].queue_dma;
+
+	lpar_rc = ibmveth_register_logical_lan_queue(adapter, rxq_desc, queue_idx);
+	if (lpar_rc != H_SUCCESS) {
+		netdev_err(netdev, "Failed to register queue %d: rc=0x%lx\n",
+			   queue_idx, lpar_rc);
+		return -EIO;
+	}
+
+	netdev_dbg(netdev, "Registered queue %d with handle 0x%llx\n",
+		   queue_idx, adapter->queue_handle[queue_idx]);
+	return 0;
+}
+
+/**
+ * ibmveth_deregister_single_rx_queue - Deregister a single RX queue
+ * @adapter: ibmveth adapter
+ * @queue_idx: Queue index to deregister
+ *
+ * Deregisters a single queue from the hypervisor and cleans up IRQ mapping
+ * for subordinate queues (1-15). Used during incremental scale-down to
+ * remove excess queues.
+ *
+ * Queue 0 IRQ is not disposed as it comes from device tree (netdev->irq).
+ * Subordinate queue IRQs (1-15) are created with irq_create_mapping() and
+ * must be disposed with irq_dispose_mapping().
+ */
+static void ibmveth_deregister_single_rx_queue(struct ibmveth_adapter *adapter,
+					       int queue_idx)
+{
+	unsigned long lpar_rc;
+
+	if (adapter->queue_handle[queue_idx]) {
+		/* Deregister from hypervisor with retry for long busy */
+		do {
+			lpar_rc =
+				h_free_logical_lan_queue(adapter->vdev->unit_address,
+							 adapter->queue_handle[queue_idx]);
+		} while (H_IS_LONG_BUSY(lpar_rc) || (lpar_rc == H_BUSY));
+
+		if (lpar_rc != H_SUCCESS) {
+			netdev_err(adapter->netdev,
+				   "h_free_logical_lan_queue failed for queue %d: rc=0x%lx\n",
+				   queue_idx, lpar_rc);
+		}
+
+		adapter->queue_handle[queue_idx] = 0;
+
+		/* Dispose IRQ mapping for subordinate queues (1-15) */
+		if (queue_idx > 0 && adapter->queue_irq[queue_idx]) {
+			irq_dispose_mapping(adapter->queue_irq[queue_idx]);
+			adapter->queue_irq[queue_idx] = 0;
+		}
+
+		netdev_dbg(adapter->netdev, "Deregistered queue %d\n", queue_idx);
+	}
+}
+
+/**
+ * ibmveth_setup_single_rx_interrupt - Setup interrupt for a single RX queue
+ * @adapter: ibmveth adapter
+ * @queue_idx: Queue index to setup
+ *
+ * Sets up IRQ and NAPI for a single queue. Used during incremental scale-up.
+ *
+ * Return: 0 on success, negative error code on failure
+ */
+static int ibmveth_setup_single_rx_interrupt(struct ibmveth_adapter *adapter,
+					     int queue_idx)
+{
+	struct net_device *netdev = adapter->netdev;
+	int rc;
+
+	rc = request_irq(adapter->queue_irq[queue_idx],
+			 ibmveth_interrupt, 0, netdev->name, adapter);
+	if (rc) {
+		netdev_err(netdev, "Failed to request IRQ for queue %d: %d\n",
+			   queue_idx, rc);
+		return rc;
+	}
+
+	netdev_dbg(netdev, "Setup IRQ %d for queue %d\n",
+		   adapter->queue_irq[queue_idx], queue_idx);
+	return 0;
+}
+
+/**
+ * ibmveth_cleanup_single_rx_interrupt - Cleanup interrupt for a single RX queue
+ * @adapter: ibmveth adapter
+ * @queue_idx: Queue index to cleanup
+ *
+ * Frees IRQ for a single queue. Used during incremental scale-down.
+ */
+static void ibmveth_cleanup_single_rx_interrupt(struct ibmveth_adapter *adapter,
+						int queue_idx)
+{
+	if (adapter->queue_irq[queue_idx]) {
+		free_irq(adapter->queue_irq[queue_idx], adapter);
+		netdev_dbg(adapter->netdev, "Freed IRQ for queue %d\n", queue_idx);
+	}
 }
 
 /**
