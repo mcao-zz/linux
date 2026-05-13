@@ -1589,6 +1589,121 @@ static void ibmveth_cleanup_single_rx_interrupt(struct ibmveth_adapter *adapter,
 	}
 }
 
+static int ibmveth_resize_rx_queues_incremental(struct ibmveth_adapter *adapter,
+						int new_count, int rxq_entries)
+{
+	struct net_device *netdev = adapter->netdev;
+	u64 mac_address = ether_addr_to_u64(netdev->dev_addr);
+	int old_count = adapter->num_rx_queues;
+	int failed_queue;
+	int rc, i;
+
+	/* No-op if count unchanged */
+	if (old_count == new_count) {
+		netdev_dbg(netdev, "RX queue count unchanged (%d), nothing to do\n",
+			   old_count);
+		return 0;
+	}
+
+	netdev_info(netdev, "Incrementally resizing RX queues: %d → %d\n",
+		    old_count, new_count);
+
+	if (new_count > old_count) {
+		/* Scale-up: Add new queues [old_count, new_count) */
+		netdev_dbg(netdev, "Scale-up: adding queues %d-%d\n",
+			   old_count, new_count - 1);
+
+		for (i = old_count; i < new_count; i++) {
+			/* Allocate queue resources */
+			rc = ibmveth_alloc_single_rx_queue(adapter, i, rxq_entries);
+			if (rc) {
+				netdev_err(netdev, "Failed to allocate queue %d: %d\n",
+					   i, rc);
+				goto cleanup_new_queues;
+			}
+
+			/* Register with hypervisor */
+			rc = ibmveth_register_single_rx_queue(adapter, i, mac_address);
+			if (rc) {
+				netdev_err(netdev, "Failed to register queue %d: %d\n",
+					   i, rc);
+				ibmveth_free_single_rx_queue(adapter, i);
+				goto cleanup_new_queues;
+			}
+
+			/* Setup interrupt */
+			rc = ibmveth_setup_single_rx_interrupt(adapter, i);
+			if (rc) {
+				netdev_err(netdev, "Failed to setup IRQ for queue %d: %d\n",
+					   i, rc);
+				ibmveth_deregister_single_rx_queue(adapter, i);
+				ibmveth_free_single_rx_queue(adapter, i);
+				goto cleanup_new_queues;
+			}
+
+			/* Enable NAPI for new queue */
+			napi_enable(&adapter->napi[i]);
+		}
+
+		/* Update queue count */
+		adapter->num_rx_queues = new_count;
+
+	} else {
+		/* Scale-down: Remove excess queues [new_count, old_count) */
+		netdev_dbg(netdev, "Scale-down: removing queues %d-%d\n",
+			   new_count, old_count - 1);
+
+		/* Disable NAPI for excess queues */
+		for (i = new_count; i < old_count; i++)
+			napi_disable(&adapter->napi[i]);
+
+		/* Drain excess queues */
+		for (i = new_count; i < old_count; i++)
+			ibmveth_drain_rx_queue(adapter, i);
+
+		synchronize_net();
+
+		/* Cleanup excess queues */
+		for (i = new_count; i < old_count; i++) {
+			ibmveth_cleanup_single_rx_interrupt(adapter, i);
+			ibmveth_deregister_single_rx_queue(adapter, i);
+			ibmveth_free_single_rx_queue(adapter, i);
+		}
+
+		/* Update queue count */
+		adapter->num_rx_queues = new_count;
+	}
+
+	/* Update netdev queue count */
+	rc = netif_set_real_num_rx_queues(netdev, adapter->num_rx_queues);
+	if (rc) {
+		netdev_err(netdev, "Failed to set real RX queues to %d: %d\n",
+			   adapter->num_rx_queues, rc);
+		/* This shouldn't fail, but if it does, we're in trouble */
+		return rc;
+	}
+
+	netdev_info(netdev, "Successfully resized to %d RX queues (incremental)\n",
+		    adapter->num_rx_queues);
+	return 0;
+
+cleanup_new_queues:
+	/* Cleanup any queues we successfully added before the failure */
+	failed_queue = i;
+	netdev_err(netdev, "Scale-up failed at queue %d, cleaning up queues %d-%d\n",
+			failed_queue, old_count, failed_queue - 1);
+	for (i = old_count; i < failed_queue; i++) {
+		napi_disable(&adapter->napi[i]);
+		ibmveth_cleanup_single_rx_interrupt(adapter, i);
+		ibmveth_deregister_single_rx_queue(adapter, i);
+		ibmveth_free_single_rx_queue(adapter, i);
+	}
+	/* Keep old queue count - existing queues still work */
+	netdev_warn(netdev, "Keeping %d queues after scale-up failure\n",
+		    old_count);
+	return rc;
+}
+
 /**
  * ibmveth_free_all_queues - Free all RX queues at once
  * @adapter: ibmveth adapter
