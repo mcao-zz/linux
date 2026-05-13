@@ -3344,7 +3344,7 @@ static void ibmveth_get_stats64(struct net_device *dev,
 		}
 	}
 
-	if (adapter->rx_qstats) {
+	if (adapter->tx_qstats) {
 		/* Aggregate TX stats from all queues */
 		for (i = 0; i < dev->real_num_tx_queues; i++) {
 			stats->tx_packets += adapter->tx_qstats[i].packets;
