@@ -2620,6 +2620,14 @@ static int ibmveth_set_channels(struct net_device *netdev,
 	if (!(netdev->flags & IFF_UP))
 		return netif_set_real_num_tx_queues(netdev, goal);
 
+	/* Verify MQ mode is supported before allowing RX queue resize */
+	if (goal_rx > 1 && !adapter->use_subordinate_queue) {
+		netdev_err(netdev,
+			   "Cannot resize to %d RX queues: multi-queue mode not supported by firmware\n",
+			   goal_rx);
+		return -EOPNOTSUPP;
+	}
+
 	/* Resize RX queues if requested */
 	if (goal_rx != old_rx) {
 		rc = ibmveth_resize_rx_queues_incremental(adapter, goal_rx, rxq_entries);
