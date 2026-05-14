@@ -463,6 +463,13 @@ static int ibmveth_disable_irq(struct ibmveth_adapter *adapter, int queue_index)
 					adapter->vdev->unit_address,
 					H_DISABLE_VIO_INTERRUPT,
 					hwirq, 0, 0);
+
+		if (rc == H_PARAMETER) {
+			netdev_err(adapter->netdev,
+				   "H_PARAMETER from H_DISABLE_VIO_INTERRUPT: queue=%d virq=%lu hwirq=%lu unit_address=0x%lx\n",
+				   queue_index, irq, hwirq, adapter->vdev->unit_address);
+			return 0;  /* Treat as success to stop interrupt storm */
+		}
 	}
 
 	if (rc)
@@ -513,6 +520,13 @@ static int ibmveth_enable_irq(struct ibmveth_adapter *adapter, int queue_index)
 					adapter->vdev->unit_address,
 					H_ENABLE_VIO_INTERRUPT,
 					hwirq, 0, 0);
+
+		if (rc == H_PARAMETER) {
+			netdev_err(adapter->netdev,
+				   "H_PARAMETER from H_ENABLE_VIO_INTERRUPT: queue=%d virq=%lu hwirq=%lu unit_address=0x%lx\n",
+				   queue_index, irq, hwirq, adapter->vdev->unit_address);
+			return 0;  /* Treat as success */
+		}
 	}
 	if (rc)
 		netdev_err(adapter->netdev,
