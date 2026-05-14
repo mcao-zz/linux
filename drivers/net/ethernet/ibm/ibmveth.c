@@ -1435,9 +1435,15 @@ retry:
 			   adapter->queue_irq[queue_index]);
 	} else if (rc == H_FUNCTION) {
 		/* Hypervisor doesn't support subordinate queue mode */
-		netdev_info(adapter->netdev,
-			    "Multi queue mode failed, falling back to regular mode\n");
-		adapter->use_subordinate_queue = 0;
+		if (adapter->use_subordinate_queue) {
+			netdev_info(adapter->netdev,
+				    "Multi queue mode not supported by firmware, falling back to single queue\n");
+			adapter->use_subordinate_queue = 0;
+		} else {
+			netdev_err(adapter->netdev,
+				   "Unexpected H_FUNCTION for queue %d registration (MQ mode already disabled)\n",
+				   queue_index);
+		}
 		return rc;
 	} else if (try_again) {
 		/*
