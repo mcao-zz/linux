@@ -2592,7 +2592,14 @@ static void ibmveth_get_channels(struct net_device *netdev,
 	channels->max_tx = ibmveth_real_max_tx_queues();
 	channels->tx_count = netdev->real_num_tx_queues;
 
-	channels->max_rx = IBMVETH_MAX_QUEUES;
+	/* Report max RX queues based on firmware support.
+	 * If MQ mode is disabled (use_subordinate_queue == 0), we can only
+	 * support 1 queue. Otherwise, report the hardware maximum.
+	 */
+	if (adapter->use_subordinate_queue)
+		channels->max_rx = IBMVETH_MAX_QUEUES;
+	else
+		channels->max_rx = 1;
 	channels->rx_count = adapter->num_rx_queues;
 }
 
