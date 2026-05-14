@@ -904,18 +904,42 @@ hcall_failure:
 		adapter->replenish_add_buff_failure += filled;
 
 		/*
-		 * H_FUNCTION in buffer replenishment should not happen in normal
-		 * operation. It indicates firmware doesn't support the hypercall
-		 * even though it advertised support during capability negotiation.
-		 * Log the error for debugging but don't try to recover - this is
-		 * a firmware bug that needs investigation.
+		 * H_FUNCTION in buffer replenishment can occur in two scenarios:
+		 *
+		 * 1. Multi-queue mode (use_subordinate_queue=1):
+		 *    Should NOT happen - firmware advertised MQ support during
+		 *    capability negotiation. If it occurs, it's a firmware bug.
+		 *    Log error and stop.
+		 *
+		 * 2. Legacy batch mode (use_subordinate_queue=0, batch>1):
+		 *    CAN happen - firmware may not support h_add_logical_lan_buffers()
+		 *    batch hypercall (up to 8 buffers). This is a legitimate firmware
+		 *    limitation. Fall back to single buffer mode and continue.
 		 */
 		if (lpar_rc == H_FUNCTION) {
-			netdev_err(adapter->netdev,
-				   "Unexpected H_FUNCTION from buffer add hypercall (queue=%d, batch=%d)\n",
-				   queue_index, batch);
-			netdev_err(adapter->netdev,
-				   "Firmware advertised support but hypercall failed - possible firmware bug\n");
+			if (adapter->use_subordinate_queue) {
+				/* Multi-queue mode: firmware bug */
+				netdev_err(adapter->netdev,
+					   "Unexpected H_FUNCTION from multi-queue buffer add (queue=%d, batch=%d)\n",
+					   queue_index, batch);
+				netdev_err(adapter->netdev,
+					   "Firmware advertised MQ support but hypercall failed - firmware bug\n");
+				break;
+			} else if (batch > 1) {
+				/* Legacy batch mode: fall back to single buffer */
+				netdev_warn(adapter->netdev,
+					    "H_FUNCTION from legacy batch buffer add (batch=%d), falling back to single buffer mode\n",
+					    batch);
+				adapter->rx_buffers_per_hcall = 1;
+				/* Continue with single buffer mode */
+				continue;
+			} else {
+				/* Single buffer mode: unexpected */
+				netdev_err(adapter->netdev,
+					   "Unexpected H_FUNCTION from single buffer add (queue=%d)\n",
+					   queue_index);
+				break;
+			}
 		}
 		break;
 	}
