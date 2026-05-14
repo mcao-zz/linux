@@ -904,23 +904,18 @@ hcall_failure:
 		adapter->replenish_add_buff_failure += filled;
 
 		/*
-		 * If multi rx buffers hcall is no longer supported by FW
-		 * e.g. in the case of Live Parttion Migration
+		 * H_FUNCTION in buffer replenishment should not happen in normal
+		 * operation. It indicates firmware doesn't support the hypercall
+		 * even though it advertised support during capability negotiation.
+		 * Log the error for debugging but don't try to recover - this is
+		 * a firmware bug that needs investigation.
 		 */
-		if (batch > 1 && lpar_rc == H_FUNCTION) {
-			/*
-			 * Instead of retry submit single buffer individually
-			 * here just set the max rx buffer per hcall to 1
-			 * buffers will be respleshed next time
-			 * when ibmveth_replenish_buffer_pool() is called again
-			 * with single-buffer case
-			 */
-			netdev_info(adapter->netdev,
-				    "RX Multi buffers not supported by FW, rc=%lu\n",
-				    lpar_rc);
-			adapter->rx_buffers_per_hcall = 1;
-			netdev_info(adapter->netdev,
-				    "Next rx replesh will fall back to single-buffer hcall\n");
+		if (lpar_rc == H_FUNCTION) {
+			netdev_err(adapter->netdev,
+				   "Unexpected H_FUNCTION from buffer add hypercall (queue=%d, batch=%d)\n",
+				   queue_index, batch);
+			netdev_err(adapter->netdev,
+				   "Firmware advertised support but hypercall failed - possible firmware bug\n");
 		}
 		break;
 	}
