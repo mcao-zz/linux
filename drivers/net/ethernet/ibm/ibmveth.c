@@ -719,31 +719,36 @@ static int ibmveth_add_logical_lan_buffers(struct ibmveth_adapter *adapter,
 		 * PHYP validates all IOBAs based on 'filled' count, so we must
 		 * ensure unused slots are zero and only pack addresses for
 		 * descriptors that were actually filled.
+		 *
+		 * Pack odd-numbered buffers (1,3,5,7,9,11) in upper 32 bits and
+		 * even-numbered buffers (2,4,6,8,10,12) in lower 32 bits. This
+		 * ensures that for odd buffer counts, the valid address appears
+		 * in the upper 32 bits where firmware expects it.
 		 */
 		if (filled >= 1)
-			ioba12 = descs[0].fields.address;
+			ioba12 = ((unsigned long)descs[0].fields.address << 32);
 		if (filled >= 2)
-			ioba12 |= ((unsigned long)descs[1].fields.address << 32);
+			ioba12 |= descs[1].fields.address;
 		if (filled >= 3)
-			ioba34 = descs[2].fields.address;
+			ioba34 = ((unsigned long)descs[2].fields.address << 32);
 		if (filled >= 4)
-			ioba34 |= ((unsigned long)descs[3].fields.address << 32);
+			ioba34 |= descs[3].fields.address;
 		if (filled >= 5)
-			ioba56 = descs[4].fields.address;
+			ioba56 = ((unsigned long)descs[4].fields.address << 32);
 		if (filled >= 6)
-			ioba56 |= ((unsigned long)descs[5].fields.address << 32);
+			ioba56 |= descs[5].fields.address;
 		if (filled >= 7)
-			ioba78 = descs[6].fields.address;
+			ioba78 = ((unsigned long)descs[6].fields.address << 32);
 		if (filled >= 8)
-			ioba78 |= ((unsigned long)descs[7].fields.address << 32);
+			ioba78 |= descs[7].fields.address;
 		if (filled >= 9)
-			ioba910 = descs[8].fields.address;
+			ioba910 = ((unsigned long)descs[8].fields.address << 32);
 		if (filled >= 10)
-			ioba910 |= ((unsigned long)descs[9].fields.address << 32);
+			ioba910 |= descs[9].fields.address;
 		if (filled >= 11)
-			ioba1112 = descs[10].fields.address;
+			ioba1112 = ((unsigned long)descs[10].fields.address << 32);
 		if (filled >= 12)
-			ioba1112 |= ((unsigned long)descs[11].fields.address << 32);
+			ioba1112 |= descs[11].fields.address;
 
 		rc = h_add_logical_lan_buffers_queue(vdev->unit_address,
 						     adapter->queue_handle[queue_index],
