@@ -1294,6 +1294,66 @@ static int ibmveth_alloc_single_rx_queue(struct ibmveth_adapter *adapter,
 
 	return 0;
 }
+/**
+ * ibmveth_alloc_queue_buffer_pools - Allocate buffer pools for a single queue
+ * @adapter: ibmveth adapter structure
+ * @queue: queue index
+ *
+ * Allocates all active buffer pools for the specified queue.
+ * Pool metadata must be initialized before calling this function.
+ *
+ * Return: 0 on success, negative error code on failure
+ */
+static int ibmveth_alloc_queue_buffer_pools(struct ibmveth_adapter *adapter,
+					    int queue)
+{
+	struct net_device *netdev = adapter->netdev;
+	int i;
+
+	for (i = 0; i < IBMVETH_NUM_BUFF_POOLS; i++) {
+		if (!adapter->rx_buff_pool[queue][i].active)
+			continue;
+
+		if (ibmveth_alloc_buffer_pool(&adapter->rx_buff_pool[queue][i])) {
+			netdev_err(netdev,
+				   "unable to allocate buffer pool %d for queue %d (size=%u, count=%u)\n",
+				   i, queue,
+				   adapter->rx_buff_pool[queue][i].buff_size,
+				   adapter->rx_buff_pool[queue][i].size);
+			adapter->rx_buff_pool[queue][i].active = 0;
+
+			/* Free pools allocated so far for this queue */
+			while (--i >= 0) {
+				if (adapter->rx_buff_pool[queue][i].active)
+					ibmveth_free_buffer_pool(adapter,
+								 &adapter->rx_buff_pool[queue][i]);
+			}
+			return -ENOMEM;
+		}
+	}
+
+	return 0;
+}
+
+/**
+ * ibmveth_free_queue_buffer_pools - Free buffer pools for a single queue
+ * @adapter: ibmveth adapter structure
+ * @queue: queue index
+ *
+ * Frees all active buffer pools for the specified queue.
+ */
+static void ibmveth_free_queue_buffer_pools(struct ibmveth_adapter *adapter,
+					    int queue)
+{
+	int i;
+
+	for (i = 0; i < IBMVETH_NUM_BUFF_POOLS; i++) {
+		if (adapter->rx_buff_pool[queue][i].active)
+			ibmveth_free_buffer_pool(adapter,
+						 &adapter->rx_buff_pool[queue][i]);
+	}
+}
+
 
 /**
  * ibmveth_free_single_rx_queue - Free resources for a single RX queue
@@ -1854,40 +1914,15 @@ static int ibmveth_register_rx_queues(struct ibmveth_adapter *adapter,
 
 	/* Register subordinate queues (1..N) in multiqueue mode */
 	for (i = 1; i < adapter->num_rx_queues; i++) {
-		rxq_desc.fields.flags_len = IBMVETH_BUF_VALID |
-					    adapter->rx_queue[i].queue_len;
-		rxq_desc.fields.address = adapter->rx_queue[i].queue_dma;
-
-		lpar_rc = ibmveth_register_logical_lan_queue(adapter, rxq_desc, i);
-
-		if (lpar_rc == H_FUNCTION) {
-			/* Subordinate queue mode not supported after queue 0 succeeded.
-			 * This is a fatal error - cannot mix modes.
-			 */
-			netdev_err(netdev,
-				   "Subordinate queue %d registration failed after queue 0 already registered\n",
-				   i);
-			rc = -ENODEV;
-			goto err_unregister;
-		} else if (lpar_rc == H_SUCCESS) {
-			/* Validate subordinate queue registration */
+		rc = ibmveth_register_single_rx_queue(adapter, i, mac_address);
+		if (rc) {
+			/* Validate that queue was properly registered */
 			if (!adapter->queue_handle[i] || !adapter->queue_irq[i]) {
 				netdev_err(netdev,
 					   "Invalid hypervisor return for queue %d: handle=0x%llx irq=%u\n",
 					   i, adapter->queue_handle[i],
 					   adapter->queue_irq[i]);
-				rc = -EINVAL;
-				goto err_unregister;
 			}
-		} else {
-			netdev_err(netdev, "h_register_logical_lan_queue failed for queue %d: %ld\n",
-				   i, lpar_rc);
-			netdev_err(netdev,
-				   "buffer TCE:0x%llx filter TCE:0x%llx rxq desc:0x%llx MAC:0x%llx\n",
-				   adapter->buffer_list_dma[i],
-				   adapter->filter_list_dma,
-				   rxq_desc.desc, mac_address);
-			rc = -ENONET;
 			goto err_unregister;
 		}
 	}
@@ -1919,66 +1954,6 @@ err_unregister:
 	 */
 	ibmveth_free_all_queues(adapter);
 	return rc;
-}
-
-/**
- * ibmveth_alloc_queue_buffer_pools - Allocate buffer pools for a single queue
- * @adapter: ibmveth adapter structure
- * @queue: queue index
- *
- * Allocates all active buffer pools for the specified queue.
- * Pool metadata must be initialized before calling this function.
- *
- * Return: 0 on success, negative error code on failure
- */
-static int ibmveth_alloc_queue_buffer_pools(struct ibmveth_adapter *adapter,
-					    int queue)
-{
-	struct net_device *netdev = adapter->netdev;
-	int i;
-
-	for (i = 0; i < IBMVETH_NUM_BUFF_POOLS; i++) {
-		if (!adapter->rx_buff_pool[queue][i].active)
-			continue;
-
-		if (ibmveth_alloc_buffer_pool(&adapter->rx_buff_pool[queue][i])) {
-			netdev_err(netdev,
-				   "unable to allocate buffer pool %d for queue %d (size=%u, count=%u)\n",
-				   i, queue,
-				   adapter->rx_buff_pool[queue][i].buff_size,
-				   adapter->rx_buff_pool[queue][i].size);
-			adapter->rx_buff_pool[queue][i].active = 0;
-
-			/* Free pools allocated so far for this queue */
-			while (--i >= 0) {
-				if (adapter->rx_buff_pool[queue][i].active)
-					ibmveth_free_buffer_pool(adapter,
-								 &adapter->rx_buff_pool[queue][i]);
-			}
-			return -ENOMEM;
-		}
-	}
-
-	return 0;
-}
-
-/**
- * ibmveth_free_queue_buffer_pools - Free buffer pools for a single queue
- * @adapter: ibmveth adapter structure
- * @queue: queue index
- *
- * Frees all active buffer pools for the specified queue.
- */
-static void ibmveth_free_queue_buffer_pools(struct ibmveth_adapter *adapter,
-					    int queue)
-{
-	int i;
-
-	for (i = 0; i < IBMVETH_NUM_BUFF_POOLS; i++) {
-		if (adapter->rx_buff_pool[queue][i].active)
-			ibmveth_free_buffer_pool(adapter,
-						 &adapter->rx_buff_pool[queue][i]);
-	}
 }
 
 /**
