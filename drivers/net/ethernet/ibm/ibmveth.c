@@ -2511,6 +2511,13 @@ static void ibmveth_get_strings(struct net_device *dev, u32 stringset, u8 *data)
 		ethtool_sprintf(&p, "tx%d_send_failures", i);
 		ethtool_sprintf(&p, "tx%d_checksum_offload", i);
 	}
+
+	/* Pool stats for queue 0 */
+	for (i = 0; i < IBMVETH_NUM_BUFF_POOLS; i++) {
+		ethtool_sprintf(&p, "pool%d_size", i);
+		ethtool_sprintf(&p, "pool%d_active", i);
+		ethtool_sprintf(&p, "pool%d_available", i);
+	}
 }
 
 static int ibmveth_get_sset_count(struct net_device *dev, int sset)
@@ -2521,7 +2528,8 @@ static int ibmveth_get_sset_count(struct net_device *dev, int sset)
 	case ETH_SS_STATS:
 		return ARRAY_SIZE(ibmveth_stats) +
 		       adapter->num_rx_queues * IBMVETH_NUM_RX_QSTATS +
-		       dev->real_num_tx_queues * IBMVETH_NUM_TX_QSTATS;
+		       dev->real_num_tx_queues * IBMVETH_NUM_TX_QSTATS +
+		       IBMVETH_NUM_BUFF_POOLS * 3; /* pool stats for queue 0 */
 	default:
 		return -EOPNOTSUPP;
 	}
@@ -2626,6 +2634,13 @@ static void ibmveth_get_ethtool_stats(struct net_device *dev,
 		data[i++] = adapter->tx_qstats[j].dropped_packets;
 		data[i++] = adapter->tx_qstats[j].send_failures;
 		data[i++] = adapter->tx_qstats[j].checksum_offload;
+	}
+
+	/* Output pool stats for queue 0 */
+	for (j = 0; j < IBMVETH_NUM_BUFF_POOLS; j++) {
+		data[i++] = adapter->rx_buff_pool[0][j].size;
+		data[i++] = adapter->rx_buff_pool[0][j].active;
+		data[i++] = atomic_read(&adapter->rx_buff_pool[0][j].available);
 	}
 }
 
