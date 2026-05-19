@@ -2127,10 +2127,20 @@ static int ibmveth_open(struct net_device *netdev)
 	if (rc)
 		goto out_free_buffer_pools;
 
-	/* Initial buffer replenishment for all queues - must be synchronous */
-	for (i = 0; i < adapter->num_rx_queues; i++) {
-		netdev_dbg(netdev, "initial replenish cycle for queue %d\n", i);
-		ibmveth_replenish_task(adapter, i);
+	/* Initial buffer replenishment
+	 * - MQ mode: Directly replenish all queues
+	 * - Legacy mode: Trigger interrupt handler to replenish (avoids invalid map errors)
+	 */
+	if (adapter->num_rx_queues > 1) {
+		/* MQ mode: replenish all queues directly */
+		for (i = 0; i < adapter->num_rx_queues; i++) {
+			netdev_dbg(netdev, "initial replenish cycle for queue %d\n", i);
+			ibmveth_replenish_task(adapter, i);
+		}
+	} else {
+		/* Legacy mode: use interrupt handler to replenish queue 0 */
+		netdev_dbg(netdev, "triggering interrupt for initial replenishment\n");
+		ibmveth_interrupt(adapter->queue_irq[0], &adapter->napi[0]);
 	}
 
 	netdev_dbg(netdev, "RX setup complete: %d queues, %d buffer pools\n",
