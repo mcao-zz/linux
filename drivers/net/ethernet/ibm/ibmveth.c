@@ -823,6 +823,9 @@ static void ibmveth_replenish_buffer_pool(struct ibmveth_adapter *adapter,
 				if (!skb) {
 					adapter->replenish_no_mem++;
 					adapter->replenish_add_buff_failure++;
+					netdev_dbg(adapter->netdev,
+						   "Failed to allocate skb for pool %d queue %d (size=%u)\n",
+						   pool->index, queue_index, pool->buff_size);
 					break;
 				}
 
@@ -832,6 +835,9 @@ static void ibmveth_replenish_buffer_pool(struct ibmveth_adapter *adapter,
 				if (dma_mapping_error(dev, dma_addr)) {
 					dev_kfree_skb_any(skb);
 					adapter->replenish_add_buff_failure++;
+					netdev_err(adapter->netdev,
+						   "DMA mapping failed for pool %d queue %d (size=%u)\n",
+						   pool->index, queue_index, pool->buff_size);
 					break;
 				}
 
@@ -3094,8 +3100,11 @@ restart_poll:
 			__sum16 iph_check = 0;
 
 			skb = ibmveth_rxq_get_buffer(adapter, queue_index);
-			if (unlikely(!skb))
+			if (unlikely(!skb)) {
+				netdev_err(netdev, "Failed to get buffer from queue %d\n",
+					   queue_index);
 				break;
+			}
 
 			/* if the large packet bit is set in the rx queue
 			 * descriptor, the mss will be written by PHYP eight
@@ -3176,6 +3185,9 @@ restart_poll:
 	 */
 	lpar_rc = ibmveth_enable_irq(adapter, queue_index);
 	if (lpar_rc != H_SUCCESS) {
+		netdev_err(netdev,
+			   "Failed to enable IRQ for queue %d (rc=0x%lx), scheduling reset\n",
+			   queue_index, lpar_rc);
 		schedule_work(&adapter->work);
 		goto out;
 	}
