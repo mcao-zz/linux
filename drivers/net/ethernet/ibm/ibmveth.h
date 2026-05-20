@@ -312,6 +312,8 @@ struct ibmveth_rx_q {
     dma_addr_t queue_dma;
     u32        queue_len;
     struct ibmveth_rx_q_entry *queue_addr;
+    /* Protects buffer replenishment for this queue */
+    spinlock_t replenish_lock;
 };
 
 /**
@@ -388,7 +390,6 @@ struct ibmveth_adapter {
 	dma_addr_t buffer_list_dma[IBMVETH_MAX_QUEUES];
 	dma_addr_t filter_list_dma;
 	struct ibmveth_buff_pool rx_buff_pool[IBMVETH_MAX_QUEUES][IBMVETH_NUM_BUFF_POOLS];
-	spinlock_t replenish_lock;
 	struct ibmveth_rx_q rx_queue[IBMVETH_MAX_QUEUES];
 	u64 queue_handle[IBMVETH_MAX_QUEUES];
 	unsigned int queue_irq[IBMVETH_MAX_QUEUES];

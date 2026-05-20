@@ -259,6 +259,7 @@ static int ibmveth_alloc_rx_queues(struct ibmveth_adapter *adapter,
 		adapter->rx_queue[i].index = 0;
 		adapter->rx_queue[i].num_slots = rxq_entries;
 		adapter->rx_queue[i].toggle = 1;
+		spin_lock_init(&adapter->rx_queue[i].replenish_lock);
 
 		netdev_dbg(netdev,"queue %d: buffer_list @ 0x%p (DMA: 0x%llx), rx_queue @ 0x%p (DMA: 0x%llx), %llu entries\n",
 			   i, adapter->buffer_list_addr[i],
@@ -992,9 +993,13 @@ static void ibmveth_update_rx_no_buffer(struct ibmveth_adapter *adapter)
 /* replenish routine */
 static void ibmveth_replenish_task(struct ibmveth_adapter *adapter, int queue_index)
 {
+	struct ibmveth_rx_q *rxq = &adapter->rx_queue[queue_index];
+	unsigned long flags;
 	int i;
 
 	adapter->replenish_task_cycles++;
+
+	spin_lock_irqsave(&rxq->replenish_lock, flags);
 
 	for (i = (IBMVETH_NUM_BUFF_POOLS - 1); i >= 0; i--) {
 		struct ibmveth_buff_pool *pool = &adapter->rx_buff_pool[queue_index][i];
@@ -1005,6 +1010,8 @@ static void ibmveth_replenish_task(struct ibmveth_adapter *adapter, int queue_in
 	}
 
 	ibmveth_update_rx_no_buffer(adapter);
+
+	spin_unlock_irqrestore(&rxq->replenish_lock, flags);
 }
 
 /* empty and free ana buffer pool - also used to do cleanup in error paths */
@@ -1290,6 +1297,7 @@ static int ibmveth_alloc_single_rx_queue(struct ibmveth_adapter *adapter,
 	adapter->rx_queue[queue_idx].index = 0;
 	adapter->rx_queue[queue_idx].num_slots = rxq_entries;
 	adapter->rx_queue[queue_idx].toggle = 1;
+	spin_lock_init(&adapter->rx_queue[queue_idx].replenish_lock);
 
 	netdev_dbg(netdev, "Allocated queue %d: buffer_list @ 0x%p (DMA: 0x%llx), rx_queue @ 0x%p (DMA: 0x%llx), %d entries\n",
 		   queue_idx, adapter->buffer_list_addr[queue_idx],
@@ -3539,7 +3547,6 @@ static int ibmveth_probe(struct vio_dev *dev, const struct vio_device_id *id)
 	netdev->netdev_ops = &ibmveth_netdev_ops;
 	netdev->ethtool_ops = &netdev_ethtool_ops;
 	SET_NETDEV_DEV(netdev, &dev->dev);
-	spin_lock_init(&adapter->replenish_lock);
 	netdev->hw_features = NETIF_F_SG;
 	if (vio_get_attribute(dev, "ibm,illan-options", NULL) != NULL) {
 		netdev->hw_features |= NETIF_F_IP_CSUM | NETIF_F_IPV6_CSUM |
