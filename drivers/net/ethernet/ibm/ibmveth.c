@@ -1046,6 +1046,9 @@ static void ibmveth_free_buffer_pool(struct ibmveth_adapter *adapter,
 		kfree(pool->skbuff);
 		pool->skbuff = NULL;
 	}
+
+	/* Mark pool as inactive to prevent replenish attempts */
+	pool->active = 0;
 }
 
 /**
