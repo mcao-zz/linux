@@ -1365,9 +1365,14 @@ static void ibmveth_free_queue_buffer_pools(struct ibmveth_adapter *adapter,
 	int i;
 
 	for (i = 0; i < IBMVETH_NUM_BUFF_POOLS; i++) {
-		if (adapter->rx_buff_pool[queue][i].active)
-			ibmveth_free_buffer_pool(adapter,
-						 &adapter->rx_buff_pool[queue][i]);
+		struct ibmveth_buff_pool *pool = &adapter->rx_buff_pool[queue][i];
+
+		/* Free pool if it has allocated memory, regardless of active flag.
+		 * Pools may have memory allocated but not marked active during
+		 * queue scale-up, so we must check for actual allocations.
+		 */
+		if (pool->free_map || pool->dma_addr || pool->skbuff)
+			ibmveth_free_buffer_pool(adapter, pool);
 	}
 }
 
