@@ -1634,6 +1634,8 @@ static void ibmveth_deregister_single_rx_queue(struct ibmveth_adapter *adapter,
 							 adapter->queue_handle[queue_idx]);
 		} while (H_IS_LONG_BUSY(lpar_rc) || (lpar_rc == H_BUSY));
 
+		adapter->hcall_stats.free_queue++;
+
 		if (lpar_rc != H_SUCCESS) {
 			netdev_err(adapter->netdev,
 				   "h_free_logical_lan_queue failed for queue %d: rc=0x%lx\n",
