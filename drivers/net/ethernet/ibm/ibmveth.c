@@ -1213,6 +1213,10 @@ static int ibmveth_drain_rx_queue(struct ibmveth_adapter *adapter,
 	return drained;
 }
 
+/* Forward declaration */
+static int ibmveth_alloc_queue_buffer_pools(struct ibmveth_adapter *adapter,
+					    int queue);
+
 /**
  * ibmveth_alloc_single_rx_queue - Allocate resources for a single RX queue
  * @adapter: ibmveth adapter
@@ -1271,29 +1275,34 @@ static int ibmveth_alloc_single_rx_queue(struct ibmveth_adapter *adapter,
 		return -ENOMEM;
 	}
 
-	/* Allocate per-queue buffer pools */
+	/* Copy pool metadata from queue 0 to maintain consistency */
 	for (i = 0; i < IBMVETH_NUM_BUFF_POOLS; i++) {
-		rc = ibmveth_alloc_buffer_pool(&adapter->rx_buff_pool[queue_idx][i]);
-		if (rc) {
-			netdev_err(netdev,
-				   "unable to allocate buffer pool %d for queue %d\n",
-				   i, queue_idx);
-			/* Free already-allocated pools */
-			while (--i >= 0)
-				ibmveth_free_buffer_pool(adapter,
-							 &adapter->rx_buff_pool[queue_idx][i]);
-			/* Free queue resources */
-			dma_unmap_single(dev, adapter->buffer_list_dma[queue_idx],
-					 4096, DMA_BIDIRECTIONAL);
-			dma_free_coherent(dev, adapter->rx_queue[queue_idx].queue_len,
-					  adapter->rx_queue[queue_idx].queue_addr,
-					  adapter->rx_queue[queue_idx].queue_dma);
-			free_page((unsigned long)adapter->buffer_list_addr[queue_idx]);
-			adapter->buffer_list_addr[queue_idx] = NULL;
-			adapter->rx_queue[queue_idx].queue_addr = NULL;
-			adapter->buffer_list_dma[queue_idx] = 0;
-			return rc;
-		}
+		adapter->rx_buff_pool[queue_idx][i].size =
+			adapter->rx_buff_pool[0][i].size;
+		adapter->rx_buff_pool[queue_idx][i].buff_size =
+			adapter->rx_buff_pool[0][i].buff_size;
+		adapter->rx_buff_pool[queue_idx][i].threshold =
+			adapter->rx_buff_pool[0][i].threshold;
+		adapter->rx_buff_pool[queue_idx][i].active =
+			adapter->rx_buff_pool[0][i].active;
+	}
+
+	/* Allocate per-queue buffer pools using helper that respects active flag */
+	rc = ibmveth_alloc_queue_buffer_pools(adapter, queue_idx);
+	if (rc) {
+		netdev_err(netdev, "Failed to allocate buffer pools for queue %d\n",
+			   queue_idx);
+		/* Free queue resources */
+		dma_unmap_single(dev, adapter->buffer_list_dma[queue_idx],
+				 4096, DMA_BIDIRECTIONAL);
+		dma_free_coherent(dev, adapter->rx_queue[queue_idx].queue_len,
+				  adapter->rx_queue[queue_idx].queue_addr,
+				  adapter->rx_queue[queue_idx].queue_dma);
+		free_page((unsigned long)adapter->buffer_list_addr[queue_idx]);
+		adapter->buffer_list_addr[queue_idx] = NULL;
+		adapter->rx_queue[queue_idx].queue_addr = NULL;
+		adapter->buffer_list_dma[queue_idx] = 0;
+		return rc;
 	}
 
 	/* Initialize queue state */
