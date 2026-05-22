@@ -999,6 +999,14 @@ static void ibmveth_replenish_task(struct ibmveth_adapter *adapter, int queue_in
 
 	adapter->replenish_task_cycles++;
 
+	/* Check if queue is still valid (may have been freed during resize) */
+	if (queue_index >= adapter->num_rx_queues) {
+		netdev_dbg(adapter->netdev,
+			   "Skipping replenish for freed queue %d (num_queues=%d)\n",
+			   queue_index, adapter->num_rx_queues);
+		return;
+	}
+
 	spin_lock_irqsave(&rxq->replenish_lock, flags);
 
 	for (i = (IBMVETH_NUM_BUFF_POOLS - 1); i >= 0; i--) {
