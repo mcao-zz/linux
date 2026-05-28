@@ -707,7 +707,7 @@ static int ibmveth_add_logical_lan_buffers(struct ibmveth_adapter *adapter,
 	struct vio_dev *vdev = adapter->vdev;
 	unsigned long rc;
 
-	if (adapter->use_subordinate_queue) {
+	if (adapter->multi_queue) {
 		/* Multi-queue mode: use queue-specific hypercall for ALL queues (0..N).
 		 * Per Tristan: "you can (and should) use H_ADD_LOGICAL_LAN_BUFFERS_QUEUE
 		 * for the primary rxq as well" in multi-queue mode.
@@ -880,7 +880,7 @@ static void ibmveth_replenish_buffer_pool(struct ibmveth_adapter *adapter,
 		if (lpar_rc != H_SUCCESS) {
 			dev_warn_ratelimited(dev,
 					     "RX h_add_logical_lan %s failed: filled=%u, rc=%lu, batch=%u\n",
-					     adapter->use_subordinate_queue ? "_queue" : "",
+					     adapter->multi_queue ? "_queue" : "",
 					     filled, lpar_rc, batch);
 			goto hcall_failure;
 		}
@@ -924,18 +924,18 @@ hcall_failure:
 		/*
 		 * H_FUNCTION in buffer replenishment can occur in two scenarios:
 		 *
-		 * 1. Multi-queue mode (use_subordinate_queue=1):
+		 * 1. Multi-queue mode (multi_queue=1):
 		 *    Should NOT happen - firmware advertised MQ support during
 		 *    capability negotiation. If it occurs, it's a firmware bug.
 		 *    Log error and stop.
 		 *
-		 * 2. Legacy batch mode (use_subordinate_queue=0, batch>1):
+		 * 2. Legacy batch mode (multi_queue=0, batch>1):
 		 *    CAN happen - firmware may not support h_add_logical_lan_buffers()
 		 *    batch hypercall (up to 8 buffers). This is a legitimate firmware
 		 *    limitation. Fall back to single buffer mode and continue.
 		 */
 		if (lpar_rc == H_FUNCTION) {
-			if (adapter->use_subordinate_queue) {
+			if (adapter->multi_queue) {
 				/* Multi-queue mode: firmware bug */
 				netdev_err(adapter->netdev,
 					   "Unexpected H_FUNCTION from multi-queue buffer add (queue=%d, batch=%d)\n",
@@ -1478,7 +1478,7 @@ retry:
 	/* In multi-queue mode, use plpar_hcall9 to get queue handle for queue 0.
 	 * This enables uniform treatment of all queues using queue-specific hypercalls.
 	 */
-	if (adapter->use_subordinate_queue) {
+	if (adapter->multi_queue) {
 		rc = h_register_logical_lan_with_handle(adapter->vdev->unit_address,
 							adapter->buffer_list_dma[0],
 							rxq_desc.desc,
@@ -1566,10 +1566,10 @@ retry:
 			   adapter->queue_irq[queue_index]);
 	} else if (rc == H_FUNCTION) {
 		/* Hypervisor doesn't support subordinate queue mode */
-		if (adapter->use_subordinate_queue) {
+		if (adapter->multi_queue) {
 			netdev_info(adapter->netdev,
 				    "Multi queue mode not supported by firmware, falling back to single queue\n");
-			adapter->use_subordinate_queue = 0;
+			adapter->multi_queue = 0;
 		} else {
 			netdev_err(adapter->netdev,
 				   "Unexpected H_FUNCTION for queue %d registration (MQ mode already disabled)\n",
@@ -1933,7 +1933,7 @@ static int ibmveth_register_rx_queues(struct ibmveth_adapter *adapter,
 	}
 
 	/* Log queue 0 registration details */
-	if (adapter->use_subordinate_queue) {
+	if (adapter->multi_queue) {
 		netdev_info(netdev,
 			    "DEBUG: Queue 0 registered: handle=0x%llx irq=%u (from netdev->irq)\n",
 			    adapter->queue_handle[0], adapter->queue_irq[0]);
@@ -1944,7 +1944,7 @@ static int ibmveth_register_rx_queues(struct ibmveth_adapter *adapter,
 	}
 
 	/* If single-queue mode, we're done */
-	if (adapter->num_rx_queues == 1 || !adapter->use_subordinate_queue) {
+	if (adapter->num_rx_queues == 1 || !adapter->multi_queue) {
 		netdev_dbg(netdev, "registered 1 RX queue with hypervisor (single-queue mode)\n");
 		return 0;
 	}
@@ -2705,10 +2705,10 @@ static void ibmveth_get_channels(struct net_device *netdev,
 	channels->tx_count = netdev->real_num_tx_queues;
 
 	/* Report max RX queues based on firmware support.
-	 * If MQ mode is disabled (use_subordinate_queue == 0), we can only
+	 * If MQ mode is disabled (multi_queue == 0), we can only
 	 * support 1 queue. Otherwise, report the hardware maximum.
 	 */
-	if (adapter->use_subordinate_queue)
+	if (adapter->multi_queue)
 		channels->max_rx = IBMVETH_MAX_RX_QUEUES;
 	else
 		channels->max_rx = 1;
@@ -2733,7 +2733,7 @@ static int ibmveth_set_channels(struct net_device *netdev,
 		return netif_set_real_num_tx_queues(netdev, goal);
 
 	/* Verify MQ mode is supported before allowing RX queue resize */
-	if (goal_rx > 1 && !adapter->use_subordinate_queue) {
+	if (goal_rx > 1 && !adapter->multi_queue) {
 		netdev_err(netdev,
 			   "Cannot resize to %d RX queues: multi-queue mode not supported by firmware\n",
 			   goal_rx);
@@ -3608,19 +3608,19 @@ static int ibmveth_probe(struct vio_dev *dev, const struct vio_device_id *id)
 	/* Check for multi queue support */
 	if (ret == H_SUCCESS &&
 	    (ret_attr & IBMVETH_ILLAN_RX_MULTI_QUEUE_SUPPORT)) {
-		adapter->use_subordinate_queue = 1;
+		adapter->multi_queue = 1;
 		adapter->num_rx_queues = min(num_online_cpus(), IBMVETH_MAX_RX_QUEUES);
 		netdev_info(netdev, "RX multi queue mode enabled: %d queues\n",
 			    adapter->num_rx_queues);
 	} else {
 		/* Single queue mode: use legacy hcalls */
-		adapter->use_subordinate_queue = 0;
+		adapter->multi_queue = 0;
 		adapter->num_rx_queues = 1;
 	}
 
 	if (ret == H_SUCCESS &&
 	    (ret_attr & IBMVETH_ILLAN_RX_MULTI_BUFF_SUPPORT)) {
-		if (adapter->use_subordinate_queue)
+		if (adapter->multi_queue)
 			adapter->rx_buffers_per_hcall = IBMVETH_MAX_RX_QUEUE;
 		else
 			adapter->rx_buffers_per_hcall = IBMVETH_MAX_RX_REGULAR;
@@ -3703,7 +3703,7 @@ static ssize_t subordinate_queue_mode_show(struct device *dev,
 	struct net_device *netdev = dev_get_drvdata(dev);
 	struct ibmveth_adapter *adapter = netdev_priv(netdev);
 
-	return sprintf(buf, "%d\n", adapter->use_subordinate_queue);
+	return sprintf(buf, "%d\n", adapter->multi_queue);
 }
 
 static ssize_t subordinate_queue_mode_store(struct device *dev,
@@ -3728,10 +3728,10 @@ static ssize_t subordinate_queue_mode_store(struct device *dev,
 		return -EBUSY;
 	}
 
-	adapter->use_subordinate_queue = value;
+	adapter->multi_queue = value;
 
 	/* Update batch size based on new mode */
-	if (adapter->use_subordinate_queue)
+	if (adapter->multi_queue)
 		adapter->rx_buffers_per_hcall = IBMVETH_MAX_RX_QUEUE;
 	else
 		adapter->rx_buffers_per_hcall = IBMVETH_MAX_RX_REGULAR;
@@ -3752,7 +3752,7 @@ static ssize_t max_rx_buffers_per_call_show(struct device *dev,
 	struct ibmveth_adapter *adapter = netdev_priv(netdev);
 	unsigned int max_buffers;
 
-	if (adapter->use_subordinate_queue)
+	if (adapter->multi_queue)
 		max_buffers = IBMVETH_MAX_RX_QUEUE;
 	else
 		max_buffers = IBMVETH_MAX_RX_REGULAR;

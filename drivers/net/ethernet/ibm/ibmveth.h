@@ -395,7 +395,7 @@ struct ibmveth_adapter {
 	struct ibmveth_rx_q rx_queue[IBMVETH_MAX_RX_QUEUES];
 	u64 queue_handle[IBMVETH_MAX_RX_QUEUES];
 	unsigned int queue_irq[IBMVETH_MAX_RX_QUEUES];
-	int use_subordinate_queue;
+	int multi_queue;
 	unsigned int num_rx_queues;
 	int rx_csum;
 	int large_send;
