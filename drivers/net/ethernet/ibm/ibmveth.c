@@ -3773,11 +3773,46 @@ static ssize_t current_rx_batch_size_show(struct device *dev,
 }
 static DEVICE_ATTR_RO(current_rx_batch_size);
 
+/* Sysfs attribute: buffer_pools - show all queue/pool information */
+static ssize_t buffer_pools_show(struct device *dev,
+				 struct device_attribute *attr,
+				 char *buf)
+{
+	struct net_device *netdev = dev_get_drvdata(dev);
+	struct ibmveth_adapter *adapter = netdev_priv(netdev);
+	int len = 0;
+	int i, j;
+
+	len += scnprintf(buf + len, PAGE_SIZE - len,
+			"Queue  Pool  Size  BuffSize  Active  Available\n");
+	len += scnprintf(buf + len, PAGE_SIZE - len,
+			"-----  ----  ----  --------  ------  ---------\n");
+
+	for (i = 0; i < adapter->num_rx_queues; i++) {
+		for (j = 0; j < IBMVETH_NUM_BUFF_POOLS; j++) {
+			struct ibmveth_buff_pool *pool = &adapter->rx_buff_pool[i][j];
+
+			len += scnprintf(buf + len, PAGE_SIZE - len,
+					"%5d  %4d  %4u  %8u  %6d  %9d\n",
+					i, j, pool->size, pool->buff_size,
+					pool->active, atomic_read(&pool->available));
+
+			if (len >= PAGE_SIZE - 100)
+				goto out;
+		}
+	}
+
+out:
+	return len;
+}
+static DEVICE_ATTR_RO(buffer_pools);
+
 /* Attribute group */
 static struct attribute *ibmveth_attrs[] = {
 	&dev_attr_subordinate_queue_mode.attr,
 	&dev_attr_max_rx_buffers_per_call.attr,
 	&dev_attr_current_rx_batch_size.attr,
+	&dev_attr_buffer_pools.attr,
 	NULL
 };
 
