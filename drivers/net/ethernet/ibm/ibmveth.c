@@ -361,14 +361,14 @@ static void ibmveth_cleanup_rx_resources(struct ibmveth_adapter *adapter)
  */
 static int ibmveth_alloc_rx_qstats(struct ibmveth_adapter *adapter)
 {
-	adapter->rx_qstats = kcalloc(IBMVETH_MAX_QUEUES,
+	adapter->rx_qstats = kcalloc(IBMVETH_MAX_RX_QUEUES,
 				     sizeof(struct ibmveth_rx_queue_stats),
 				     GFP_KERNEL);
 	if (!adapter->rx_qstats)
 		return -ENOMEM;
 
 	netdev_dbg(adapter->netdev, "Allocated RX queue stats for %d queues\n",
-		   IBMVETH_MAX_QUEUES);
+		   IBMVETH_MAX_RX_QUEUES);
 	return 0;
 }
 
@@ -2709,7 +2709,7 @@ static void ibmveth_get_channels(struct net_device *netdev,
 	 * support 1 queue. Otherwise, report the hardware maximum.
 	 */
 	if (adapter->use_subordinate_queue)
-		channels->max_rx = IBMVETH_MAX_QUEUES;
+		channels->max_rx = IBMVETH_MAX_RX_QUEUES;
 	else
 		channels->max_rx = 1;
 	channels->rx_count = adapter->num_rx_queues;
@@ -3549,7 +3549,7 @@ static int ibmveth_probe(struct vio_dev *dev, const struct vio_device_id *id)
 	}
 
 	netdev = alloc_etherdev_mqs(sizeof(struct ibmveth_adapter),
-				    IBMVETH_MAX_QUEUES, IBMVETH_MAX_QUEUES);
+				    IBMVETH_MAX_QUEUES, IBMVETH_MAX_RX_QUEUES);
 	if (!netdev)
 		return -ENOMEM;
 
@@ -3562,7 +3562,7 @@ static int ibmveth_probe(struct vio_dev *dev, const struct vio_device_id *id)
 	adapter->mcastFilterSize = be32_to_cpu(*mcastFilterSize_p);
 	ibmveth_init_link_settings(netdev);
 
-	for (i = 0; i < IBMVETH_MAX_QUEUES; i++)
+	for (i = 0; i < IBMVETH_MAX_RX_QUEUES; i++)
 		netif_napi_add_weight(netdev, &adapter->napi[i], ibmveth_poll, 16);
 
 	netdev->irq = dev->irq;
@@ -3609,7 +3609,7 @@ static int ibmveth_probe(struct vio_dev *dev, const struct vio_device_id *id)
 	if (ret == H_SUCCESS &&
 	    (ret_attr & IBMVETH_ILLAN_RX_MULTI_QUEUE_SUPPORT)) {
 		adapter->use_subordinate_queue = 1;
-		adapter->num_rx_queues = min(num_online_cpus(), IBMVETH_MAX_QUEUES);
+		adapter->num_rx_queues = min(num_online_cpus(), IBMVETH_MAX_RX_QUEUES);
 		netdev_info(netdev, "RX multi queue mode enabled: %d queues\n",
 			    adapter->num_rx_queues);
 	} else {
