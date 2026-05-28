@@ -2531,7 +2531,7 @@ static void ibmveth_get_strings(struct net_device *dev, u32 stringset, u8 *data)
 {
 	struct ibmveth_adapter *adapter = netdev_priv(dev);
 	u8 *p = data;
-	int i, j;
+	int i;
 
 	if (stringset != ETH_SS_STATS)
 		return;
@@ -2564,13 +2564,11 @@ static void ibmveth_get_strings(struct net_device *dev, u32 stringset, u8 *data)
 		ethtool_sprintf(&p, "tx%d_checksum_offload", i);
 	}
 
-	/* Per-queue pool statistics */
-	for (i = 0; i < adapter->num_rx_queues; i++) {
-		for (j = 0; j < IBMVETH_NUM_BUFF_POOLS; j++) {
-			ethtool_sprintf(&p, "rx%d_pool%d_size", i, j);
-			ethtool_sprintf(&p, "rx%d_pool%d_active", i, j);
-			ethtool_sprintf(&p, "rx%d_pool%d_available", i, j);
-		}
+	/* Pool stats for queue 0 */
+	for (i = 0; i < IBMVETH_NUM_BUFF_POOLS; i++) {
+		ethtool_sprintf(&p, "pool%d_size", i);
+		ethtool_sprintf(&p, "pool%d_active", i);
+		ethtool_sprintf(&p, "pool%d_available", i);
 	}
 }
 
@@ -2583,7 +2581,7 @@ static int ibmveth_get_sset_count(struct net_device *dev, int sset)
 		return ARRAY_SIZE(ibmveth_stats) +
 		       adapter->num_rx_queues * IBMVETH_NUM_RX_QSTATS +
 		       dev->real_num_tx_queues * IBMVETH_NUM_TX_QSTATS +
-		       adapter->num_rx_queues * IBMVETH_NUM_BUFF_POOLS * 3;
+		       IBMVETH_NUM_BUFF_POOLS * 3; /* pool stats for queue 0 */
 	default:
 		return -EOPNOTSUPP;
 	}
@@ -2690,14 +2688,11 @@ static void ibmveth_get_ethtool_stats(struct net_device *dev,
 		data[i++] = adapter->tx_qstats[j].checksum_offload;
 	}
 
-	/* Output per-queue pool statistics */
-	for (j = 0; j < adapter->num_rx_queues; j++) {
-		int k;
-		for (k = 0; k < IBMVETH_NUM_BUFF_POOLS; k++) {
-			data[i++] = adapter->rx_buff_pool[j][k].size;
-			data[i++] = adapter->rx_buff_pool[j][k].active;
-			data[i++] = atomic_read(&adapter->rx_buff_pool[j][k].available);
-		}
+	/* Output pool stats for queue 0 */
+	for (j = 0; j < IBMVETH_NUM_BUFF_POOLS; j++) {
+		data[i++] = adapter->rx_buff_pool[0][j].size;
+		data[i++] = adapter->rx_buff_pool[0][j].active;
+		data[i++] = atomic_read(&adapter->rx_buff_pool[0][j].available);
 	}
 }
 
