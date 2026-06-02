@@ -1757,21 +1757,22 @@ ibmveth_resize_rx_queues_incremental(struct ibmveth_adapter *adapter,
 				goto cleanup_new_queues;
 			}
 
-			rc = ibmveth_enable_irq(adapter, i);
+			rc = ibmveth_setup_single_rx_interrupt(adapter, i);
 			if (rc) {
 				netdev_err(netdev,
-					   "Failed to enable IRQ for queue %d: %d\n",
+					   "Failed to setup IRQ for queue %d: %d\n",
 					   i, rc);
 				ibmveth_deregister_single_rx_queue(adapter, i);
 				ibmveth_free_single_rx_queue(adapter, i);
 				goto cleanup_new_queues;
 			}
 
-			rc = ibmveth_setup_single_rx_interrupt(adapter, i);
+			rc = ibmveth_enable_irq(adapter, i);
 			if (rc) {
 				netdev_err(netdev,
-					   "Failed to setup IRQ for queue %d: %d\n",
+					   "Failed to enable IRQ for queue %d: %d\n",
 					   i, rc);
+				ibmveth_cleanup_single_rx_interrupt(adapter, i);
 				ibmveth_deregister_single_rx_queue(adapter, i);
 				ibmveth_free_single_rx_queue(adapter, i);
 				goto cleanup_new_queues;
