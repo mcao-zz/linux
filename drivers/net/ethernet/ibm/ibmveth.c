@@ -1830,8 +1830,16 @@ cleanup_new_queues:
 	netdev_err(netdev,
 		   "Scale-up failed at queue %d, cleaning up queues %d-%d\n",
 		   failed_queue, old_count, failed_queue - 1);
-	for (i = old_count; i < failed_queue; i++) {
+	for (i = old_count; i < failed_queue; i++)
 		napi_disable(&adapter->napi[i]);
+
+	for (i = old_count; i < failed_queue; i++)
+		ibmveth_drain_rx_queue(adapter, i);
+
+	synchronize_net();
+
+	for (i = old_count; i < failed_queue; i++) {
+		ibmveth_disable_irq(adapter, i);
 		ibmveth_cleanup_single_rx_interrupt(adapter, i);
 		ibmveth_deregister_single_rx_queue(adapter, i);
 		ibmveth_free_single_rx_queue(adapter, i);
