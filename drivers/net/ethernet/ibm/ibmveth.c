@@ -337,7 +337,7 @@ static int ibmveth_alloc_buffer_pool(struct ibmveth_buff_pool *pool)
 	if (!pool->free_map)
 		return -1;
 
-	pool->dma_addr = kzalloc_objs(dma_addr_t, pool->size);
+	pool->dma_addr = kcalloc(pool->size, sizeof(dma_addr_t), GFP_KERNEL);
 	if (!pool->dma_addr) {
 		kfree(pool->free_map);
 		pool->free_map = NULL;
@@ -363,6 +363,164 @@ static int ibmveth_alloc_buffer_pool(struct ibmveth_buff_pool *pool)
 	pool->consumer_index = 0;
 
 	return 0;
+}
+
+/* empty and free ana buffer pool - also used to do cleanup in error paths */
+static void ibmveth_free_buffer_pool(struct ibmveth_adapter *adapter,
+				     struct ibmveth_buff_pool *pool)
+{
+	int i;
+
+	kfree(pool->free_map);
+	pool->free_map = NULL;
+
+	if (pool->skbuff && pool->dma_addr) {
+		for (i = 0; i < pool->size; ++i) {
+			struct sk_buff *skb = pool->skbuff[i];
+
+			if (skb) {
+				dma_unmap_single(&adapter->vdev->dev,
+						 pool->dma_addr[i],
+						 pool->buff_size,
+						 DMA_FROM_DEVICE);
+				dev_kfree_skb_any(skb);
+				pool->skbuff[i] = NULL;
+			}
+		}
+	}
+
+	kfree(pool->dma_addr);
+	pool->dma_addr = NULL;
+
+	kfree(pool->skbuff);
+	pool->skbuff = NULL;
+}
+
+/**
+ * ibmveth_alloc_queue_buffer_pools - Allocate buffer pools for a single queue
+ * @adapter: ibmveth adapter structure
+ * @queue: queue index
+ *
+ * Allocates all active buffer pools for the specified queue.
+ * Pool metadata must be initialized before calling this function.
+ *
+ * Return: 0 on success, negative error code on failure
+ */
+static int ibmveth_alloc_queue_buffer_pools(struct ibmveth_adapter *adapter,
+					    int queue)
+{
+	struct net_device *netdev = adapter->netdev;
+	int i;
+
+	for (i = 0; i < IBMVETH_NUM_BUFF_POOLS; i++) {
+		if (!adapter->rx_buff_pool[queue][i].active)
+			continue;
+
+		if (ibmveth_alloc_buffer_pool(&adapter->rx_buff_pool[queue][i])) {
+			netdev_err(netdev,
+				   "unable to allocate buffer pool %d for queue %d (size=%u, count=%u)\n",
+				   i, queue,
+				   adapter->rx_buff_pool[queue][i].buff_size,
+				   adapter->rx_buff_pool[queue][i].size);
+			adapter->rx_buff_pool[queue][i].active = 0;
+
+			/* Free pools allocated so far for this queue */
+			while (--i >= 0) {
+				if (adapter->rx_buff_pool[queue][i].active)
+					ibmveth_free_buffer_pool(adapter,
+								 &adapter->rx_buff_pool[queue][i]);
+			}
+			return -ENOMEM;
+		}
+	}
+
+	return 0;
+}
+
+/**
+ * ibmveth_free_queue_buffer_pools - Free buffer pools for a single queue
+ * @adapter: ibmveth adapter structure
+ * @queue: queue index
+ *
+ * Frees all active buffer pools for the specified queue.
+ */
+static void ibmveth_free_queue_buffer_pools(struct ibmveth_adapter *adapter,
+					    int queue)
+{
+	int i;
+
+	for (i = 0; i < IBMVETH_NUM_BUFF_POOLS; i++) {
+		struct ibmveth_buff_pool *pool = &adapter->rx_buff_pool[queue][i];
+
+		/* Free pool if it has allocated memory, regardless of active flag.
+		 * Pools may have memory allocated but not marked active during
+		 * queue scale-up, so we must check for actual allocations.
+		 */
+		if (pool->free_map || pool->dma_addr || pool->skbuff)
+			ibmveth_free_buffer_pool(adapter, pool);
+	}
+}
+
+/**
+ * ibmveth_alloc_buffer_pools - Allocate buffer pools for all queues
+ * @adapter: ibmveth adapter structure
+ *
+ * Initializes pool metadata for queues 1-N from queue 0 settings,
+ * then allocates buffer pools for all queues using the helper function.
+ *
+ * Return: 0 on success, negative error code on failure
+ */
+static int __maybe_unused ibmveth_alloc_buffer_pools(struct ibmveth_adapter *adapter)
+{
+	struct net_device *netdev = adapter->netdev;
+	int i, q, rc;
+
+	/* Initialize pool metadata for queues 1-15 from queue 0 settings */
+	for (q = 1; q < adapter->num_rx_queues; q++) {
+		for (i = 0; i < IBMVETH_NUM_BUFF_POOLS; i++) {
+			struct ibmveth_buff_pool *src = &adapter->rx_buff_pool[0][i];
+			struct ibmveth_buff_pool *dst = &adapter->rx_buff_pool[q][i];
+
+			dst->size = src->size;
+			dst->index = src->index;
+			dst->buff_size = src->buff_size;
+			dst->threshold = src->threshold;
+			dst->active = src->active;
+		}
+	}
+
+	/* Allocate actual buffers for all queues */
+	for (q = 0; q < adapter->num_rx_queues; q++) {
+		rc = ibmveth_alloc_queue_buffer_pools(adapter, q);
+		if (rc) {
+			/* Free pools for all previous queues */
+			while (--q >= 0)
+				ibmveth_free_queue_buffer_pools(adapter, q);
+			return rc;
+		}
+	}
+
+	netdev_dbg(netdev, "allocated buffer pools for %d queue(s)\n",
+		   adapter->num_rx_queues);
+	return 0;
+}
+
+/**
+ * ibmveth_free_buffer_pools - Free buffer pools for all queues
+ * @adapter: ibmveth adapter structure
+ *
+ * Frees buffer pools for all queues using the helper function.
+ */
+static void __maybe_unused ibmveth_free_buffer_pools(struct ibmveth_adapter *adapter)
+{
+	int q;
+
+	/* Free buffer pools for all queues */
+	for (q = 0; q < adapter->num_rx_queues; q++)
+		ibmveth_free_queue_buffer_pools(adapter, q);
+
+	netdev_dbg(adapter->netdev, "freed buffer pools for %d queue(s)\n",
+		   adapter->num_rx_queues);
 }
 
 static inline void ibmveth_flush_buffer(void *addr, unsigned long length)
@@ -575,40 +733,6 @@ static void ibmveth_replenish_task(struct ibmveth_adapter *adapter)
 	}
 
 	ibmveth_update_rx_no_buffer(adapter);
-}
-
-/* empty and free ana buffer pool - also used to do cleanup in error paths */
-static void ibmveth_free_buffer_pool(struct ibmveth_adapter *adapter,
-				     struct ibmveth_buff_pool *pool)
-{
-	int i;
-
-	kfree(pool->free_map);
-	pool->free_map = NULL;
-
-	if (pool->skbuff && pool->dma_addr) {
-		for (i = 0; i < pool->size; ++i) {
-			struct sk_buff *skb = pool->skbuff[i];
-			if (skb) {
-				dma_unmap_single(&adapter->vdev->dev,
-						 pool->dma_addr[i],
-						 pool->buff_size,
-						 DMA_FROM_DEVICE);
-				dev_kfree_skb_any(skb);
-				pool->skbuff[i] = NULL;
-			}
-		}
-	}
-
-	if (pool->dma_addr) {
-		kfree(pool->dma_addr);
-		pool->dma_addr = NULL;
-	}
-
-	if (pool->skbuff) {
-		kfree(pool->skbuff);
-		pool->skbuff = NULL;
-	}
 }
 
 /**
