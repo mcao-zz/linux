@@ -671,6 +671,8 @@ static void ibmveth_free_buffer_pool(struct ibmveth_adapter *adapter,
 
 	kfree(pool->skbuff);
 	pool->skbuff = NULL;
+
+	pool->active = 0;
 }
 
 /**
@@ -1204,10 +1206,14 @@ static void ibmveth_replenish_task(struct ibmveth_adapter *adapter,
 	unsigned long flags;
 	int i;
 
-	if (queue_index >= adapter->num_rx_queues)
-		return;
-
 	adapter->replenish_task_cycles++;
+
+	if (queue_index >= adapter->num_rx_queues) {
+		netdev_dbg(adapter->netdev,
+			   "Skipping replenish for freed queue %d (num_queues=%d)\n",
+			   queue_index, adapter->num_rx_queues);
+		return;
+	}
 
 	spin_lock_irqsave(&rxq->replenish_lock, flags);
 
