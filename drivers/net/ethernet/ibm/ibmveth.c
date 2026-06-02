@@ -1560,7 +1560,9 @@ retry:
  *
  * Registers a subordinate receive queue using H_REG_LOGICAL_LAN_QUEUE.
  * On success, stores the queue handle and virtual IRQ in the adapter.
- * Retries once if registration fails (handles kexec case).
+ * Retries once if registration fails (handles kexec case).  If IRQ mapping
+ * fails after a successful hypervisor registration, the queue is freed
+ * before returning.
  *
  * Return: H_SUCCESS on success, negative errno on IRQ mapping failure,
  *         hypervisor error code otherwise
@@ -1590,9 +1592,20 @@ retry:
 	if (lpar_rc == H_SUCCESS) {
 		virq = irq_create_mapping(NULL, hwirq);
 		if (!virq) {
+			unsigned long free_rc;
+
 			netdev_err(adapter->netdev,
 				   "Failed to map IRQ for queue %d (hwirq=%lu)\n",
 				   queue_index, hwirq);
+			do {
+				free_rc = h_free_logical_lan_queue(
+					adapter->vdev->unit_address, handle);
+			} while (H_IS_LONG_BUSY(free_rc) || (free_rc == H_BUSY));
+			adapter->hcall_stats.free_lan_queue++;
+			if (free_rc != H_SUCCESS)
+				netdev_err(adapter->netdev,
+					   "h_free_logical_lan_queue failed for queue %d after IRQ map failure: rc=0x%lx\n",
+					   queue_index, free_rc);
 			return -EINVAL;
 		}
 
@@ -1844,6 +1857,11 @@ ibmveth_resize_rx_queues_incremental(struct ibmveth_adapter *adapter,
 
 	netdev_info(netdev, "Successfully resized to %d RX queues (incremental)\n",
 		    adapter->num_rx_queues);
+
+	if (firmware_has_feature(FW_FEATURE_CMO))
+		vio_cmo_set_dev_desired(adapter->vdev,
+					ibmveth_get_desired_dma(adapter->vdev));
+
 	return 0;
 
 cleanup_new_queues:
