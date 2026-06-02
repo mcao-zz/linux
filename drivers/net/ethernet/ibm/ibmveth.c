@@ -512,11 +512,12 @@ ibmveth_enable_irq(struct ibmveth_adapter *adapter, int queue_index)
 }
 
 /**
- * ibmveth_setup_rx_interrupts - Register IRQs and enable NAPI
+ * ibmveth_setup_rx_interrupts - Register IRQ handlers and enable NAPI
  * @adapter: ibmveth adapter structure
  *
  * Registers interrupt handlers for all RX queues and enables NAPI polling.
- * On error, cleans up any successfully registered IRQs before returning.
+ * For multi-queue mode, enables hypervisor interrupt delivery only after
+ * every queue has a Linux handler installed.
  *
  * Return: 0 on success, negative error code on failure
  */
@@ -524,9 +525,9 @@ static int
 ibmveth_setup_rx_interrupts(struct ibmveth_adapter *adapter)
 {
 	struct net_device *netdev = adapter->netdev;
-	int i, rc;
+	int i, rc, num = adapter->num_rx_queues;
 
-	for (i = 0; i < adapter->num_rx_queues; i++) {
+	for (i = 0; i < num; i++) {
 		if (!adapter->queue_irq[i]) {
 			netdev_err(netdev, "queue %d has invalid IRQ (0)\n", i);
 			rc = -EINVAL;
@@ -543,11 +544,30 @@ ibmveth_setup_rx_interrupts(struct ibmveth_adapter *adapter)
 		}
 	}
 
-	for (i = 0; i < adapter->num_rx_queues; i++)
+	for (i = 0; i < num; i++)
 		napi_enable(&adapter->napi[i]);
+
+	if (adapter->multi_queue && num > 1) {
+		for (i = 0; i < num; i++) {
+			rc = ibmveth_enable_irq(adapter, i);
+			if (rc) {
+				netdev_err(netdev,
+					   "Failed to enable IRQ for queue %d, rc=%d\n",
+					   i, rc);
+				while (--i >= 0)
+					ibmveth_disable_irq(adapter, i);
+				rc = -EIO;
+				goto err_disable_napi;
+			}
+		}
+	}
 
 	return 0;
 
+err_disable_napi:
+	for (i = 0; i < num; i++)
+		napi_disable(&adapter->napi[i]);
+	i = num;
 err_free_irqs:
 	while (--i >= 0)
 		free_irq(adapter->queue_irq[i], &adapter->napi[i]);
@@ -1899,11 +1919,10 @@ static void ibmveth_free_all_queues(struct ibmveth_adapter *adapter)
  * @mac_address: MAC address for device registration
  *
  * Registers queue 0 via ibmveth_register_logical_lan(), then subordinate
- * queues 1..N when multi-queue mode is enabled. Enables hypervisor-level
- * interrupts for all registered queues on success.
+ * queues 1..N when multi-queue mode is enabled.
  *
  * Return: 0 on success, -ENONET if queue 0 registration fails, -EIO on
- *         subordinate queue or interrupt enable failure
+ *         subordinate queue registration failure
  */
 static int
 ibmveth_register_rx_queues(struct ibmveth_adapter *adapter, u64 mac_address)
@@ -1961,17 +1980,6 @@ ibmveth_register_rx_queues(struct ibmveth_adapter *adapter, u64 mac_address)
 		   "registered %d RX queues with hypervisor (multi-queue mode)\n",
 		   adapter->num_rx_queues);
 
-	for (i = 0; i < adapter->num_rx_queues; i++) {
-		rc = ibmveth_enable_irq(adapter, i);
-		if (rc) {
-			netdev_err(netdev,
-				   "Failed to enable IRQ for queue %d after registration, rc=%d\n",
-				   i, rc);
-			rc = -EIO;
-			goto err_unregister;
-		}
-	}
-
 	return 0;
 
 err_unregister:
@@ -2004,9 +2012,13 @@ static int ibmveth_open(struct net_device *netdev)
 	if (rc)
 		goto out_free_filter_list;
 
-	rc = ibmveth_register_rx_queues(adapter, mac_address);
+	rc = ibmveth_alloc_buffer_pools(adapter);
 	if (rc)
 		goto out_free_queue_mem;
+
+	rc = ibmveth_register_rx_queues(adapter, mac_address);
+	if (rc)
+		goto out_free_buffer_pools;
 
 	rc = netif_set_real_num_rx_queues(netdev, adapter->num_rx_queues);
 	if (rc) {
@@ -2014,13 +2026,9 @@ static int ibmveth_open(struct net_device *netdev)
 		goto out_unregister_queues;
 	}
 
-	rc = ibmveth_alloc_buffer_pools(adapter);
-	if (rc)
-		goto out_unregister_queues;
-
 	rc = ibmveth_setup_rx_interrupts(adapter);
 	if (rc)
-		goto out_free_buffer_pools;
+		goto out_unregister_queues;
 
 	if (adapter->num_rx_queues > 1) {
 		for (i = 0; i < adapter->num_rx_queues; i++) {
