@@ -532,10 +532,13 @@ static void free_long_term_buff(struct ibmvnic_adapter *adapter,
 	/* VIOS automatically unmaps the long term buffer at remote
 	 * end for the following resets:
 	 * FAILOVER, MOBILITY, TIMEOUT.
+	 * Also skip unmap if backing device failover is pending, as
+	 * VIOS has already unmapped the buffers during failover.
 	 */
 	if (adapter->reset_reason != VNIC_RESET_FAILOVER &&
 	    adapter->reset_reason != VNIC_RESET_MOBILITY &&
-	    adapter->reset_reason != VNIC_RESET_TIMEOUT)
+	    adapter->reset_reason != VNIC_RESET_TIMEOUT &&
+	    !adapter->failover_pending)
 		send_request_unmap(adapter, ltb->map_id);
 
 	dma_free_coherent(dev, ltb->size, ltb->buff, ltb->addr);
