@@ -1846,13 +1846,16 @@ ibmveth_resize_rx_queues_incremental(struct ibmveth_adapter *adapter,
 			return rc;
 		}
 
+		/* Update num_rx_queues before freeing to prevent race with
+		 * in-flight interrupt handlers.
+		 */
+		adapter->num_rx_queues = new_count;
+
 		for (i = new_count; i < old_count; i++) {
 			ibmveth_cleanup_single_rx_interrupt(adapter, i);
 			ibmveth_deregister_single_rx_queue(adapter, i);
 			ibmveth_free_single_rx_queue(adapter, i);
 		}
-
-		adapter->num_rx_queues = new_count;
 	}
 
 	netdev_info(netdev, "Successfully resized to %d RX queues (incremental)\n",
