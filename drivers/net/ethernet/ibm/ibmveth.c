@@ -1026,40 +1026,29 @@ static long ibmveth_add_logical_lan_buffers(struct ibmveth_adapter *adapter,
 
 	if (adapter->multi_queue) {
 		unsigned long buffersznum = (buff_size << 32) | filled;
-		unsigned long ioba12 = 0, ioba34 = 0, ioba56 = 0;
-		unsigned long ioba78 = 0, ioba910 = 0, ioba1112 = 0;
+		unsigned long ioba[IBMVETH_MAX_RX_PER_HCALL / 2] = {0};
+		int i;
 
-		if (filled >= 1)
-			ioba12 = (unsigned long)descs[0].fields.address << 32;
-		if (filled >= 2)
-			ioba12 |= descs[1].fields.address;
-		if (filled >= 3)
-			ioba34 = (unsigned long)descs[2].fields.address << 32;
-		if (filled >= 4)
-			ioba34 |= descs[3].fields.address;
-		if (filled >= 5)
-			ioba56 = (unsigned long)descs[4].fields.address << 32;
-		if (filled >= 6)
-			ioba56 |= descs[5].fields.address;
-		if (filled >= 7)
-			ioba78 = (unsigned long)descs[6].fields.address << 32;
-		if (filled >= 8)
-			ioba78 |= descs[7].fields.address;
-		if (filled >= 9)
-			ioba910 = (unsigned long)descs[8].fields.address << 32;
-		if (filled >= 10)
-			ioba910 |= descs[9].fields.address;
-		if (filled >= 11)
-			ioba1112 = (unsigned long)descs[10].fields.address << 32;
-		if (filled >= 12)
-			ioba1112 |= descs[11].fields.address;
+		/* Pack descriptor addresses into ioba pairs.
+		 * Each ioba holds two 32-bit addresses packed into 64 bits:
+		 * - Even descriptors (0,2,4...) go in high 32 bits
+		 * - Odd descriptors (1,3,5...) go in low 32 bits
+		 */
+		for (i = 0; i < filled && i < IBMVETH_MAX_RX_PER_HCALL; i++) {
+			int pair_idx = i / 2;           /* Which pair: 0-5 */
+			int is_high = (i % 2 == 0);     /* High or low 32 bits */
+
+			if (is_high)
+				ioba[pair_idx] = (unsigned long)descs[i].fields.address << 32;
+			else
+				ioba[pair_idx] |= descs[i].fields.address;
+		}
 
 		rc = h_add_logical_lan_buffers_queue(vdev->unit_address,
 						     adapter->queue_handle[queue_index],
 						     buffersznum,
-						     ioba12, ioba34,
-						     ioba56, ioba78,
-						     ioba910, ioba1112);
+						     ioba[0], ioba[1], ioba[2],
+						     ioba[3], ioba[4], ioba[5]);
 		adapter->hcall_stats.add_bufs_queue++;
 	} else if (filled == 1) {
 		rc = h_add_logical_lan_buffer(vdev->unit_address,
