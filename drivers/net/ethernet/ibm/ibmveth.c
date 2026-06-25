@@ -1827,6 +1827,8 @@ ibmveth_resize_rx_queues_incremental(struct ibmveth_adapter *adapter,
 			napi_enable(&adapter->napi[i]);
 		}
 
+		adapter->num_rx_queues = new_count;
+
 		for (i = old_count; i < new_count; i++)
 			ibmveth_replenish_task(adapter, i);
 
@@ -1836,8 +1838,6 @@ ibmveth_resize_rx_queues_incremental(struct ibmveth_adapter *adapter,
 				   new_count, rc);
 			goto cleanup_new_queues;
 		}
-
-		adapter->num_rx_queues = new_count;
 	} else {
 		netdev_dbg(netdev, "Scale-down: removing queues %d-%d\n",
 			   new_count, old_count - 1);
@@ -1908,6 +1908,7 @@ cleanup_new_queues:
 		ibmveth_deregister_single_rx_queue(adapter, i);
 		ibmveth_free_single_rx_queue(adapter, i);
 	}
+	adapter->num_rx_queues = old_count;
 	netdev_warn(netdev, "Keeping %d queues after scale-up failure\n",
 		    old_count);
 	return rc;
