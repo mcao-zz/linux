@@ -417,7 +417,7 @@ ibmveth_disable_irq(struct ibmveth_adapter *adapter, int queue_index)
 	} else {
 		/* Subordinate queues: use H_VIOCTL with hardware IRQ */
 		struct irq_data *irq_data = irq_get_irq_data(irq);
-		unsigned long hwirq;
+		irq_hw_number_t hwirq;
 
 		if (!irq_data) {
 			netdev_err(adapter->netdev,
@@ -477,7 +477,7 @@ ibmveth_enable_irq(struct ibmveth_adapter *adapter, int queue_index)
 	} else {
 		/* Subordinate queues: use H_VIOCTL with hardware IRQ */
 		struct irq_data *irq_data = irq_get_irq_data(irq);
-		unsigned long hwirq;
+		irq_hw_number_t hwirq;
 
 		if (!irq_data) {
 			netdev_err(adapter->netdev,
