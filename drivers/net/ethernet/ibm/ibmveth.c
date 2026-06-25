@@ -588,8 +588,23 @@ ibmveth_cleanup_rx_interrupts(struct ibmveth_adapter *adapter)
 	for (i = 0; i < adapter->num_rx_queues; i++)
 		napi_disable(&adapter->napi[i]);
 
-	for (i = 0; i < adapter->num_rx_queues; i++)
-		free_irq(adapter->queue_irq[i], &adapter->napi[i]);
+	for (i = 0; i < adapter->num_rx_queues; i++) {
+		if (adapter->queue_irq[i])
+			free_irq(adapter->queue_irq[i], &adapter->napi[i]);
+	}
+
+	/* Dispose IRQ mappings for subordinate queues (1-15).
+	 * Queue 0 uses netdev->irq from device tree, not irq_create_mapping().
+	 */
+	for (i = 1; i < adapter->num_rx_queues; i++) {
+		if (adapter->queue_irq[i]) {
+			irq_dispose_mapping(adapter->queue_irq[i]);
+			adapter->queue_irq[i] = 0;
+		}
+	}
+
+	/* Clear queue 0 IRQ number */
+	adapter->queue_irq[0] = 0;
 }
 
 /**
@@ -1927,16 +1942,10 @@ static void ibmveth_free_all_queues(struct ibmveth_adapter *adapter)
 			   "h_free_logical_lan failed: %ld\n", lpar_rc);
 	}
 
-	/* Dispose IRQ mappings for subordinate queues (1-15).
-	 * Queue 0 uses netdev->irq from device tree, not irq_create_mapping().
+	/* Clear queue handles and IRQ numbers.
+	 * IRQ mappings for subordinate queues (1-15) will be disposed
+	 * by ibmveth_cleanup_rx_interrupts() after free_irq() is called.
 	 */
-	for (i = 1; i < adapter->num_rx_queues; i++) {
-		if (adapter->queue_irq[i]) {
-			irq_dispose_mapping(adapter->queue_irq[i]);
-			adapter->queue_irq[i] = 0;
-		}
-	}
-
 	for (i = 0; i < adapter->num_rx_queues; i++) {
 		adapter->queue_handle[i] = 0;
 		adapter->queue_irq[i] = 0;
@@ -2117,10 +2126,10 @@ static int ibmveth_close(struct net_device *netdev)
 
 	ibmveth_free_tx_qstats(adapter);
 	ibmveth_free_tx_resources(adapter);
-	ibmveth_cleanup_rx_interrupts(adapter);
-	ibmveth_free_buffer_pools(adapter);
 	ibmveth_update_rx_no_buffer(adapter);
 	ibmveth_free_all_queues(adapter);
+	ibmveth_cleanup_rx_interrupts(adapter);
+	ibmveth_free_buffer_pools(adapter);
 	ibmveth_cleanup_rx_resources(adapter);
 	ibmveth_free_filter_list(adapter);
 	ibmveth_free_rx_qstats(adapter);
