@@ -395,29 +395,33 @@ static void ibmveth_cleanup_rx_resources(struct ibmveth_adapter *adapter)
 }
 
 /**
- * ibmveth_disable_irq - Disable interrupt for a specific queue
+ * ibmveth_toggle_irq - Common helper to enable/disable queue interrupts
  * @adapter: ibmveth adapter structure
  * @queue_index: Index of the queue (0 for primary, 1+ for subordinate)
+ * @enable: true to enable, false to disable
  *
  * For queue 0 (primary), uses h_vio_signal() as it's registered via
  * h_register_logical_lan(). For subordinate queues (1+), uses H_VIOCTL
- * with H_DISABLE_VIO_INTERRUPT for per-queue interrupt control.
+ * with H_ENABLE/DISABLE_VIO_INTERRUPT for per-queue interrupt control.
  *
  * Return: 0 on success, error code otherwise
  */
 static int
-ibmveth_disable_irq(struct ibmveth_adapter *adapter, int queue_index)
+ibmveth_toggle_irq(struct ibmveth_adapter *adapter, int queue_index, bool enable)
 {
 	unsigned long rc;
 	unsigned long irq = adapter->queue_irq[queue_index];
+	const char *action = enable ? "enable" : "disable";
 
 	if (queue_index == 0) {
 		/* Primary queue: use h_vio_signal() */
-		rc = h_vio_signal(adapter->vdev->unit_address, VIO_IRQ_DISABLE);
+		rc = h_vio_signal(adapter->vdev->unit_address,
+				  enable ? VIO_IRQ_ENABLE : VIO_IRQ_DISABLE);
 	} else {
 		/* Subordinate queues: use H_VIOCTL with hardware IRQ */
 		struct irq_data *irq_data = irq_get_irq_data(irq);
 		irq_hw_number_t hwirq;
+		u64 vioctl_cmd = enable ? H_ENABLE_VIO_INTERRUPT : H_DISABLE_VIO_INTERRUPT;
 
 		if (!irq_data) {
 			netdev_err(adapter->netdev,
@@ -429,29 +433,40 @@ ibmveth_disable_irq(struct ibmveth_adapter *adapter, int queue_index)
 		hwirq = irqd_to_hwirq(irq_data);
 		rc = plpar_hcall_norets(H_VIOCTL,
 					adapter->vdev->unit_address,
-					H_DISABLE_VIO_INTERRUPT,
+					vioctl_cmd,
 					hwirq, 0, 0);
 
 		if (rc == H_PARAMETER) {
 			/* PHYP firmware quirk: H_PARAMETER can occur when
-			 * interrupt is already disabled or during certain
-			 * queue state transitions. Empirical testing shows
-			 * the interrupt IS actually disabled despite the
-			 * error code. Treating as success prevents interrupt
-			 * storms during queue operations.
+			 * interrupt is already in the requested state or during
+			 * certain queue state transitions. Empirical testing
+			 * shows this is non-fatal. Log and continue.
 			 */
 			netdev_warn_once(adapter->netdev,
-					 "H_VIOCTL disable IRQ returned H_PARAMETER for queue %d (hwirq=%lu)\n",
-					 queue_index, hwirq);
+					 "H_VIOCTL %s IRQ returned H_PARAMETER for queue %d (hwirq=%lu)\n",
+					 action, queue_index, hwirq);
 			return 0;
 		}
 	}
 
 	if (rc)
 		netdev_err(adapter->netdev,
-			   "Failed to disable IRQ for queue %d, rc=%ld\n",
-			   queue_index, rc);
+			   "Failed to %s IRQ for queue %d, rc=%ld\n",
+			   action, queue_index, rc);
 	return rc;
+}
+
+/**
+ * ibmveth_disable_irq - Disable interrupt for a specific queue
+ * @adapter: ibmveth adapter structure
+ * @queue_index: Index of the queue (0 for primary, 1+ for subordinate)
+ *
+ * Return: 0 on success, error code otherwise
+ */
+static int
+ibmveth_disable_irq(struct ibmveth_adapter *adapter, int queue_index)
+{
+	return ibmveth_toggle_irq(adapter, queue_index, false);
 }
 
 /**
@@ -459,56 +474,12 @@ ibmveth_disable_irq(struct ibmveth_adapter *adapter, int queue_index)
  * @adapter: ibmveth adapter structure
  * @queue_index: Index of the queue (0 for primary, 1+ for subordinate)
  *
- * For queue 0 (primary), uses h_vio_signal() as it's registered via
- * h_register_logical_lan(). For subordinate queues (1+), uses H_VIOCTL
- * with H_ENABLE_VIO_INTERRUPT for per-queue interrupt control.
- *
  * Return: 0 on success, error code otherwise
  */
 static int
 ibmveth_enable_irq(struct ibmveth_adapter *adapter, int queue_index)
 {
-	unsigned long rc;
-	unsigned long irq = adapter->queue_irq[queue_index];
-
-	if (queue_index == 0) {
-		/* Primary queue: use h_vio_signal() */
-		rc = h_vio_signal(adapter->vdev->unit_address, VIO_IRQ_ENABLE);
-	} else {
-		/* Subordinate queues: use H_VIOCTL with hardware IRQ */
-		struct irq_data *irq_data = irq_get_irq_data(irq);
-		irq_hw_number_t hwirq;
-
-		if (!irq_data) {
-			netdev_err(adapter->netdev,
-				   "Failed to get IRQ data for queue %d (virq=%lu)\n",
-				   queue_index, irq);
-			return -EINVAL;
-		}
-
-		hwirq = irqd_to_hwirq(irq_data);
-		rc = plpar_hcall_norets(H_VIOCTL,
-					adapter->vdev->unit_address,
-					H_ENABLE_VIO_INTERRUPT,
-					hwirq, 0, 0);
-
-		if (rc == H_PARAMETER) {
-			/* PHYP firmware quirk: H_PARAMETER can occur during
-			 * certain queue state transitions. Empirical testing
-			 * shows this is non-fatal. Log and continue.
-			 */
-			netdev_warn_once(adapter->netdev,
-					 "H_VIOCTL enable IRQ returned H_PARAMETER for queue %d (hwirq=%lu)\n",
-					 queue_index, hwirq);
-			return 0;
-		}
-	}
-
-	if (rc)
-		netdev_err(adapter->netdev,
-			   "Failed to enable IRQ for queue %d, rc=%ld\n",
-			   queue_index, rc);
-	return rc;
+	return ibmveth_toggle_irq(adapter, queue_index, true);
 }
 
 /**
