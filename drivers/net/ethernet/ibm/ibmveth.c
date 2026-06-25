@@ -1846,9 +1846,14 @@ ibmveth_resize_rx_queues_incremental(struct ibmveth_adapter *adapter,
 			return rc;
 		}
 
-		/* Update num_rx_queues before freeing to prevent race with
-		 * in-flight interrupt handlers.
+		/* Disable hypervisor interrupts and wait for handlers to complete
+		 * before updating num_rx_queues.
 		 */
+		for (i = new_count; i < old_count; i++) {
+			ibmveth_disable_irq(adapter, i);
+			synchronize_irq(adapter->queue_irq[i]);
+		}
+
 		adapter->num_rx_queues = new_count;
 
 		for (i = new_count; i < old_count; i++) {
@@ -1882,6 +1887,10 @@ cleanup_new_queues:
 
 	for (i = old_count; i < failed_queue; i++) {
 		ibmveth_disable_irq(adapter, i);
+		synchronize_irq(adapter->queue_irq[i]);
+	}
+
+	for (i = old_count; i < failed_queue; i++) {
 		ibmveth_cleanup_single_rx_interrupt(adapter, i);
 		ibmveth_deregister_single_rx_queue(adapter, i);
 		ibmveth_free_single_rx_queue(adapter, i);
