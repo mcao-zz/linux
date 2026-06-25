@@ -733,8 +733,6 @@ static void ibmveth_free_buffer_pool(struct ibmveth_adapter *adapter,
 
 	kfree(pool->skbuff);
 	pool->skbuff = NULL;
-
-	pool->active = 0;
 }
 
 /**
@@ -1283,7 +1281,7 @@ static void ibmveth_replenish_task(struct ibmveth_adapter *adapter,
 		struct ibmveth_buff_pool *pool =
 			&adapter->rx_buff_pool[queue_index][i];
 
-		if (pool->active &&
+		if (pool->active && pool->free_map &&
 		    (atomic_read(&pool->available) < pool->threshold))
 			ibmveth_replenish_buffer_pool(adapter, pool,
 						      queue_index);
