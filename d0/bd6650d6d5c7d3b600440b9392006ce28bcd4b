@@ -1,0 +1,19 @@
+Changes in v5:
+- Drop unrelated style nits that v4 mixed into the index-0 conversion
+  (ibmveth_rxq_get_buffer() prototype reflow, get_desired_dma
+  "Return:" kdoc, blank line after rx_large_packets)
+- Document queue-0 poolN/ sysfs as the shared geometry/template for all
+  RX queues (buff_size/size/active); queues 1..N get no separate pool
+  sysfs in this series
+- Decision: keep full ibmveth_buff_pool per queue for this series
+  (unused embedded kobjects on rows 1..N); a config-vs-runtime layout
+  split is out of scope here
+
+Changes in v4:
+- Keep IBMVETH_MAX_RX_QUEUES at 1 until MQ enablement (same idea as v3,
+  but v3 also planted unused stats types here).
+- Layout-only: queue-indexed adapter fields only. Do not introduce
+  the rx/tx qstats here (first-use); they land with the per-queue
+  statistics patch.
+- Subject: "Prepare MQ RX adapter data structures" (was "...and
+  statistics structures" in earlier drafts).
