@@ -499,7 +499,7 @@ static int ibmveth_remove_buffer_from_pool(struct ibmveth_adapter *adapter,
 
 	mb();
 
-	atomic_dec(&(adapter->rx_buff_pool[pool].available));
+	atomic_dec(&adapter->rx_buff_pool[pool].available);
 
 	return 0;
 }
@@ -1690,11 +1690,9 @@ static void ibmveth_poll_controller(struct net_device *dev)
 
 /**
  * ibmveth_get_desired_dma - Calculate IO memory desired by the driver
- *
  * @vdev: struct vio_dev for the device whose desired IO mem is to be returned
  *
- * Return value:
- *	Number of bytes of IO data the driver will need to perform well.
+ * Return: number of bytes of IO data the driver will need to perform well
  */
 static unsigned long ibmveth_get_desired_dma(struct vio_dev *vdev)
 {
