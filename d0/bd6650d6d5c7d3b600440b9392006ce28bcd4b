@@ -1,3 +1,11 @@
+Changes in v7:
+- No P02 code change. Sashiko N02-P1 (probe pool kobjects vs
+  free_netdev on register failure) is pre-existing and already closed
+  later in this series: inline kobject_put() in the MQ enablement
+  patch, ibmveth_probe_cleanup() in the statistics patch
+- Leftover: CONFIG_DEBUG_KOBJECT_RELEASE timing (put then
+  free_netdev) stays a cover follow-up, same as N10-11
+
 Changes in v5:
 - Drop unrelated style nits that v4 mixed into the index-0 conversion
   (ibmveth_rxq_get_buffer() prototype reflow, get_desired_dma
