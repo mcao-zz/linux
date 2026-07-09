@@ -1,0 +1,29 @@
+Changes in v6:
+- on RX-queue dma_alloc or map failure, free the buffer-list page
+  before cleanup so the addr-based unmap does not dma_unmap an
+  address that was never mapped
+- unmap RX filter/buffer lists by CPU pointer, not dma_addr==0
+- use %u for the two num_rx_queues dbg prints
+- noted: NULL buffer_list_addr[0] window: close() in P05, netpoll
+  through replenish_task() until the per-queue guard in P10
+- noted: shared-i TX LTB leak on pool-fail predates this; P04/P06
+- noted: pool-fail after register without h_free predates this; P06/P07
+
+Changes in v5:
+- On filter_list DMA map failure: free_page and zero filter_list_dma so
+  a later free path cannot dma_unmap the DMA_MAPPING_ERROR sentinel
+  (match buffer_list_dma convention). Closes reopen->ifdown WARN path
+  after set_csum/set_tso/change_mtu/pool_store close+open while running
+  - v4 left the sentinel
+- Call out rc = -ENOMEM before the TX LTB loop after RX helper extract
+  (already in v4; still required so allocate_tx_ltb failure returns a
+  useful errno)
+
+Changes in v4:
+- Introduce RX/filter allocation helpers in the same patch that wires
+  their first open/close callers; v3 left unused statics ahead of the
+  old open/close pipeline patch.
+- Preserve correct -ENOMEM return on TX LTB allocation failure after
+  the RX helper extract.
+- Drop reliance on v3's separate "open/close pipeline" patch for this
+  wiring.
