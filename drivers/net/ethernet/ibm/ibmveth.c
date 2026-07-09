@@ -584,7 +584,8 @@ static int ibmveth_allocate_tx_ltb(struct ibmveth_adapter *adapter, int idx)
 }
 
 static int ibmveth_register_logical_lan(struct ibmveth_adapter *adapter,
-        union ibmveth_buf_desc rxq_desc, u64 mac_address)
+				   union ibmveth_buf_desc rxq_desc,
+				   u64 mac_address)
 {
 	int rc, try_again = 1;
 
@@ -1693,8 +1694,7 @@ static void ibmveth_poll_controller(struct net_device *dev)
  *
  * @vdev: struct vio_dev for the device whose desired IO mem is to be returned
  *
- * Return value:
- *	Number of bytes of IO data the driver will need to perform well.
+ * Return: Number of bytes of IO data the driver will need to perform well.
  */
 static unsigned long ibmveth_get_desired_dma(struct vio_dev *vdev)
 {
