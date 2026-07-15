@@ -117,6 +117,10 @@ Same 15 patches as v7. Folded from the v7 netdev-bot review
 * Patch 12: get_channels keeps the live rx_count and caps
   max_rx there once mq_fallback. Do not advertise max_rx = 1.
   Getter only; the rx_count reject lives in patch 10.
+* Patch 14: combined ethtool -L rolls RX back if TX does
+  not reach the request. Skip unmask if set_real(keep)
+  fails after real_num was lowered. Refresh three resize
+  comments. Down-path publish stays patch 15.
 * Later patches: TBD as those replies are walked.
 * Kept: enable_irq on schedule_prep failure; mask PHYP before
   napi_disable; get_channels reports the live rx_count (no clamp).
