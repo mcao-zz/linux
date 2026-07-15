@@ -2678,24 +2678,18 @@ static void ibmveth_get_channels(struct net_device *netdev,
 	channels->rx_count = adapter->num_rx_queues;
 }
 
-/**
- * ibmveth_resize_rx_channels - Validate and apply a new RX queue count
- * @adapter: ibmveth adapter structure
- * @goal_rx: desired RX queue count
- *
- * When the interface is up, resize live queues via
- * ibmveth_resize_rx_queues_incremental(). When down, only stash
- * adapter->num_rx_queues for the next open().
- *
- * Return: 0 on success, negative error code on failure
- */
-static int ibmveth_resize_rx_channels(struct ibmveth_adapter *adapter,
-				      unsigned int goal_rx)
+static int ibmveth_set_channels(struct net_device *netdev,
+				struct ethtool_channels *channels)
 {
-	struct net_device *netdev = adapter->netdev;
+	struct ibmveth_adapter *adapter = netdev_priv(netdev);
 	unsigned int old_rx = adapter->num_rx_queues;
-	int rxq_entries;
-	int rc;
+	unsigned int goal_rx = channels->rx_count;
+	unsigned int old_tx = netdev->real_num_tx_queues;
+	unsigned int goal_tx = channels->tx_count;
+	unsigned int want_tx = goal_tx;
+	int rxq_entries = adapter->rx_queue[0].num_slots;
+	bool rx_changed = false;
+	int rc, i;
 
 	if (goal_rx > 1 && !adapter->multi_queue) {
 		netdev_err(netdev,
@@ -2711,51 +2705,55 @@ static int ibmveth_resize_rx_channels(struct ibmveth_adapter *adapter,
 		return -EINVAL;
 	}
 
-	if (goal_rx == old_rx)
-		return 0;
-
-	if (!(netdev->flags & IFF_UP)) {
-		adapter->num_rx_queues = goal_rx;
-		return 0;
+	if (goal_tx < 1 || goal_tx > ibmveth_real_max_tx_queues()) {
+		netdev_err(netdev,
+			   "Invalid TX queue count %u (must be 1-%u)\n",
+			   goal_tx, ibmveth_real_max_tx_queues());
+		return -EINVAL;
 	}
-
-	rxq_entries = adapter->rx_queue[0].num_slots;
-	rc = ibmveth_resize_rx_queues_incremental(adapter, goal_rx,
-						  rxq_entries);
-	if (rc)
-		netdev_err(netdev, "Failed to resize RX queues: %d\n", rc);
-	return rc;
-}
-
-static int ibmveth_set_channels(struct net_device *netdev,
-				struct ethtool_channels *channels)
-{
-	struct ibmveth_adapter *adapter = netdev_priv(netdev);
-	unsigned int old = netdev->real_num_tx_queues,
-		     goal = channels->tx_count;
-	unsigned int goal_rx = channels->rx_count;
-	int rc, i;
 
 	/* If ndo_open has not been called yet then don't allocate, just set
 	 * desired netdev_queue's and return
 	 */
-	if (!(netdev->flags & IFF_UP))
-		return netif_set_real_num_tx_queues(netdev, goal);
+	if (!(netdev->flags & IFF_UP)) {
+		/* Apply TX first so a failure leaves RX stash unchanged. */
+		rc = netif_set_real_num_tx_queues(netdev, goal_tx);
+		if (rc)
+			return rc;
 
-	/* Resize RX first while UP so ibmveth_resize_rx_channels() is used
-	 * in this patch. !IFF_UP RX stash ordering lands next.
-	 */
-	rc = ibmveth_resize_rx_channels(adapter, goal_rx);
-	if (rc)
-		return rc;
+		/* Stash desired RX count; open() publishes it via
+		 * netif_set_real_num_rx_queues() after queue registration.
+		 */
+		if (goal_rx != adapter->num_rx_queues)
+			adapter->num_rx_queues = goal_rx;
+		return 0;
+	}
+
+	if (goal_rx != old_rx) {
+		rc = ibmveth_resize_rx_queues_incremental(adapter, goal_rx,
+							  rxq_entries);
+		if (rc) {
+			netdev_err(netdev,
+				   "Failed to resize RX queues: %d\n", rc);
+			return rc;
+		}
+		rx_changed = true;
+	}
 
 	/* We have IBMVETH_MAX_QUEUES netdev_queue's allocated
 	 * but we may need to alloc/free the ltb's.
 	 */
+	if (goal_tx == old_tx)
+		return 0;
+
 	netif_tx_stop_all_queues(netdev);
 
-	/* Allocate any queue that we need */
-	for (i = old; i < goal; i++) {
+	/* Allocate any queue that we need. Initialize i to old_tx so a
+	 * scale-down path that never enters the loop still has defined
+	 * bounds if set_real_num_tx_queues() fails.
+	 */
+	i = old_tx;
+	for (; i < goal_tx; i++) {
 		if (adapter->tx_ltb_ptr[i])
 			continue;
 
@@ -2763,27 +2761,44 @@ static int ibmveth_set_channels(struct net_device *netdev,
 		if (!rc)
 			continue;
 
-		netdev_err(netdev, "Failed to allocate more tx queues, returning to %d queues\n",
-			   old);
-		goal = old;
-		old = i;
+		/* if something goes wrong, free everything we just allocated */
+		netdev_err(netdev, "Failed to allocate more tx queues, returning to %u queues\n",
+			   old_tx);
+		goal_tx = old_tx;
+		old_tx = i;
 		break;
 	}
-	rc = netif_set_real_num_tx_queues(netdev, goal);
+	rc = netif_set_real_num_tx_queues(netdev, goal_tx);
 	if (rc) {
-		netdev_err(netdev, "Failed to set real tx queues, returning to %d queues\n",
-			   old);
-		goal = old;
-		old = i;
+		netdev_err(netdev, "Failed to set real tx queues, returning to %u queues\n",
+			   old_tx);
+		goal_tx = old_tx;
+		old_tx = i;
 	}
-	for (i = old; i > goal; i--) {
+	/* Free any that are no longer needed */
+	for (i = old_tx; i > goal_tx; i--) {
 		if (adapter->tx_ltb_ptr[i - 1])
 			ibmveth_free_tx_ltb(adapter, i - 1);
 	}
 
 	netif_tx_wake_all_queues(netdev);
 
-	return rc;
+	if (netdev->real_num_tx_queues != want_tx) {
+		if (rx_changed) {
+			int rb;
+
+			rb = ibmveth_resize_rx_queues_incremental(adapter,
+								  old_rx,
+								  rxq_entries);
+			if (rb)
+				netdev_err(netdev,
+					   "Failed to roll back RX queues to %u after TX failure: %d\n",
+					   old_rx, rb);
+		}
+		return rc ? rc : -ENOMEM;
+	}
+
+	return 0;
 }
 
 static const struct ethtool_ops netdev_ethtool_ops = {
