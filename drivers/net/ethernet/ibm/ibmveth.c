@@ -1589,16 +1589,8 @@ ibmveth_register_rx_queues(struct ibmveth_adapter *adapter, u64 mac_address)
 
 	for (i = 1; i < adapter->num_rx_queues; i++) {
 		rc = ibmveth_register_single_rx_queue(adapter, i, mac_address);
-		if (rc) {
-			if (!adapter->queue_handle[i] ||
-			    !adapter->queue_irq[i]) {
-				netdev_err(netdev,
-					   "Invalid hypervisor return for queue %d: handle=0x%llx irq=%u\n",
-					   i, adapter->queue_handle[i],
-					   adapter->queue_irq[i]);
-			}
+		if (rc)
 			goto err_unregister;
-		}
 	}
 
 	netdev_dbg(netdev,
