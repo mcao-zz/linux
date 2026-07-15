@@ -1,9 +1,10 @@
 Changes in v8:
 - snapshot the RX-ring correlator once in deliver_frame; pass
-  that value through get_buffer, the room check, and harvest
+  that value through get_buffer, the room check, and harvest.
+  A second DMA load must not index a pool get_buffer did not
+  validate
 - restore the PHYP MSS (skb->data + 8) and 0xffff comments
 - noted: poll_stopping is not a close barrier; mask stays first
-- noted: IHL=0 stays a cover leftover
 
 Changes in v7:
 - bound oversize against min(skb_tailroom, pool->buff_size);
