@@ -2546,11 +2546,16 @@ static void ibmveth_get_ethtool_stats(struct net_device *dev,
 static void ibmveth_get_channels(struct net_device *netdev,
 				 struct ethtool_channels *channels)
 {
+	struct ibmveth_adapter *adapter = netdev_priv(netdev);
+
 	channels->max_tx = ibmveth_real_max_tx_queues();
 	channels->tx_count = netdev->real_num_tx_queues;
 
-	channels->max_rx = netdev->real_num_rx_queues;
-	channels->rx_count = netdev->real_num_rx_queues;
+	if (adapter->multi_queue)
+		channels->max_rx = IBMVETH_MAX_RX_QUEUES;
+	else
+		channels->max_rx = 1;
+	channels->rx_count = ibmveth_get_num_rx_queues(adapter);
 }
 
 static int ibmveth_set_channels(struct net_device *netdev,
@@ -2560,6 +2565,14 @@ static int ibmveth_set_channels(struct net_device *netdev,
 	unsigned int old = netdev->real_num_tx_queues,
 		     goal = channels->tx_count;
 	int rc, i;
+
+	/*
+	 * RX channel resize is implemented in a later patch; reject any
+	 * request that changes rx_count. Read-modify-write TX adjustments
+	 * submit the current rx_count and proceed.
+	 */
+	if (channels->rx_count != ibmveth_get_num_rx_queues(adapter))
+		return -EOPNOTSUPP;
 
 	/* If ndo_open has not been called yet then don't allocate, just set
 	 * desired netdev_queue's and return
