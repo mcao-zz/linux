@@ -97,8 +97,7 @@ Same 15 patches as v7. Folded from the v7 netdev-bot review
   HCALL_FAIL are snapshotted so those two logs keep their values.
 * Patch 9: snapshot the RX-ring correlator once in deliver_frame
   and pass that value through get_buffer, the room check, and
-  harvest. Restore the PHYP MSS and 0xffff comments. poll_stopping
-  is not a close barrier; mask stays first.
+  harvest. Restore the PHYP MSS and 0xffff comments.
 * Patch 10: synchronize_net() after setup_rx fail before the
   rings are freed. Reject an ethtool -L that changes rx_count;
   later patches implement live RX set. Keep the TX grow-fail
@@ -183,6 +182,7 @@ Known leftovers (not this series):
   irqsave still covers the whole fill, and close skips
   netpoll_poll_disable. That is a lock-protocol rewrite, not this
   series.
+* ip_fast_csum() on IHL=0. Preexisting RX. Not this series.
 * RX IRQ teardown leftover from v7 (poll tail after remask / free_irq)
   is closed in patch 5. A mask hcall that failed is still never
   acknowledged.
