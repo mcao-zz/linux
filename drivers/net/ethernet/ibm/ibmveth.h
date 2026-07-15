@@ -284,6 +284,38 @@ struct ibmveth_hcall_stats {
 	u64 send_lan;		/* H_SEND_LOGICAL_LAN */
 };
 
+struct ibmveth_rx_queue_stats {
+	u64 packets;
+	u64 bytes;
+	u64 interrupts;
+	u64 polls;
+	u64 large_packets;
+	u64 invalid_buffers;
+	u64 no_buffer_drops;
+} ____cacheline_aligned_in_smp;
+
+struct ibmveth_tx_queue_stats {
+	u64 packets;
+	u64 bytes;
+	u64 large_packets;
+	u64 dropped_packets;
+	u64 send_failures;
+	u64 checksum_offload;
+} ____cacheline_aligned_in_smp;
+
+/*
+ * ethtool string count: use offsetof of the last counter so alignment
+ * padding from ____cacheline_aligned_in_smp is not counted. When adding
+ * a new counter at the end, point these at the new last field (same idea
+ * as sizeof(struct)/sizeof(u64) before alignment was added).
+ */
+#define IBMVETH_NUM_RX_QSTATS \
+	(offsetof(struct ibmveth_rx_queue_stats, no_buffer_drops) / \
+		sizeof(u64) + 1)
+#define IBMVETH_NUM_TX_QSTATS \
+	(offsetof(struct ibmveth_tx_queue_stats, checksum_offload) / \
+		sizeof(u64) + 1)
+
 struct ibmveth_buff_pool {
     u32 size;
     u32 index;
@@ -349,6 +381,7 @@ struct ibmveth_adapter {
 	u64 replenish_add_buff_success;
 	u64 rx_invalid_buffer;
 	u64 rx_no_buffer;
+	u64 rx_no_buffer_retired; /* PHYP page reset / queue-reuse carry */
 	u64 tx_map_failed;
 	u64 tx_send_failed;
 	u64 tx_large_packets;
@@ -356,6 +389,9 @@ struct ibmveth_adapter {
 
 	/* Hypercall statistics */
 	struct ibmveth_hcall_stats hcall_stats;
+	struct ibmveth_rx_queue_stats *rx_qstats;
+	struct ibmveth_tx_queue_stats *tx_qstats;
+
 	/* Ethtool settings */
 	u8 duplex;
 	u32 speed;
