@@ -12,12 +12,12 @@ Changes in v8:
   any other error to bad_correlator()
 
 Dropped from this patch because an earlier fix owns it:
-- fix 1 (c193ccda2af0): the poll_controller() replenish_task(adapter, 0) change.
+- fix 1 (31e562229afe): the poll_controller() replenish_task(adapter, 0) change.
   ndo_poll_controller is gone. poll keeps fix 1's if (budget)
   around the per-queue replenish. The commit message drops that
   reason, and the DMA_ATTR_NO_WARN, lock-init and
   remove_buffer_from_pool comments no longer cite netpoll
-- fix 4 (26003e69cff6): the correlator WARN_ON() -> correlator_valid() conversion
+- fix 4 (2c176421c01d): the correlator WARN_ON() -> correlator_valid() conversion
   and poll's advance on a NULL buffer. The commit message drops
   that WARN_ON paragraph
 Changes in v7:
