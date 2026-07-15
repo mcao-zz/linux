@@ -87,10 +87,7 @@ Same 15 patches as v7. Folded from the v7 netdev-bot review
 * Patch 5: wait for the poll tail after napi_disable, then remask
   and free_irq. set_channels() keys on opened, not IFF_UP.
 * Patch 6: netif_tx_disable() at the start of open(); start still
-  after TX LTB alloc. First-open generic XDP_TX, and a failed
-  reopen that left TX awake after ethtool -L, cannot run while
-  LTBs are still being allocated. Do not move TX alloc before the
-  LAN.
+  after TX LTB alloc. Do not move TX alloc before the LAN.
 * Patch 8: replenish_task_cycles++ under replenish_lock so NAPI
   and poll_controller on the same queue cannot lose that count
   before the statistics patch. First BATCH_FALLBACK and
