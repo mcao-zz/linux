@@ -13,14 +13,14 @@ Changes in v8:
   a poll is already scheduled
 
 Dropped from this patch because an earlier fix owns it:
-- fix 1 (c193ccda2af0): the poll_controller() per-queue loop.
+- fix 1 (31e562229afe): the poll_controller() per-queue loop.
   ndo_poll_controller is gone
-- fix 3 (219666bf3637): the remove() unregister-before-cancel reorder, the reset
+- fix 3 (f428df82de9b): the remove() unregister-before-cancel reorder, the reset
   NETREG_REGISTERED gate, and those message paragraphs.
   Fix 3 disables the reset work before unregister
-- fix 5 (34c7b4a7ff00): the pool kobject release(), completion and
+- fix 5 (ff1184e56407): the pool kobject release(), completion and
   put_pool_kobjs(), and the probe-kobject-leak paragraph
-- fix 8 (bd97f9417e06): open() adds no poll wait of its own.
+- fix 8 (b1b18f2d36cd): open() adds no poll wait of its own.
   err_disable_napi already waits, and a request_irq() failure
   never enabled NAPI
 Changes in v7:
