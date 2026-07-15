@@ -10,9 +10,9 @@ Changes in v8:
 - reword: the helper patch adds schedule_work on buffer-add
   H_FUNCTION; this commit makes that path reachable and
   latches mq_fallback
-- noted: enable_irq on prep-fail stays; IHL=0 leftover;
-  poll_controller !opened stays in the down-path patch
-  no Fixes: peel
+- noted: enable_irq on prep-fail stays (PHYP: H_PARAMETER on
+  enable is LISN not in range, not already-enabled)
+- noted: poll_controller !opened stays in the down-path patch
 
 Changes in v7:
 - register_single_rx_queue logs lpar_rc with %ld
