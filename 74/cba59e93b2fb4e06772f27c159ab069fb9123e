@@ -105,26 +105,15 @@ ppc64le PowerVM LPAR, MQ-capable firmware:
 
 Changes in v8:
 
-Same 15 patches as v7, rebased onto the fixes above, plus the v7
-netdev-bot review (Openwall 2026-09-29) and our own re-review.
-Per-patch detail is below --- on each commit.
+Same 15 patches as v7, rebased onto current net-next (the two
+open-fail fixes are already there) plus the eight mailed v3
+fixes, then the v7 netdev-bot review (Openwall 2026-09-29) and
+our own re-review. Per-patch detail is below --- on each commit.
 
-Dropped because the fixes now do it (the MQ patches extend the
-fixes' code per queue instead):
-* ndo_poll_controller and its per-queue rewrite, the netpoll kick and
-  the closed-device guard (fix 1 removes ndo_poll_controller).
-* The opened field and its close() / set_channels() gates (fix 2).
-* The remove() unregister/cancel reorder and the reset
-  NETREG_REGISTERED gate (fix 3 disables the work first).
-* The correlator WARN_ON() conversion, the NULL-buffer advance and
-  the copybreak skb leak (fix 4). Patches 8 and 9 make fix 4's
-  helpers per-queue.
-* The pool kobject release() and wait (fix 5). Patch 10 adds the
-  per-queue pools to its helper.
-* close()'s netif_tx_disable() (fix 7).
-* The close()/open-fail wait for the RX poll tail (fix 8).
-* The open() failure h_free_logical_lan() and the NULL-safe TX LTB
-  free (the net pair).
+v7 carried local copies of those single-queue fixes inside the
+MQ patches. v8 drops that duplication and only extends the
+mailed fixes per queue. What each commit dropped is under ---
+on that patch.
 
 Code changes:
 * Patch 1: H_FREE_LOGICAL_LAN_QUEUE H_PARAMETER kdoc is
