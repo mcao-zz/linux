@@ -51,7 +51,7 @@ Series layout (15 patches):
         land here with first use)
   11-13 Per-queue RX/TX stats; get_channels MQ counts; debugfs buffer_pools
   14    Incremental RX resize; live ethtool -L rx
-  15    Down-path rollback and mq_fallback max_rx cap
+  15    Down-path publish and mq_fallback max_rx cap
 
 - Helper patches (3-8) reshape ibmveth_open()/close() into
   queue-aware helpers. Patch 9 hardens the SQ poll path with the same
@@ -81,51 +81,29 @@ Changes in v8:
 Same 15 patches as v7. Folded from the v7 netdev-bot review
 (Openwall 2026-09-29). Per-patch detail is below --- on each commit.
 
-* Patch 3: commit message names the filter-list unmap on TX LTB
-  failure. No driver code change. No Fixes: on this extract; that
-  peel is already mailed as [PATCH net 0/2].
 * Patch 5: wait for the poll tail after napi_disable, then remask
   and free_irq. set_channels() keys on opened, not IFF_UP.
-* Patch 6: netif_tx_disable() at the start of open() so first-open
-  generic XDP_TX, and a failed reopen that left TX awake after
-  ethtool -L, cannot run while LTBs are still being
-  allocated. Start still after TX LTB alloc. Do not move TX
-  alloc before the LAN.
-* Patch 8: replenish_task_cycles++ under replenish_lock so NAPI
-  and poll_controller on the same queue cannot lose that count
-  before the statistics patch. First BATCH_FALLBACK and
-  HCALL_FAIL are snapshotted so those two logs keep their values.
-* Patch 9: snapshot the RX-ring correlator once in deliver_frame
-  and pass that value through get_buffer, the room check, and
-  harvest. Restore the PHYP MSS and 0xffff comments.
-* Patch 10: synchronize_net() after setup_rx fail before the
-  rings are freed. Reject an ethtool -L that changes rx_count;
-  later patches implement live RX set. Keep the TX grow-fail
-  errno when restoring the old real_num. apply_mq_fallback
-  publishes 1 and sets real_num to match.
+* Patch 6: netif_tx_disable() at the start of open(); start stays
+  after TX LTB alloc.
+* Patch 8: replenish_task_cycles++ under lock; first-wins
+  fail_fallback / fail_hcall snapshots.
+* Patch 9: snapshot the RX-ring correlator once in deliver_frame.
+* Patch 10: synchronize_net() after setup_rx fail; reject an
+  rx_count change; keep the TX grow-fail errno;
+  apply_mq_fallback also sets real_num to 1.
 * Patch 11: snapshot no_buffer_drops and retired under
-  replenish_lock. After successful H_FREE fold the last
-  sample into retired. Do not claim large_packets /
-  checksum_offload / no_buffer_drops have no standard
-  equivalent.
-* Patch 12: get_channels keeps the live rx_count and caps
-  max_rx there once mq_fallback. Do not advertise max_rx = 1.
-  Getter only; the rx_count reject lives in patch 10.
-* Patch 14: combined ethtool -L rolls RX back if TX does
-  not reach the request. Skip unmask if set_real(keep)
-  fails after real_num was lowered. Refresh three resize
-  comments. Close skips unmap on H_FREE_LOGICAL_LAN
-  fail-before-start and retries on the next open and
-  remove. Down-path publish stays the following commit.
-* Patch 15: publish the down-path RX count, which lifts
-  the resize commit's temporary rejection. Return -EBUSY
-  if a handle is still set in the new range. get_channels
-  max_tx is at least the live tx_count, and set_channels
-  uses the same ceiling, so CPU offline cannot block an
-  RX-only ethtool -L.
+  replenish_lock; fold the last sample after successful H_FREE.
+* Patch 12: cap max_rx at the live rx_count once mq_fallback.
+  Do not advertise max_rx = 1.
+* Patch 14: combined -L rolls RX back if TX misses. Skip unmask
+  if set_real(keep) fails. Close skips unmap on H_FREE
+  fail-before-start and retries on the next open and remove.
+* Patch 15: down-path publish returns -EBUSY if a handle is
+  still set in the new range.
 * Kept: enable_irq on schedule_prep failure; mask PHYP before
   napi_disable; hang is the opened gate (no Fixes: peel);
-  get_channels reports the live rx_count (no clamp).
+  get_channels reports the live rx_count (no clamp). SQ
+  open-fail unwind is already [PATCH net 0/2].
 
 Changes in v7:
 
