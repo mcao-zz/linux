@@ -1868,6 +1868,16 @@ ibmveth_resize_rx_queues_incremental(struct ibmveth_adapter *adapter,
 		netdev_dbg(netdev, "Scale-down: removing queues %d-%d\n",
 			   new_count, old_count - 1);
 
+		/*
+		 * Mask PHYP delivery before napi_disable/drain. Otherwise
+		 * ibmveth_interrupt returns IRQ_HANDLED without masking when
+		 * NAPI is disabled, and the HV can storm during drain.
+		 */
+		for (i = new_count; i < old_count; i++) {
+			ibmveth_disable_irq(adapter, i);
+			synchronize_irq(adapter->queue_irq[i]);
+		}
+
 		for (i = new_count; i < old_count; i++)
 			napi_disable(&adapter->napi[i]);
 
@@ -1880,17 +1890,11 @@ ibmveth_resize_rx_queues_incremental(struct ibmveth_adapter *adapter,
 		if (rc) {
 			netdev_err(netdev, "Failed to set real RX queues to %d: %d\n",
 				   new_count, rc);
-			for (i = new_count; i < old_count; i++)
+			for (i = new_count; i < old_count; i++) {
+				ibmveth_enable_irq(adapter, i);
 				napi_enable(&adapter->napi[i]);
+			}
 			return rc;
-		}
-
-		/* Disable hypervisor interrupts and wait for handlers to
-		 * complete before updating num_rx_queues.
-		 */
-		for (i = new_count; i < old_count; i++) {
-			ibmveth_disable_irq(adapter, i);
-			synchronize_irq(adapter->queue_irq[i]);
 		}
 
 		adapter->num_rx_queues = new_count;
@@ -1916,6 +1920,11 @@ cleanup_new_queues:
 	netdev_err(netdev,
 		   "Scale-up failed at queue %d, cleaning up queues %d-%d\n",
 		   failed_queue, old_count, failed_queue - 1);
+	for (i = old_count; i < failed_queue; i++) {
+		ibmveth_disable_irq(adapter, i);
+		synchronize_irq(adapter->queue_irq[i]);
+	}
+
 	for (i = old_count; i < failed_queue; i++)
 		napi_disable(&adapter->napi[i]);
 
@@ -1923,11 +1932,6 @@ cleanup_new_queues:
 		ibmveth_drain_rx_queue(adapter, i);
 
 	synchronize_net();
-
-	for (i = old_count; i < failed_queue; i++) {
-		ibmveth_disable_irq(adapter, i);
-		synchronize_irq(adapter->queue_irq[i]);
-	}
 
 	for (i = old_count; i < failed_queue; i++) {
 		ibmveth_cleanup_single_rx_interrupt(adapter, i);
