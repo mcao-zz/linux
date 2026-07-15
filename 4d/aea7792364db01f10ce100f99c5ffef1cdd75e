@@ -2,8 +2,9 @@ Changes in v8:
 - combined ethtool -L rolls RX back if TX does not
   reach the request
 - skip unmask if set_real(keep) fails after real_num
-  was lowered; scale-down set_real(new_count) fail
-  still re-enables
+  was lowered; still napi_enable so close/reset is
+  not a second napi_disable hang. scale-down
+  set_real(new_count) fail still re-enables
 - skip unmap of the live set on H_FREE_LOGICAL_LAN
   fail-before-start (PHYP); do not zero handles;
   H_PARAMETER is already-free and unmaps. ndo_stop
