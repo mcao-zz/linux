@@ -1437,19 +1437,6 @@ ibmveth_register_logical_lan_queue(struct ibmveth_adapter *adapter,
 		return H_SUCCESS;
 	}
 
-	if (lpar_rc == H_FUNCTION) {
-		if (adapter->multi_queue) {
-			netdev_info(adapter->netdev,
-				    "Multi queue mode not supported by firmware, falling back to single queue\n");
-			adapter->multi_queue = 0;
-		} else {
-			netdev_err(adapter->netdev,
-				   "Unexpected H_FUNCTION for queue %d registration (MQ mode already disabled)\n",
-				   queue_index);
-		}
-		return lpar_rc;
-	}
-
 	netdev_err(adapter->netdev,
 		   "h_reg_logical_lan_queue failed for queue %d with %ld\n",
 		   queue_index, lpar_rc);
