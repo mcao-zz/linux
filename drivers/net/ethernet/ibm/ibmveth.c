@@ -46,7 +46,6 @@ static unsigned long ibmveth_get_desired_dma(struct vio_dev *vdev);
 
 static struct kobj_type ktype_veth_pool;
 
-
 static const char ibmveth_driver_name[] = "ibmveth";
 static const char ibmveth_driver_string[] = "IBM Power Virtual Ethernet Driver";
 #define ibmveth_driver_version "1.06"
@@ -1964,42 +1963,84 @@ static int ibmveth_set_features(struct net_device *dev,
 	return rc1 ? rc1 : rc2;
 }
 
-
-static void ibmveth_aggregate_rx_qstats(struct ibmveth_adapter *adapter)
+/*
+ * Sum per-queue counters for rare ethtool reads. Do not write adapter
+ * globals on the hot path (ibmvnic-style); with qstats allocated for the
+ * adapter lifetime, these sums remain meaningful across ifdown/up.
+ */
+static u64 ibmveth_sum_rx_invalid_buffers(struct ibmveth_adapter *adapter)
 {
-	u64 total_invalid = 0;
-	u64 total_large = 0;
+	u64 total = 0;
 	int i;
 
 	if (!adapter->rx_qstats)
-		return;
+		return adapter->rx_invalid_buffer;
 
-	for (i = 0; i < adapter->num_rx_queues; i++) {
-		total_invalid += adapter->rx_qstats[i].invalid_buffers;
-		total_large += adapter->rx_qstats[i].large_packets;
-	}
+	for (i = 0; i < adapter->num_rx_queues; i++)
+		total += adapter->rx_qstats[i].invalid_buffers;
 
-	adapter->rx_invalid_buffer = total_invalid;
-	adapter->rx_large_packets = total_large;
+	return total;
 }
 
-static void ibmveth_aggregate_tx_qstats(struct ibmveth_adapter *adapter)
+static u64 ibmveth_sum_rx_large_packets(struct ibmveth_adapter *adapter)
+{
+	u64 total = 0;
+	int i;
+
+	if (!adapter->rx_qstats)
+		return adapter->rx_large_packets;
+
+	for (i = 0; i < adapter->num_rx_queues; i++)
+		total += adapter->rx_qstats[i].large_packets;
+
+	return total;
+}
+
+static u64 ibmveth_sum_tx_large_packets(struct ibmveth_adapter *adapter)
 {
 	struct net_device *netdev = adapter->netdev;
-	u64 total_large = 0;
-	u64 total_send_failed = 0;
+	u64 total = 0;
 	int i;
 
 	if (!adapter->tx_qstats)
-		return;
+		return adapter->tx_large_packets;
 
-	for (i = 0; i < netdev->real_num_tx_queues; i++) {
-		total_large += adapter->tx_qstats[i].large_packets;
-		total_send_failed += adapter->tx_qstats[i].send_failures;
-	}
+	for (i = 0; i < netdev->real_num_tx_queues; i++)
+		total += adapter->tx_qstats[i].large_packets;
 
-	adapter->tx_large_packets = total_large;
-	adapter->tx_send_failed = total_send_failed;
+	return total;
+}
+
+static u64 ibmveth_sum_tx_send_failed(struct ibmveth_adapter *adapter)
+{
+	struct net_device *netdev = adapter->netdev;
+	u64 total = 0;
+	int i;
+
+	if (!adapter->tx_qstats)
+		return adapter->tx_send_failed;
+
+	for (i = 0; i < netdev->real_num_tx_queues; i++)
+		total += adapter->tx_qstats[i].send_failures;
+
+	return total;
+}
+
+static u64 ibmveth_ethtool_adapter_stat(struct ibmveth_adapter *adapter,
+					int index)
+{
+	unsigned long offset = ibmveth_stats[index].offset;
+
+	if (offset == IBMVETH_STAT_OFF(rx_invalid_buffer))
+		return ibmveth_sum_rx_invalid_buffers(adapter);
+	if (offset == IBMVETH_STAT_OFF(rx_large_packets))
+		return ibmveth_sum_rx_large_packets(adapter);
+	if (offset == IBMVETH_STAT_OFF(tx_large_packets))
+		return ibmveth_sum_tx_large_packets(adapter);
+	if (offset == IBMVETH_STAT_OFF(tx_send_failed))
+		return ibmveth_sum_tx_send_failed(adapter);
+
+	return IBMVETH_GET_STAT(adapter, offset);
 }
 
 static void ibmveth_get_strings(struct net_device *dev, u32 stringset, u8 *data)
@@ -2063,11 +2104,8 @@ static void ibmveth_get_ethtool_stats(struct net_device *dev,
 	struct ibmveth_adapter *adapter = netdev_priv(dev);
 	int i, j;
 
-	ibmveth_aggregate_rx_qstats(adapter);
-	ibmveth_aggregate_tx_qstats(adapter);
-
 	for (i = 0; i < ARRAY_SIZE(ibmveth_stats); i++)
-		data[i] = IBMVETH_GET_STAT(adapter, ibmveth_stats[i].offset);
+		data[i] = ibmveth_ethtool_adapter_stat(adapter, i);
 
 	for (j = 0; j < adapter->num_rx_queues; j++) {
 		if (adapter->rx_qstats) {
@@ -2335,7 +2373,6 @@ static netdev_tx_t ibmveth_start_xmit(struct sk_buff *skb,
 out:
 	dev_consume_skb_any(skb);
 	return NETDEV_TX_OK;
-
 
 }
 
@@ -3232,7 +3269,6 @@ unlock_err:
 	rtnl_unlock();
 	return rc;
 }
-
 
 #define ATTR(_name, _mode)				\
 	struct attribute veth_##_name##_attr = {	\
