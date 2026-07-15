@@ -174,27 +174,14 @@ Code changes:
 * Patch 12: cap max_rx at the live rx_count once mq_fallback.
   Do not advertise max_rx = 1. mq_fallback uses
   READ_ONCE()/WRITE_ONCE().
-* Patch 14: scale-down, the scale-up unwind and the keep path wait
-  for the poll tail with synchronize_net() after napi_disable(),
-  then remask. Combined -L rolls RX back if TX misses. Skip unmask
-  if set_real(keep) fails; still napi_enable so close/reset
-  is not a second napi_disable hang. Close skips unmap on
-  H_FREE fail-before-start and retries on the next open and
-  remove (remove logs if it still fails and leaks the LAN
-  buffers); until then a poolN sysfs write returns -EBUSY
-  so the deferred free keeps the old pool geometry.
-  H_FREE_LOGICAL_LAN_QUEUE H_PARAMETER is already-free, same as
-  H_FREE_LOGICAL_LAN: clear the registered flag and unmap.
-  napi_disable() on retiring queues keeps netpoll off them; poll
-  records an RX index only below real_num. free_stranded keys off
-  queue_registered[], not a zero handle, after successful H_FREE.
-  Scale-down takes the final
-  no_buffer sample after H_FREE. Moved here from patch 15, next to
-  the code they fix: poll completion, interrupt and resume honor
-  real_num; free_tx_resources() walks every LTB slot.
-* Patch 15: down-path publish returns -EBUSY if a queue in the new
-  range is still registered. resize_rx_channels kdoc matches the
-  down-path publish. mq_fallback max_rx cap lives in patch 12.
+* Patch 14: live -L. synchronize_net after napi_disable then
+  remask; roll RX back if TX misses; skip unmask if
+  set_real(keep) fails (still napi_enable); skip unmap on
+  H_FREE fail-before-start. Keep-path fences honor real_num;
+  free_tx walks every LTB slot.
+* Patch 15: down-path publish; -EBUSY if a queue in the new
+  range is still registered. max_tx floor; max_rx cap stays
+  in patch 12.
 * Commit message / kdoc / comment updates on every patch,
   mostly to drop what the fixes now own.
 * Kept: enable_irq on schedule_prep failure; mask PHYP before
