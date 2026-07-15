@@ -2880,6 +2880,25 @@ static void ibmveth_debugfs_exit(struct ibmveth_adapter *adapter)
 	adapter->debugfs_dir = NULL;
 }
 
+
+static void ibmveth_probe_cleanup(struct ibmveth_adapter *adapter,
+				  bool pools_ready)
+{
+	struct net_device *netdev = adapter->netdev;
+	int i;
+
+	cancel_work_sync(&adapter->work);
+
+	if (pools_ready) {
+		for (i = 0; i < IBMVETH_NUM_BUFF_POOLS; i++)
+			kobject_put(&adapter->rx_buff_pool[0][i].kobj);
+	}
+
+	ibmveth_free_tx_qstats(adapter);
+	ibmveth_free_rx_qstats(adapter);
+	free_netdev(netdev);
+}
+
 static int ibmveth_probe(struct vio_dev *dev, const struct vio_device_id *id)
 {
 	int rc, i, mac_len;
@@ -2937,7 +2956,7 @@ static int ibmveth_probe(struct vio_dev *dev, const struct vio_device_id *id)
 
 	if (ibmveth_alloc_rx_qstats(adapter) ||
 	    ibmveth_alloc_tx_qstats(adapter)) {
-		ibmveth_probe_cleanup(adapter);
+		ibmveth_probe_cleanup(adapter, false);
 		return -ENOMEM;
 	}
 
@@ -3025,7 +3044,7 @@ static int ibmveth_probe(struct vio_dev *dev, const struct vio_device_id *id)
 	if (rc) {
 		netdev_dbg(netdev, "failed to set number of tx queues rc=%d\n",
 			   rc);
-		ibmveth_probe_cleanup(adapter);
+		ibmveth_probe_cleanup(adapter, true);
 		return rc;
 	}
 	adapter->tx_ltb_size = PAGE_ALIGN(IBMVETH_MAX_TX_BUF_SIZE);
@@ -3041,7 +3060,7 @@ static int ibmveth_probe(struct vio_dev *dev, const struct vio_device_id *id)
 
 	if (rc) {
 		netdev_dbg(netdev, "failed to register netdev rc=%d\n", rc);
-		ibmveth_probe_cleanup(adapter);
+		ibmveth_probe_cleanup(adapter, true);
 		return rc;
 	}
 
