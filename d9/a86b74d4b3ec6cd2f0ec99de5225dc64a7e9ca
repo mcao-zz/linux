@@ -8,15 +8,15 @@ Changes in v8:
   or a failed reopen
 
 Dropped from this patch because an earlier fix owns it:
-- fix 2 (f9f424944b0e): the set_channels IFF_UP vs opened claim. Fix 2 already
+- fix 2 (c23432004253): the set_channels IFF_UP vs opened claim. Fix 2 already
   gates set_channels() on opened
-- fix 7 (64ed5d98164f): close()'s netif_tx_stop_all_queues() -> netif_tx_disable()
-- fix 8 (bd97f9417e06): the v7 synchronize_net() after cleanup_rx_interrupts()
+- fix 7 (4d433caba444): close()'s netif_tx_stop_all_queues() -> netif_tx_disable()
+- fix 8 (b1b18f2d36cd): the v7 synchronize_net() after cleanup_rx_interrupts()
   on late TX-alloc failure. The helper already waits for the
   poll tail (patch 5)
-- net pair (1b81c9efeb1b): the NULL check and NULL-first in
+- net pair (84bec0bf0352): the NULL check and NULL-first in
   free_tx_ltb()
-- net pair (6a638c2d7f85): the pool-fail
+- net pair (af0524bf4ce1): the pool-fail
   h_free_logical_lan()
 Changes in v7:
 - late alloc_tx_resources() failure: synchronize_net()
