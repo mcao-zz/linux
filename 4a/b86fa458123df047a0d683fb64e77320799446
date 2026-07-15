@@ -3,6 +3,8 @@ Changes in v8:
 - set_channels() keys on opened, not IFF_UP
 - hang stays the opened gate (commit message drops "depends on
   the helpers"); no Fixes: peel
+- H_PARAMETER on enable is LISN not in range, not already-enabled
+  (PHYP); fold only on disable
 
 Changes in v7:
 - reword schedule_rx_queue() kdoc: out-of-range is
