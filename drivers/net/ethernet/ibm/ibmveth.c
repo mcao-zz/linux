@@ -1393,9 +1393,7 @@ ibmveth_register_logical_lan_queue(struct ibmveth_adapter *adapter,
 	unsigned long handle, hwirq;
 	unsigned int virq;
 	long lpar_rc;
-	int try_again = 1;
 
-retry:
 	netdev_dbg(adapter->netdev,
 		   "Attempting to register queue %d: unit_addr=0x%x buffer_list_dma=0x%llx rxq_desc=0x%llx\n",
 		   queue_index, adapter->vdev->unit_address,
@@ -1452,14 +1450,9 @@ retry:
 		return lpar_rc;
 	}
 
-	if (try_again) {
-		try_again = 0;
-		goto retry;
-	}
-
 	netdev_err(adapter->netdev,
-		   "h_reg_logical_lan_queue failed with %ld after retry\n",
-		   lpar_rc);
+		   "h_reg_logical_lan_queue failed for queue %d with %ld\n",
+		   queue_index, lpar_rc);
 	netdev_err(adapter->netdev,
 		   "queue %d params: unit_addr=0x%x buffer_list_dma=0x%llx rxq_desc=0x%llx\n",
 		   queue_index, adapter->vdev->unit_address,
