@@ -463,15 +463,25 @@ err_free_irqs:
 }
 
 /**
- * ibmveth_cleanup_rx_interrupts - Disable NAPI and free IRQs
+ * ibmveth_cleanup_rx_interrupts - Mask PHYP, disable NAPI, free IRQs
  * @adapter: ibmveth adapter structure
  *
- * Disables NAPI polling and frees interrupt handlers for all RX queues.
+ * Tears down RX interrupt delivery for all queues. Mask PHYP before
+ * napi_disable so ibmveth_interrupt cannot return IRQ_HANDLED without
+ * masking (same storm window as scale-down). Safe for close and for
+ * open failure after setup_rx_interrupts() already unmasked PHYP.
  */
 static void
 ibmveth_cleanup_rx_interrupts(struct ibmveth_adapter *adapter)
 {
 	int i;
+
+	for (i = 0; i < adapter->num_rx_queues; i++) {
+		if (adapter->queue_irq[i]) {
+			ibmveth_disable_irq(adapter, i);
+			synchronize_irq(adapter->queue_irq[i]);
+		}
+	}
 
 	for (i = 0; i < adapter->num_rx_queues; i++)
 		napi_disable(&adapter->napi[i]);
@@ -1200,7 +1210,7 @@ static int ibmveth_close(struct net_device *netdev)
 
 	netif_tx_stop_all_queues(netdev);
 
-	ibmveth_disable_irq(adapter, 0);
+	/* PHYP mask + napi_disable + free_irq live in cleanup_rx_interrupts */
 	ibmveth_cleanup_rx_interrupts(adapter);
 
 	do {
