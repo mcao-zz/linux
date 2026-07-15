@@ -2545,13 +2545,17 @@ static int ibmveth_set_channels(struct net_device *netdev,
 			return -EINVAL;
 		}
 
-		/* Stash desired RX count; open() publishes it via
-		 * netif_set_real_num_rx_queues() after queue registration.
+		rc = netif_set_real_num_tx_queues(netdev, goal);
+		if (rc)
+			return rc;
+
+		/* Stash desired RX count only after TX succeeds; open()
+		 * publishes it via netif_set_real_num_rx_queues().
 		 */
-		if (goal_rx != adapter->num_rx_queues)
+		if (goal_rx != old_rx)
 			adapter->num_rx_queues = goal_rx;
 
-		return netif_set_real_num_tx_queues(netdev, goal);
+		return 0;
 	}
 
 	if (goal_rx > 1 && !adapter->multi_queue) {
@@ -2586,8 +2590,12 @@ static int ibmveth_set_channels(struct net_device *netdev,
 
 	netif_tx_stop_all_queues(netdev);
 
-	/* Allocate any queue that we need */
-	for (i = old; i < goal; i++) {
+	/* Allocate any queue that we need. Initialize i to old so a
+	 * scale-down path that never enters the loop still has defined
+	 * bounds if set_real_num_tx_queues() fails.
+	 */
+	i = old;
+	for (; i < goal; i++) {
 		if (adapter->tx_ltb_ptr[i])
 			continue;
 
@@ -2617,7 +2625,7 @@ static int ibmveth_set_channels(struct net_device *netdev,
 
 	netif_tx_wake_all_queues(netdev);
 
-	return 0;
+	return rc;
 }
 
 static const struct ethtool_ops netdev_ethtool_ops = {
