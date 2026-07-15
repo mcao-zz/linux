@@ -85,10 +85,7 @@ Same 15 patches as v7. Folded from the v7 netdev-bot review
   failure. No driver code change. No Fixes: on this extract; that
   peel is already mailed as [PATCH net 0/2].
 * Patch 5: wait for the poll tail after napi_disable, then remask
-  and free_irq (cleanup and the enable-fail unroll). set_channels()
-  keys on opened, not IFF_UP. Hang stays here (opened gate, not the
-  IRQ helpers); no Fixes: peel. H_PARAMETER on enable is LISN not
-  in range, not already-enabled; fold only on disable.
+  and free_irq. set_channels() keys on opened, not IFF_UP.
 * Patch 6: netif_tx_disable() at the start of open(); start still
   after TX LTB alloc. First-open generic XDP_TX, and a failed
   reopen that left TX awake after ethtool -L, cannot run while
@@ -131,7 +128,8 @@ Same 15 patches as v7. Folded from the v7 netdev-bot review
   uses the same ceiling, so CPU offline cannot block an
   RX-only ethtool -L.
 * Kept: enable_irq on schedule_prep failure; mask PHYP before
-  napi_disable; get_channels reports the live rx_count (no clamp).
+  napi_disable; hang is the opened gate (no Fixes: peel);
+  get_channels reports the live rx_count (no clamp).
 
 Changes in v7:
 
