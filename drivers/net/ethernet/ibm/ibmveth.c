@@ -456,9 +456,9 @@ ibmveth_dispose_subordinate_irq_mappings(struct ibmveth_adapter *adapter)
  * ibmveth_setup_rx_interrupts - Register IRQs and enable NAPI
  * @adapter: ibmveth adapter structure
  *
- * Enables NAPI, registers interrupt handlers for all RX queues, then enables
- * hypervisor interrupt delivery for multi-queue mode after every queue has a
- * Linux handler installed.
+ * Registers interrupt handlers for all RX queues, enables NAPI, then
+ * enables hypervisor interrupt delivery for multi-queue mode after
+ * every queue has a Linux handler installed.
  *
  * Return: 0 on success, negative error code on failure
  */
