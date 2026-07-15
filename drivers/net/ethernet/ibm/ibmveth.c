@@ -851,13 +851,11 @@ static void ibmveth_update_rx_no_buffer(struct ibmveth_adapter *adapter)
 {
 	int i;
 
+	adapter->rx_no_buffer = 0;
 	for (i = 0; i < adapter->num_rx_queues; i++) {
 		__be64 *p = adapter->buffer_list_addr[i] + 4096 - 8;
-		u64 drops = be64_to_cpup(p);
 
-		/* Pre-AI10-1: only queue 0 feeds the global counter. */
-		if (i == 0)
-			adapter->rx_no_buffer = drops;
+		adapter->rx_no_buffer += be64_to_cpup(p);
 	}
 }
 
