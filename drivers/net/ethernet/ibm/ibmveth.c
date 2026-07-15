@@ -858,9 +858,14 @@ hcall_failure:
  */
 static void ibmveth_update_rx_no_buffer(struct ibmveth_adapter *adapter)
 {
-	__be64 *p = adapter->buffer_list_addr[0] + 4096 - 8;
+	int i;
 
-	adapter->rx_no_buffer = be64_to_cpup(p);
+	adapter->rx_no_buffer = 0;
+	for (i = 0; i < adapter->num_rx_queues; i++) {
+		__be64 *p = adapter->buffer_list_addr[i] + 4096 - 8;
+
+		adapter->rx_no_buffer += be64_to_cpup(p);
+	}
 }
 
 /* replenish routine */
