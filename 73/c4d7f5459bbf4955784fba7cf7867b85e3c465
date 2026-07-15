@@ -11,7 +11,7 @@ Changes in v8:
   napi_schedule restart path after rebase onto fixes v3
 
 Dropped from this patch because an earlier fix owns it:
-- fix 4 (26003e69cff6): the copybreak new_skb leak fix, and the message claims
+- fix 4 (2c176421c01d): the copybreak new_skb leak fix, and the message claims
   for the NULL-skb reset and that leak
 Changes in v7:
 - bound oversize against min(skb_tailroom, pool->buff_size);
