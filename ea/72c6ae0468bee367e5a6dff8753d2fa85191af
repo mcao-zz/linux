@@ -1,16 +1,14 @@
 Changes in v8:
 - snapshot no_buffer_drops and no_buffer_retired under
-  replenish_lock on ethtool and qstats reads
+  replenish_lock on ethtool and qstats reads. pair()
+  takes the lock; the writer holds it for the two-store
+  carry
 - after successful H_FREE, fold the last sample into
   retired and clear drops; live replenish stores the
-  page absolute
+  page absolute. Skip retire if H_FREE failed (PHYP:
+  fail-before-start, page still live)
 - do not claim large_packets / checksum_offload /
   no_buffer_drops have no standard equivalent
-- pair() takes replenish_lock; not a caller-held
-  precondition. The writer holds the lock for the
-  two-store carry
-- free_all_queues retires on H_SUCCESS and skips
-  if H_FREE failed
 - noted: do not fill needs_csum / hw_gso_packets /
   hw_drop_overruns; dropped_packets stays tx_dropped
   and hw_drops; H_DROPPED send() unchanged
