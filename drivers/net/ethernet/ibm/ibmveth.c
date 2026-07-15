@@ -2937,9 +2937,7 @@ static int ibmveth_probe(struct vio_dev *dev, const struct vio_device_id *id)
 
 	if (ibmveth_alloc_rx_qstats(adapter) ||
 	    ibmveth_alloc_tx_qstats(adapter)) {
-		ibmveth_free_tx_qstats(adapter);
-		ibmveth_free_rx_qstats(adapter);
-		free_netdev(netdev);
+		ibmveth_probe_cleanup(adapter);
 		return -ENOMEM;
 	}
 
@@ -3027,9 +3025,7 @@ static int ibmveth_probe(struct vio_dev *dev, const struct vio_device_id *id)
 	if (rc) {
 		netdev_dbg(netdev, "failed to set number of tx queues rc=%d\n",
 			   rc);
-		ibmveth_free_tx_qstats(adapter);
-		ibmveth_free_rx_qstats(adapter);
-		free_netdev(netdev);
+		ibmveth_probe_cleanup(adapter);
 		return rc;
 	}
 	adapter->tx_ltb_size = PAGE_ALIGN(IBMVETH_MAX_TX_BUF_SIZE);
@@ -3045,9 +3041,7 @@ static int ibmveth_probe(struct vio_dev *dev, const struct vio_device_id *id)
 
 	if (rc) {
 		netdev_dbg(netdev, "failed to register netdev rc=%d\n", rc);
-		ibmveth_free_tx_qstats(adapter);
-		ibmveth_free_rx_qstats(adapter);
-		free_netdev(netdev);
+		ibmveth_probe_cleanup(adapter);
 		return rc;
 	}
 
