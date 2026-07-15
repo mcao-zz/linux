@@ -107,8 +107,7 @@ Same 15 patches as v7. Folded from the v7 netdev-bot review
   replenish_lock. After successful H_FREE fold the last
   sample into retired. Do not claim large_packets /
   checksum_offload / no_buffer_drops have no standard
-  equivalent. Do not fill needs_csum / hw_gso /
-  hw_drop_overruns.
+  equivalent.
 * Patch 12: get_channels keeps the live rx_count and caps
   max_rx there once mq_fallback. Do not advertise max_rx = 1.
   Getter only; the rx_count reject lives in patch 10.
