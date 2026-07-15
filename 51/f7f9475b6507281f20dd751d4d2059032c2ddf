@@ -1,0 +1,58 @@
+Changes in v8:
+- netif_tx_disable() at the start of open() so TX cannot run during late
+  TX LTB alloc (first-open generic XDP_TX; queues not DRV_XOFF).
+  netif_tx_start_all_queues() after alloc_tx_resources(); TX alloc still
+  after LAN registration
+- Late alloc_tx_resources() failure unwinds through
+  cleanup_rx_interrupts() (patch 5), not v7's extra synchronize_net()
+- Commit message: start_xmit LTB-missing comment is shrink-oriented, not
+  close/failed-reopen
+
+Dropped from this series (merged fixes own them):
+- commit c807573ea58e: close() netif_tx_stop_all_queues() ->
+  netif_tx_disable() (in base; this patch adds open()-start disable)
+- commit 84bec0bf0352: free_tx_ltb() NULL check and NULL-first clear
+  (in base; MQ refactor keeps the v6 behavior, not a duplicate fix hunk)
+- commit 3f872b34368c: v7 synchronize_net() after cleanup_rx_interrupts()
+  on late TX-alloc failure (patch 5 helper already waits)
+- commit 95811c873d1b: set_channels IFF_UP vs opened commit-message claim
+  (base gates set_channels() on opened)
+
+Changes in v7:
+- late alloc_tx_resources() failure: synchronize_net()
+  after cleanup_rx_interrupts(), as close() does, before
+  the RX ring and pools are freed
+- noted: no Fixes: peel of the pool-fail h_free; stay
+  at 15; one standalone [PATCH net] after this series
+  (Fixes: d43732ce021f)
+
+Changes in v6:
+- free_tx_ltb(): clear tx_ltb_ptr[idx] then tx_ltb_dma[idx] before
+  unmap (NULL-first narrows the race; close still uses netif_tx_disable())
+- start_xmit(): tx_dropped++ and goto out: when the LTB is missing
+- allocate_tx_ltb(): comment that caller must leave tx_ltb_ptr[idx] NULL
+- alloc/free_tx_resources kdoc uses real_num_tx_queues
+- noted: ethtool -L TX shrink still stop-then-free; cover leftovers
+
+Changes in v5:
+- Quiesce TX with netif_tx_disable before free (stop_all_queues does not
+  wait for in-flight xmit); free LTBs after h_free_logical_lan - direct
+  close() callers bypass synchronize_net()
+- Guard start_xmit if tx_ltb_ptr gone so open can leave RX live while TX
+  LTB alloc still runs (also covers close/failed-reopen with IFF_UP set)
+- Drop fake mid-open TX-leak / Fixes: motivation; reword as helper
+  extraction matching RX (shared loop-index independence)
+- Free TX LTB by pointer presence (drop dma==0 sentinel; dma_mapping_error
+  already cleared the slot on map failure)
+- Document intentional open-fail LAN-first unwind (free_lan before RX
+  pool/DMA teardown) rather than leaving it silent in a TX-only refactor
+- Drop drive-by blank-line cosmetics (header / start_xmit)
+
+Changes in v4:
+- Introduce the TX resource helpers in the same patch that wires their
+  first open/close callers.
+- Do not free TX LTBs again after a failed alloc_tx_resources();
+  harden free_tx_ltb() against unset slots.
+- Move TX allocation after RX IRQ setup / replenish kick so open()
+  failure unwind no longer depends on a shared loop index (also fixes
+  a mid-open TX LTB leak).
