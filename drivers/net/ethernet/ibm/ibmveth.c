@@ -1377,6 +1377,17 @@ ibmveth_register_logical_lan_queue(struct ibmveth_adapter *adapter,
 		return H_SUCCESS;
 	}
 
+	/*
+	 * H_FUNCTION means firmware rejected this subordinate register
+	 * (MQ unsupported). That is a hard open failure: do not clear
+	 * multi_queue or claim single-queue fallback. Keep a specific
+	 * log, then the generic failure lines below (no early return).
+	 */
+	if (lpar_rc == H_FUNCTION)
+		netdev_err(adapter->netdev,
+			   "h_reg_logical_lan_queue H_FUNCTION for queue %d (firmware MQ unsupported)\n",
+			   queue_index);
+
 	netdev_err(adapter->netdev,
 		   "h_reg_logical_lan_queue failed for queue %d with %ld\n",
 		   queue_index, lpar_rc);
