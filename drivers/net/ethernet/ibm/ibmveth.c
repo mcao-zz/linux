@@ -3190,8 +3190,11 @@ restart_poll:
 	ibmveth_replenish_task(adapter, queue_index);
 
 	if (frames_processed == budget) {
-		if (!netif_running(netdev) || napi_disable_pending(napi))
+		if (!netif_running(netdev) || napi_disable_pending(napi)) {
 			napi_complete_done(napi, frames_processed);
+			/* After complete_done, must not return a full budget. */
+			return frames_processed ? frames_processed - 1 : 0;
+		}
 		goto out;
 	}
 
