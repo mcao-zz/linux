@@ -1,0 +1,10 @@
+Changes in v7:
+- drain_rx_queue kdoc: return is slots processed,
+  not buffers recycled
+- skip unmap when H_FREE_LOGICAL_LAN_QUEUE fails;
+  keep the handle and restore remaining queues
+- noted: mask-then-napi_disable stays;
+  close still log-and-continue (leftover);
+  PHYP mask ack stay leftover; scale-up set_real last
+  stays leftover (cover); scale-up register
+  site does not latch (open path does)
