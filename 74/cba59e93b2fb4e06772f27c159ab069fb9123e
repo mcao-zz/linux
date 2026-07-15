@@ -171,9 +171,6 @@ Known leftovers (not this series):
 
 * ip_fast_csum() on IHL=0. Preexisting RX. Not this series.
 * A PHYP mask hcall that failed is still never acknowledged.
-* The v7 single-queue replenish leftover (irqsave over the whole
-  fill, netpoll vs close) is gone: fix 1 takes netpoll out of
-  replenish and patch 8 uses spin_lock_bh().
 
 Changes in v7:
 
