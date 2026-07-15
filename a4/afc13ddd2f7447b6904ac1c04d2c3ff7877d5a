@@ -1,6 +1,9 @@
 Changes in v8:
-- netif_tx_disable() at the start of open(); start stays after
-  alloc. Do not move TX alloc before the LAN
+- netif_tx_disable() at the start of open() so TX cannot run
+  while LTBs are still being allocated: first-open generic
+  XDP_TX, and a failed reopen that left the queues awake after
+  ethtool -L. netif_tx_start_all_queues() stays after
+  alloc_tx_resources(). Do not move TX alloc before the LAN
 - H_FREE fail-before-start skip-unmap is later (PHYP); isolated
   close still unmaps
 
