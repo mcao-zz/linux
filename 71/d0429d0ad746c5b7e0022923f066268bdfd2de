@@ -1,0 +1,54 @@
+Changes in v8:
+- keep-path real_num fencing (poll completion, interrupt,
+  resume) and the free_tx_resources walk over
+  IBMVETH_MAX_QUEUES moved to the resize patch, which introduced
+  the bugs they fix
+- drop the poll_controller !opened guard: the fixes series
+  removes ndo_poll_controller
+- noted: mq_fallback max_rx cap lives in the get_channels peel
+- resize_rx_channels kdoc: while down return 0;
+  set_channels publishes without allocating
+- down-path publish returns -EBUSY if a handle is
+  still set in [old, goal); check before TX set_real.
+  Do not unmap while down (PHYP: fail-before-start)
+- subject is the down-path; name the resize commit
+  by subject instead of series position
+- noted: TX-fail RX rollback lives in the resize patch
+- noted: this peel still publishes the down-path count
+  and the max_tx floor
+- noted: do not clamp rx_count; do not advertise max_rx = 1
+
+Changes in v7:
+- refresh the TX-fail RX rollback comment
+- get_channels max_tx is at least the live
+  tx_count; set_channels uses that same
+  ceiling and refuses only a request above it
+- lift patch 14's temporary -EOPNOTSUPP for an RX
+  count change while down
+- noted: get_channels keeps the live rx_count;
+  mq_fallback caps max_rx at that count; do
+  not advertise max_rx = 1 and do not clamp
+  rx_count
+
+Changes in v6:
+- get_channels() caps max_rx at the live rx_count when mq_fallback
+  is set; rx_count stays live
+- roll back TX real_num if down-path RX set_real fails
+- poll_controller() returns if !opened
+- noted: rx > 1 reject once mq_fallback is set is patch 14
+
+Changes in v5:
+- set_channels / resize_rx_channels read via get_num_rx_queues()
+- Series renumber: mailed v4 13/14 set_channels -> tip P15 (end; 14->15)
+- set_channels: gate on adapter->opened (not IFF_UP) for live RX resize
+  vs while-down stash
+- Down-path RX stash also refreshes CMO (publish + set_real_num_rx)
+- When up: resize RX then TX; roll RX back if TX cannot reach goal
+
+Changes in v4:
+- On !IFF_UP, stash num_rx_queues only after TX set succeeds; do not
+  allocate live subordinate IRQs/buffers while down.
+- Initialize i = old_tx on the TX adjust path.
+- Always return rc from set_channels().
+- Split from the resize-helper patch (same split as v3) while keeping
+  a live caller of resize_rx_channels() in the previous patch.
