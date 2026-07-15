@@ -2,15 +2,6 @@ Changes in v8:
 - no driver code change; commit message only
 - commit message: name that a TX LTB failure now unmaps the filter
   list before free_page() (baseline skipped that unmap)
-- noted: no Fixes: on this extract; SQ peel already mailed as
-  [PATCH net 0/2] 02/2 Fixes: d926793c1de9
-  <cover.1790357373.git.mmc@linux.ibm.com>
-- noted: leftover in-flight poll vs free_page (set_csum / set_tso /
-  change_mtu / pool_store skip netpoll_poll_disable)
-- noted: shared-i TX LTB leak predates this; P06 (own counter, TX
-  after pools); SQ mailed as [PATCH net 0/2] 02/2
-- noted: pool-fail without h_free predates this; P06 adds it, P07
-  allocates pools first; SQ mailed as [PATCH net 0/2] 01/2
 
 Changes in v7:
 - NULL-check buffer_list_addr[0] in update_rx_no_buffer()
