@@ -113,45 +113,32 @@ fixes are gone, and per-patch --- notes list what each commit
 dropped.
 
 Code changes:
-* Patch 1: H_FREE_LOGICAL_LAN_QUEUE H_PARAMETER kdoc is
-  already-free, same as H_FREE_LOGICAL_LAN. hcall_inst can count
-  the new opcodes; a debugfs row appears only after a call.
-* Patch 2: fix 8's synchronize_net() after napi_disable() stays
-  on napi[0] until patch 5. Index 0 also covers the fixes-series
-  helpers and their KUnit.
-* Patch 4: a pool-alloc failure still calls h_free_logical_lan(),
-  as the net fix does. v7 took the TX unwind and skipped it.
-* Patch 5: cleanup_rx_interrupts() and the setup unwind wait for the
-  poll tail after napi_disable(), then remask and free_irq; close()
-  and open()'s unwinds need no wait of their own.
-* Patch 6: netif_tx_disable() at the start of open(); start stays
-  after TX LTB alloc. TX alloc stays after LAN registration.
-* Patch 7: queue_registered[] is the slot-is-live flag. Handle 0 is
-  a live PHYP cookie; do not treat it as unregistered.
-* Patch 8: replenish_lock is spin_lock_bh(), so IRQs stay on
-  during the fill. replenish_task_cycles++ under the lock; first
-  BATCH_FALLBACK and HCALL_FAIL are logged after unlock. Harvest
-  resets on a bad correlator.
+* Patch 4: pool-alloc failure still calls h_free_logical_lan(),
+  as the net fix does (v7 skipped it on the TX unwind).
+* Patch 5: after napi_disable, synchronize_net then remask /
+  free_irq; close/open unwinds need no wait of their own.
+* Patch 6: netif_tx_disable at the start of open(); start stays
+  after TX LTB alloc.
+* Patch 7: queue_registered[] is the slot-is-live flag; handle 0
+  is a live cookie.
+* Patch 8: replenish_lock is spin_lock_bh(); harvest resets on
+  a bad correlator.
 * Patch 9: snapshot correlator once; bad/oversize count
-  rx_dropped and consume budget. Keep fix 1's rescheduled /
-  budget-1 return on the napi_schedule restart path.
-
-* Patch 10: MQ enable. set_channels rejects rx_count change
-  until patch 14; apply_mq_fallback sets real_num to 1; hard
-  H_FREE skips unmap. Subordinate IRQs ibmveth-<unit>-rxN.
-* Patch 11: per-queue stats via netdev_stat_ops; no_buffer
-  snapshot/retire under replenish_lock; drop duplicate
-  per-queue -S keys; WRITE_ONCE/READ_ONCE; no reset on close.
-* Patch 12: cap max_rx at the live rx_count once mq_fallback.
-  Do not advertise max_rx = 1.
+  rx_dropped and consume budget.
+* Patch 10: hard H_FREE skips unmap; apply_mq_fallback sets
+  real_num to 1; set_channels rejects rx_count change until
+  patch 14.
+* Patch 11: no_buffer snapshot/retire under replenish_lock;
+  drop duplicate per-queue -S keys.
+* Patch 12: cap max_rx at the live rx_count once mq_fallback;
+  do not advertise max_rx = 1.
 * Patch 14: live -L. synchronize_net after napi_disable then
   remask; roll RX back if TX misses; skip unmask if
   set_real(keep) fails (still napi_enable); skip unmap on
   H_FREE fail-before-start. Keep-path fences honor real_num;
   free_tx walks every LTB slot.
 * Patch 15: down-path publish; -EBUSY if a queue in the new
-  range is still registered. max_tx floor; max_rx cap stays
-  in patch 12.
+  range is still registered. max_tx floor.
 
 Changes in v7:
 
