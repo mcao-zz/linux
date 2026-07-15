@@ -1,11 +1,13 @@
 Changes in v8:
-- TX-fail RX rollback lives in the resize patch
-- this peel still publishes the down-path count,
-  the max_tx floor, and poll_controller !opened
 - down-path publish returns -EBUSY if a handle is
-  still set in [old, goal); do not unmap while down
+  still set in [old, goal); check before TX set_real.
+  Do not unmap while down (PHYP: fail-before-start)
 - subject is the down-path; name the resize commit
   by subject instead of series position
+- noted: TX-fail RX rollback lives in the resize patch
+- noted: this peel still publishes the down-path count,
+  the max_tx floor, and poll_controller !opened
+- noted: do not clamp rx_count; do not advertise max_rx = 1
 
 Changes in v7:
 - refresh the TX-fail RX rollback comment
