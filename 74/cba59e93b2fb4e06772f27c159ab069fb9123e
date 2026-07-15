@@ -108,9 +108,9 @@ Changes in v8:
 Same 15 patches as v7, rebased onto current net-next (the two
 open-fail fixes are already there) plus the eight mailed v3
 fixes, then the v7 netdev-bot review (Openwall 2026-09-29) and
-our own re-review. Per-patch detail — including what each
-commit dropped once the fixes own it — is below --- on each
-commit.
+our own re-review; v7's in-tree copies of those single-queue
+fixes are gone, and per-patch --- notes list what each commit
+dropped.
 
 Code changes:
 * Patch 1: H_FREE_LOGICAL_LAN_QUEUE H_PARAMETER kdoc is
