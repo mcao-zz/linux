@@ -11,6 +11,7 @@ Changes in v8:
   after pools); SQ mailed as [PATCH net 0/2] 02/2
 - noted: pool-fail without h_free predates this; P06 adds it, P07
   allocates pools first; SQ mailed as [PATCH net 0/2] 01/2
+
 Changes in v7:
 - NULL-check buffer_list_addr[0] in update_rx_no_buffer()
 - reword err_cleanup comment for the mixed map-failure state
