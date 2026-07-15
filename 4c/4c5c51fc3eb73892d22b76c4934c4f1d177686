@@ -1,0 +1,61 @@
+Changes in v8:
+- snapshot the RX-ring correlator once in deliver_frame; pass
+  that value through get_buffer, the room check, and harvest.
+  A second DMA load must not index a pool get_buffer did not
+  validate. rxq_harvest_buffer() becomes rxq_harvest_correlator()
+  taking that value; KUnit tests pass it
+- drop the copybreak new_skb leak fix: now done by the fixes
+  series (patch 4, "ibmveth: step past bad RX correlators
+  instead of spinning or oopsing"); deliver_frame keeps fix 4's
+  dev_kfree_skb_any() and rx_dropped
+- skip_bad_correlator, recycle_invalid (any harvest failure) and
+  deliver_frame harvest failures count rx_dropped, as fix 4 does.
+  skip_bad_correlator's own "bad correlator" log is dropped; the
+  harvest logs the correlator once
+- restore the PHYP MSS (skb->data + 8) and 0xffff comments
+- rxq_harvest_correlator keeps the previous patch's reset on a bad
+  correlator, so recycle_invalid resets too; commit message no
+  longer says skip_bad_correlator alone owns reset
+- poll re-arm comment cites close(), not a resize path and an
+  interrupt WARN that are not in the tree; skip_bad_correlator
+  comment no longer blames resize
+- commit message: drop the NULL-skb reset and copybreak leak
+  claims (fix 4 has both); a bad slot no longer ends the loop
+- noted: poll_stopping is not a close barrier; mask stays first
+- oversize drop counts rx_dropped, as the bad-correlator skip does;
+  commit message: only a bad correlator schedules a reset
+- skipped slots (bad correlator, oversize) consume NAPI budget: with
+  restart_poll after each replenish, a run of bad slots could
+  otherwise keep one poll going (reverses v7's "skip vs budget
+  stays"). Invalid-buffer recycle is unchanged
+- poll-tail comment and message: the stopping check narrows the
+  re-arm window; cleanup_rx_interrupts()' synchronize_net() is the
+  barrier. Restore the comment on the enable-then-recheck
+- commit message: the offset+length bound is new (the base has no
+  check) and carries no Fixes: tag, with the reason
+
+Changes in v7:
+- bound oversize against min(skb_tailroom, pool->buff_size);
+  name that bound in the commit message
+- noted: poll_stopping stays mask-first; skip vs budget stays;
+  cancel_work stays in P10
+
+Changes in v6:
+- read the IPv4 header check through skb->data, as mainline does.
+  v5 used ip_hdr(), which reads the network header offset that
+  eth_type_trans() does not set on this path
+- do not complete NAPI or consume budget when budget is 0. That is
+  the netpoll case, where v5 completed and returned budget - 1,
+  underflowing to -1
+- noted: the split is not pure motion; the body lists what changed
+
+Changes in v5:
+- Wrap poll_stopping return after complete so it stays under 80 cols
+- On poll_stopping after the budget loop: return < budget after
+  napi_complete_done (was frames_processed-1 even when under budget)
+- New in v5: peel SQ poll harden + helpers before MQ enable so tip P10
+  stays bring-up focused (mailed v4 09/14 MQ enable -> tip P10; also
+  14->15). Kitchen-sink / enable-path poll fixes land here on the live
+  single-queue path first.
+- After napi_complete_done, check poll_stopping again before enable_irq
+  (avoid re-arm while resize/close waits on napi_disable)
