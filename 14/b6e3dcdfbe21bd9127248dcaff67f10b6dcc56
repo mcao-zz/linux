@@ -1,7 +1,7 @@
 Changes in v8:
-- no driver code change; commit message only
-- commit message: name that a TX LTB failure now unmaps the filter
-  list before free_page() (baseline skipped that unmap)
+- no driver code change. Commit message names that a TX LTB
+  failure now unmaps the filter list before free_page()
+  (baseline skipped that unmap)
 
 Changes in v7:
 - NULL-check buffer_list_addr[0] in update_rx_no_buffer()
