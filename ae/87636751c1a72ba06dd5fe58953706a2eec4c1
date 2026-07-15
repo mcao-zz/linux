@@ -4,10 +4,6 @@ Changes in v8:
   The later statistics patch still moves the counter per-queue
 - snapshot first BATCH_FALLBACK and HCALL_FAIL into fail_fallback
   / fail_hcall; log those copies after unlock
-- noted: irqsave CS, free_buffer_pool vs lock, and
-  netpoll_poll_disable on close stay cover leftovers
-- noted: no Fixes: peel of the correlator WARN_ON / poll-spin /
-  inactive-pool fixes
 - noted: recycle-invalid still does not reset; the skip helper
   owns reset on a valid descriptor
 
