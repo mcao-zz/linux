@@ -532,9 +532,6 @@ ibmveth_setup_rx_interrupts(struct ibmveth_adapter *adapter)
 	struct net_device *netdev = adapter->netdev;
 	int i, rc, num = adapter->num_rx_queues;
 
-	for (i = 0; i < num; i++)
-		napi_enable(&adapter->napi[i]);
-
 	for (i = 0; i < num; i++) {
 		if (!adapter->queue_irq[i]) {
 			netdev_err(netdev, "queue %d has invalid IRQ (0)\n", i);
@@ -551,6 +548,9 @@ ibmveth_setup_rx_interrupts(struct ibmveth_adapter *adapter)
 			goto err_free_irqs;
 		}
 	}
+
+	for (i = 0; i < num; i++)
+		napi_enable(&adapter->napi[i]);
 
 	if (adapter->multi_queue && num > 1) {
 		for (i = 0; i < num; i++) {
@@ -582,8 +582,6 @@ err_disable_napi:
 err_free_irqs:
 	while (--i >= 0)
 		free_irq(adapter->queue_irq[i], &adapter->napi[i]);
-	for (i = 0; i < num; i++)
-		napi_disable(&adapter->napi[i]);
 	return rc;
 }
 
@@ -1395,7 +1393,9 @@ ibmveth_register_logical_lan_queue(struct ibmveth_adapter *adapter,
 	unsigned long handle, hwirq;
 	unsigned int virq;
 	long lpar_rc;
+	int try_again = 1;
 
+retry:
 	netdev_dbg(adapter->netdev,
 		   "Attempting to register queue %d: unit_addr=0x%x buffer_list_dma=0x%llx rxq_desc=0x%llx\n",
 		   queue_index, adapter->vdev->unit_address,
@@ -1439,9 +1439,27 @@ ibmveth_register_logical_lan_queue(struct ibmveth_adapter *adapter,
 		return H_SUCCESS;
 	}
 
+	if (lpar_rc == H_FUNCTION) {
+		if (adapter->multi_queue) {
+			netdev_info(adapter->netdev,
+				    "Multi queue mode not supported by firmware, falling back to single queue\n");
+			adapter->multi_queue = 0;
+		} else {
+			netdev_err(adapter->netdev,
+				   "Unexpected H_FUNCTION for queue %d registration (MQ mode already disabled)\n",
+				   queue_index);
+		}
+		return lpar_rc;
+	}
+
+	if (try_again) {
+		try_again = 0;
+		goto retry;
+	}
+
 	netdev_err(adapter->netdev,
-		   "h_reg_logical_lan_queue failed for queue %d with %ld\n",
-		   queue_index, lpar_rc);
+		   "h_reg_logical_lan_queue failed with %ld after retry\n",
+		   lpar_rc);
 	netdev_err(adapter->netdev,
 		   "queue %d params: unit_addr=0x%x buffer_list_dma=0x%llx rxq_desc=0x%llx\n",
 		   queue_index, adapter->vdev->unit_address,
@@ -1578,8 +1596,16 @@ ibmveth_register_rx_queues(struct ibmveth_adapter *adapter, u64 mac_address)
 
 	for (i = 1; i < adapter->num_rx_queues; i++) {
 		rc = ibmveth_register_single_rx_queue(adapter, i, mac_address);
-		if (rc)
+		if (rc) {
+			if (!adapter->queue_handle[i] ||
+			    !adapter->queue_irq[i]) {
+				netdev_err(netdev,
+					   "Invalid hypervisor return for queue %d: handle=0x%llx irq=%u\n",
+					   i, adapter->queue_handle[i],
+					   adapter->queue_irq[i]);
+			}
 			goto err_unregister;
+		}
 	}
 
 	netdev_dbg(netdev,
