@@ -1891,6 +1891,7 @@ ibmveth_resize_rx_queues_incremental(struct ibmveth_adapter *adapter,
 			netdev_err(netdev, "Failed to set real RX queues to %d: %d\n",
 				   new_count, rc);
 			for (i = new_count; i < old_count; i++) {
+				ibmveth_replenish_task(adapter, i);
 				ibmveth_enable_irq(adapter, i);
 				napi_enable(&adapter->napi[i]);
 			}
