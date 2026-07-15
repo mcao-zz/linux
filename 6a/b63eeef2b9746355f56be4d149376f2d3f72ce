@@ -8,7 +8,7 @@ Changes in v8:
   accessors queue-index aware)
 
 Dropped from this patch because an earlier fix owns it:
-- fix 5 (34c7b4a7ff00): the probe-kobject paragraph. Fix 5 already releases
+- fix 5 (ff1184e56407): the probe-kobject paragraph. Fix 5 already releases
   those kobjects
 Changes in v7:
 - no P02 code change
