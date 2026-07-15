@@ -31,6 +31,7 @@
 #include <linux/ipv6.h>
 #include <linux/slab.h>
 #include <linux/spinlock.h>
+#include <linux/debugfs.h>
 #include <asm/hvcall.h>
 #include <linux/atomic.h>
 #include <asm/vio.h>
@@ -3371,6 +3372,68 @@ static const struct net_device_ops ibmveth_netdev_ops = {
 #endif
 };
 
+static int ibmveth_buffer_pools_show(struct seq_file *m, void *v)
+{
+	struct ibmveth_adapter *adapter = m->private;
+	int i, j;
+
+	/*
+	 * Writers (veth_pool_store, open template copy, reset close/open)
+	 * update these fields under RTNL. Take the same lock so the dump
+	 * is not a torn scalar snapshot. Not required for
+	 * memory safety — embedded arrays only.
+	 */
+	rtnl_lock();
+
+	seq_puts(m, "Queue  Pool  Size  BuffSize  Active  Available\n");
+	seq_puts(m, "-----  ----  ----  --------  ------  ---------\n");
+	if (!adapter->opened)
+		seq_puts(m, "# down: Active/Available 0 unless allocated\n");
+
+	for (i = 0; i < adapter->num_rx_queues; i++) {
+		for (j = 0; j < IBMVETH_NUM_BUFF_POOLS; j++) {
+			struct ibmveth_buff_pool *pool =
+				&adapter->rx_buff_pool[i][j];
+			bool live = pool->skbuff && pool->free_map;
+			int active = live ? pool->active : 0;
+			int available = live ? atomic_read(&pool->available)
+					     : 0;
+
+			seq_printf(m, "%5d  %4d  %4u  %8u  %6d  %9d\n",
+				   i, j, pool->size, pool->buff_size,
+				   active, available);
+		}
+	}
+
+	rtnl_unlock();
+	return 0;
+}
+DEFINE_SHOW_ATTRIBUTE(ibmveth_buffer_pools);
+
+/* Driver-owned root so per-adapter dirs use a stable vio name, not the
+ * mutable netdev->name (avoids stale names / eth0 collisions after rename).
+ */
+static struct dentry *ibmveth_dbg_root;
+
+static void ibmveth_debugfs_init(struct ibmveth_adapter *adapter)
+{
+	if (!ibmveth_dbg_root)
+		ibmveth_dbg_root =
+			debugfs_create_dir(ibmveth_driver_name, NULL);
+
+	adapter->debugfs_dir =
+		debugfs_create_dir(dev_name(&adapter->vdev->dev),
+				   ibmveth_dbg_root);
+	debugfs_create_file("buffer_pools", 0400, adapter->debugfs_dir,
+			    adapter, &ibmveth_buffer_pools_fops);
+}
+
+static void ibmveth_debugfs_exit(struct ibmveth_adapter *adapter)
+{
+	debugfs_remove_recursive(adapter->debugfs_dir);
+	adapter->debugfs_dir = NULL;
+}
+
 static void ibmveth_put_pool_kobjs(struct ibmveth_adapter *adapter,
 				   int pools_ready)
 {
@@ -3595,6 +3658,8 @@ static int ibmveth_probe(struct vio_dev *dev, const struct vio_device_id *id)
 
 	netdev_dbg(netdev, "registered\n");
 
+	ibmveth_debugfs_init(adapter);
+
 	return 0;
 }
 
@@ -3603,6 +3668,8 @@ static void ibmveth_remove(struct vio_dev *dev)
 	struct net_device *netdev = dev_get_drvdata(&dev->dev);
 	struct ibmveth_adapter *adapter = netdev_priv(netdev);
 	int i;
+
+	ibmveth_debugfs_exit(adapter);
 
 	for (i = 0; i < IBMVETH_NUM_BUFF_POOLS; i++)
 		kobject_put(&adapter->rx_buff_pool[0][i].kobj);
@@ -3839,6 +3906,8 @@ static int __init ibmveth_module_init(void)
 static void __exit ibmveth_module_exit(void)
 {
 	vio_unregister_driver(&ibmveth_driver);
+	debugfs_remove_recursive(ibmveth_dbg_root);
+	ibmveth_dbg_root = NULL;
 }
 
 module_init(ibmveth_module_init);
