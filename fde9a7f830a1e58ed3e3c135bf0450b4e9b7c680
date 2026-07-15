@@ -96,8 +96,10 @@ Same 15 patches as v7. Folded from the v7 netdev-bot review
 * Patch 12: cap max_rx at the live rx_count once mq_fallback.
   Do not advertise max_rx = 1.
 * Patch 14: combined -L rolls RX back if TX misses. Skip unmask
-  if set_real(keep) fails. Close skips unmap on H_FREE
-  fail-before-start and retries on the next open and remove.
+  if set_real(keep) fails; still napi_enable so close/reset
+  is not a second napi_disable hang. Close skips unmap on
+  H_FREE fail-before-start and retries on the next open and
+  remove.
 * Patch 15: down-path publish returns -EBUSY if a handle is
   still set in the new range.
 * Kept: enable_irq on schedule_prep failure; mask PHYP before
