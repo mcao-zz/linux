@@ -1656,7 +1656,6 @@ static int ibmveth_open(struct net_device *netdev)
 
 out_cleanup_rx_interrupts:
 	ibmveth_cleanup_rx_interrupts(adapter);
-	ibmveth_free_tx_resources(adapter);
 out_unregister_queues:
 	ibmveth_dispose_subordinate_irq_mappings(adapter);
 	ibmveth_free_all_queues(adapter);
