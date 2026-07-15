@@ -1648,22 +1648,12 @@ static int ibmveth_open(struct net_device *netdev)
 	if (rc)
 		goto out_cleanup_rx_interrupts;
 
-	rc = ibmveth_alloc_rx_qstats(adapter);
-	if (rc)
-		goto out_cleanup_rx_interrupts;
-
-	rc = ibmveth_alloc_tx_qstats(adapter);
-	if (rc)
-		goto out_free_rx_qstats;
-
 	netif_tx_start_all_queues(netdev);
 
 	netdev_dbg(netdev, "open complete\n");
 
 	return 0;
 
-out_free_rx_qstats:
-	ibmveth_free_rx_qstats(adapter);
 out_cleanup_rx_interrupts:
 	ibmveth_cleanup_rx_interrupts(adapter);
 	ibmveth_free_tx_resources(adapter);
@@ -1696,7 +1686,6 @@ static int ibmveth_close(struct net_device *netdev)
 		}
 	}
 
-	ibmveth_free_tx_qstats(adapter);
 	ibmveth_free_tx_resources(adapter);
 	ibmveth_cleanup_rx_interrupts(adapter);
 	ibmveth_update_rx_no_buffer(adapter);
@@ -1704,7 +1693,6 @@ static int ibmveth_close(struct net_device *netdev)
 	ibmveth_free_buffer_pools(adapter);
 	ibmveth_cleanup_rx_resources(adapter);
 	ibmveth_free_filter_list(adapter);
-	ibmveth_free_rx_qstats(adapter);
 
 	netdev_dbg(netdev, "close complete\n");
 
@@ -1963,7 +1951,6 @@ static int ibmveth_set_features(struct net_device *dev,
 
 	return rc1 ? rc1 : rc2;
 }
-
 
 static void ibmveth_get_strings(struct net_device *dev, u32 stringset, u8 *data)
 {
@@ -2910,6 +2897,14 @@ static int ibmveth_probe(struct vio_dev *dev, const struct vio_device_id *id)
 		netif_napi_add_weight(netdev, &adapter->napi[i],
 				      ibmveth_poll, 16);
 
+	if (ibmveth_alloc_rx_qstats(adapter) ||
+	    ibmveth_alloc_tx_qstats(adapter)) {
+		ibmveth_free_tx_qstats(adapter);
+		ibmveth_free_rx_qstats(adapter);
+		free_netdev(netdev);
+		return -ENOMEM;
+	}
+
 	netdev->irq = dev->irq;
 	netdev->netdev_ops = &ibmveth_netdev_ops;
 	netdev->ethtool_ops = &netdev_ethtool_ops;
@@ -2994,6 +2989,8 @@ static int ibmveth_probe(struct vio_dev *dev, const struct vio_device_id *id)
 	if (rc) {
 		netdev_dbg(netdev, "failed to set number of tx queues rc=%d\n",
 			   rc);
+		ibmveth_free_tx_qstats(adapter);
+		ibmveth_free_rx_qstats(adapter);
 		free_netdev(netdev);
 		return rc;
 	}
@@ -3010,6 +3007,8 @@ static int ibmveth_probe(struct vio_dev *dev, const struct vio_device_id *id)
 
 	if (rc) {
 		netdev_dbg(netdev, "failed to register netdev rc=%d\n", rc);
+		ibmveth_free_tx_qstats(adapter);
+		ibmveth_free_rx_qstats(adapter);
 		free_netdev(netdev);
 		return rc;
 	}
@@ -3031,6 +3030,9 @@ static void ibmveth_remove(struct vio_dev *dev)
 		kobject_put(&adapter->rx_buff_pool[0][i].kobj);
 
 	unregister_netdev(netdev);
+
+	ibmveth_free_tx_qstats(adapter);
+	ibmveth_free_rx_qstats(adapter);
 
 	free_netdev(netdev);
 	dev_set_drvdata(&dev->dev, NULL);
