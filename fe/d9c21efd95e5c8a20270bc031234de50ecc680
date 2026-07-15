@@ -1,10 +1,10 @@
 Changes in v8:
 - cap max_rx at the live rx_count once mq_fallback;
-  do not advertise max_rx = 1
+  do not advertise max_rx = 1. Do not clamp rx_count
 - this peel only reports; the rx_count reject lives
   in the MQ enable patch
-- noted: live RX set is the resize patch; down-path
-  and max_tx floor stay later
+- noted: live RX set, down-path, and max_tx floor stay
+  later
 
 Changes in v7:
 - reject rx_count change with -EOPNOTSUPP in
