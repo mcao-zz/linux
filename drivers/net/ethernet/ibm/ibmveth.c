@@ -763,13 +763,17 @@ hcall_failure:
 				netdev_err(adapter->netdev,
 					   "MQ buffer add H_FUNCTION (q=%d, batch=%d)\n",
 					   queue_index, batch);
-				break;
 			} else if (batch > 1) {
+				/*
+				 * Live Partition Migration may drop multi-
+				 * buffer support. Fall back to single-buffer
+				 * on the next replenish; do not continue with
+				 * a stale local batch size (infinite loop).
+				 */
 				netdev_warn(adapter->netdev,
 					    "Legacy batch add H_FUNCTION (batch=%d), fallback\n",
 					    batch);
 				adapter->rx_buffers_per_hcall = 1;
-				continue; /* BUG: local batch not refreshed — AI9-2 */
 			}
 		}
 		break;
