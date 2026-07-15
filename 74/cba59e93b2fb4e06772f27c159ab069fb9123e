@@ -167,11 +167,6 @@ Code changes:
   range is still registered. max_tx floor; max_rx cap stays
   in patch 12.
 
-Known leftovers (not this series):
-
-* ip_fast_csum() on IHL=0. Preexisting RX. Not this series.
-* A PHYP mask hcall that failed is still never acknowledged.
-
 Changes in v7:
 
 Same 15 patches as v6. We followed up the v6 netdev-bot review
