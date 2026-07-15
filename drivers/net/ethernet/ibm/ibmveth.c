@@ -532,6 +532,9 @@ ibmveth_setup_rx_interrupts(struct ibmveth_adapter *adapter)
 	struct net_device *netdev = adapter->netdev;
 	int i, rc, num = adapter->num_rx_queues;
 
+	for (i = 0; i < num; i++)
+		napi_enable(&adapter->napi[i]);
+
 	for (i = 0; i < num; i++) {
 		if (!adapter->queue_irq[i]) {
 			netdev_err(netdev, "queue %d has invalid IRQ (0)\n", i);
@@ -548,9 +551,6 @@ ibmveth_setup_rx_interrupts(struct ibmveth_adapter *adapter)
 			goto err_free_irqs;
 		}
 	}
-
-	for (i = 0; i < num; i++)
-		napi_enable(&adapter->napi[i]);
 
 	if (adapter->multi_queue && num > 1) {
 		for (i = 0; i < num; i++) {
@@ -582,6 +582,8 @@ err_disable_napi:
 err_free_irqs:
 	while (--i >= 0)
 		free_irq(adapter->queue_irq[i], &adapter->napi[i]);
+	for (i = 0; i < num; i++)
+		napi_disable(&adapter->napi[i]);
 	return rc;
 }
 
