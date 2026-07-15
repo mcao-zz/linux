@@ -2,7 +2,7 @@ ibmveth MQ — v8 COVER LETTER (v8.5r4 draft; do not mail)
 ==================================================================
 Subject: [PATCH net-next v8 00/15] ibmveth: Add multi-queue RX support
 
-# Branch: veth-mq-v8.5r4, 15 patches on net-next/main 279d5c8afcd3
+# Branch: veth-mq-v8.5r4 @ 62f0dc471062, 15 patches on net-next/main 279d5c8afcd3
 #   (fixes merged in d53a5309cc4a; net pair af0524bf4ce1 /
 #   84bec0bf0352 already in). Generate with --base=279d5c8afcd3.
 # Hold lifted: Jakub asked to wait for the fixes; they are in net-next.
