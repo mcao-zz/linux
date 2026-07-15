@@ -15,9 +15,9 @@ Subject: [PATCH net-next v8 00/15] ibmveth: Add multi-queue RX support
 #   (O5); Dave / Shaik re-confirm P08 tags (O4). W=1+KUnit on lab.
 # Do not mention D-NB / harvest-before-H_FREE.
 # D-IRQ: keep enable_irq() in restart_rx_queue() when prep
-#   fails, for this send. A later pass may drop that fallback.
-#   The "Kept: enable_irq on schedule_prep failure" line below
-#   is the decision for this mail.
+#   fails, for this send (P14/P15 Later consideration). A later
+#   pass may drop that fallback. Do not put a Kept inventory
+#   in the mailed cover body.
 # Per-patch detail stays below --- on each commit (git notes).
 # This file is refs/notes/cover on the r3 tip. Generate from
 # that note, not from a second blurb.
@@ -166,11 +166,6 @@ Code changes:
 * Patch 15: down-path publish; -EBUSY if a queue in the new
   range is still registered. max_tx floor; max_rx cap stays
   in patch 12.
-* Kept: enable_irq on schedule_prep failure; mask PHYP before
-  napi_disable; get_channels reports the live rx_count (no clamp);
-  ethtool -L TX shrink stops the queues and relies on
-  netif_set_real_num_tx_queues()'s synchronize_net() before the LTBs
-  are freed.
 
 Known leftovers (not this series):
 
