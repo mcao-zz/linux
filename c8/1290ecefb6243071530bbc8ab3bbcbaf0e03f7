@@ -6,16 +6,16 @@ Changes in v8:
   range (the comment too), folded only on disable; drop the
   enable-fail rollback paragraph (the 0..i remask is unchanged)
 Dropped from this patch because an earlier fix owns it:
-- fix 1 (c193ccda2af0): the poll_controller rewrite and its netpoll kick.
+- fix 1 (31e562229afe): the poll_controller rewrite and its netpoll kick.
   ndo_poll_controller is gone
-- fix 2 (f9f424944b0e): opened and the close() gate. This patch does not add
+- fix 2 (c23432004253): opened and the close() gate. This patch does not add
   them. Fix 2 already gates close() and set_channels() on opened;
   this patch never had a set_channels hunk
-- fix 8 (bd97f9417e06): close()'s synchronize_net(), and the request_irq-failure
+- fix 8 (b1b18f2d36cd): close()'s synchronize_net(), and the request_irq-failure
   synchronize_net(). The close wait now lives in the helpers.
   request_irq runs before napi_enable, so that failure never
   enabled NAPI
-- net pair (6a638c2d7f85): the inline h_free on setup failure.
+- net pair (af0524bf4ce1): the inline h_free on setup failure.
   out_free_buffer_pools already calls h_free_logical_lan()
 
 Changes in v7:
