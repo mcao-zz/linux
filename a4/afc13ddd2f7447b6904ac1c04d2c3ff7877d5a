@@ -1,17 +1,8 @@
 Changes in v8:
-- netif_tx_disable() at the start of open() so TX cannot run
-  while LTBs are still being allocated: first-open generic
-  XDP_TX, and a failed reopen that left the queues awake after
-  ethtool -L. netif_tx_start_all_queues() stays after
-  alloc_tx_resources(). Do not move TX alloc before the LAN
-- commit message: drop "set_channels() IFF_UP vs opened is later
-  (P14/P15)"; that gate is the interrupt-helper patch
-- noted: NULL-LTB start_xmit drop stays; no Fixes: peel (not
-  [PATCH net 0/2]; that pair is h_free / shared-i / filter TCE)
-- noted: H_FREE log-and-continue then unmap is preexisting
-  close() policy; optional, not this extract
-- noted: shared netdev->stats.tx_dropped++ is later per-queue
-  stats
+- netif_tx_disable() at the start of open(); start stays after
+  alloc. Do not move TX alloc before the LAN
+- H_FREE fail-before-start skip-unmap is later (PHYP); isolated
+  close still unmaps
 
 Changes in v7:
 - late alloc_tx_resources() failure: synchronize_net()
