@@ -1965,43 +1965,6 @@ static int ibmveth_set_features(struct net_device *dev,
 }
 
 
-static void ibmveth_aggregate_rx_qstats(struct ibmveth_adapter *adapter)
-{
-	u64 total_invalid = 0;
-	u64 total_large = 0;
-	int i;
-
-	if (!adapter->rx_qstats)
-		return;
-
-	for (i = 0; i < adapter->num_rx_queues; i++) {
-		total_invalid += adapter->rx_qstats[i].invalid_buffers;
-		total_large += adapter->rx_qstats[i].large_packets;
-	}
-
-	adapter->rx_invalid_buffer = total_invalid;
-	adapter->rx_large_packets = total_large;
-}
-
-static void ibmveth_aggregate_tx_qstats(struct ibmveth_adapter *adapter)
-{
-	struct net_device *netdev = adapter->netdev;
-	u64 total_large = 0;
-	u64 total_send_failed = 0;
-	int i;
-
-	if (!adapter->tx_qstats)
-		return;
-
-	for (i = 0; i < netdev->real_num_tx_queues; i++) {
-		total_large += adapter->tx_qstats[i].large_packets;
-		total_send_failed += adapter->tx_qstats[i].send_failures;
-	}
-
-	adapter->tx_large_packets = total_large;
-	adapter->tx_send_failed = total_send_failed;
-}
-
 static void ibmveth_get_strings(struct net_device *dev, u32 stringset, u8 *data)
 {
 	struct ibmveth_adapter *adapter = netdev_priv(dev);
@@ -2062,9 +2025,6 @@ static void ibmveth_get_ethtool_stats(struct net_device *dev,
 {
 	struct ibmveth_adapter *adapter = netdev_priv(dev);
 	int i, j;
-
-	ibmveth_aggregate_rx_qstats(adapter);
-	ibmveth_aggregate_tx_qstats(adapter);
 
 	for (i = 0; i < ARRAY_SIZE(ibmveth_stats); i++)
 		data[i] = IBMVETH_GET_STAT(adapter, ibmveth_stats[i].offset);
@@ -2283,6 +2243,7 @@ static netdev_tx_t ibmveth_start_xmit(struct sk_buff *skb,
 		if (adapter->fw_large_send_support) {
 			mss = (unsigned long)skb_shinfo(skb)->gso_size;
 			adapter->tx_qstats[queue_num].large_packets++;
+			adapter->tx_large_packets++;
 		} else if (!skb_is_gso_v6(skb)) {
 			/* Put -1 in the IP checksum to tell phyp it
 			 * is a largesend packet. Put the mss in
@@ -2292,6 +2253,7 @@ static netdev_tx_t ibmveth_start_xmit(struct sk_buff *skb,
 			tcp_hdr(skb)->check =
 				cpu_to_be16(skb_shinfo(skb)->gso_size);
 			adapter->tx_qstats[queue_num].large_packets++;
+			adapter->tx_large_packets++;
 		}
 	}
 
@@ -2327,6 +2289,7 @@ static netdev_tx_t ibmveth_start_xmit(struct sk_buff *skb,
 	if (ibmveth_send(adapter, desc.desc, mss)) {
 		adapter->tx_qstats[queue_num].send_failures++;
 		adapter->tx_qstats[queue_num].dropped_packets++;
+		adapter->tx_send_failed++;
 	} else {
 		adapter->tx_qstats[queue_num].packets++;
 		adapter->tx_qstats[queue_num].bytes += skb->len;
