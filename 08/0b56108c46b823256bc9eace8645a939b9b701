@@ -1,4 +1,11 @@
 Changes in v8:
+- opened TX shrink uses netif_tx_disable() (same as
+  close); stop_all_queues does not wait for xmit
+- free_tx_resources() walks IBMVETH_MAX_QUEUES, not
+  real_num, so skip-unmap + down-path shrink cannot
+  orphan TX LTBs
+- resize_rx_channels kdoc: while down return 0;
+  set_channels publishes without allocating
 - down-path publish returns -EBUSY if a handle is
   still set in [old, goal); check before TX set_real.
   Do not unmap while down (PHYP: fail-before-start)
