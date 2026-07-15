@@ -146,34 +146,18 @@ Code changes:
   during the fill. replenish_task_cycles++ under the lock; first
   BATCH_FALLBACK and HCALL_FAIL are logged after unlock. Harvest
   resets on a bad correlator.
-* Patch 9: snapshot the correlator once in deliver_frame().
-  Bad-correlator and oversize skips count rx_dropped and consume
-  NAPI budget. rx_invalid_buffer stays the slots PHYP marks
-  invalid. The stopping check only narrows the re-arm window;
-  cleanup's synchronize_net() is the barrier.
-* Patch 9: keep fix 1's rescheduled / budget-1 return on the
-  napi_schedule restart path after rebase onto fixes v3.
+* Patch 9: snapshot correlator once; bad/oversize count
+  rx_dropped and consume budget. Keep fix 1's rescheduled /
+  budget-1 return on the napi_schedule restart path.
 
-* Patch 10: set_channels() returns -EOPNOTSUPP on an rx_count
-  change until patch 14. apply_mq_fallback() sets real_num to 1.
-  A hard-failed H_FREE skips unmap. Subordinate IRQs are named
-  ibmveth-<unit>-rxN; queue 0 keeps netdev->name.
-* Patch 11: snapshot no_buffer_drops and retired under
-  replenish_lock; fold the last sample after successful H_FREE.
-  Driver RX drops are per-queue and summed into rx_dropped.
-  rx_missed_errors is the PHYP no-buffer pair. TX hw_drops left
-  unset; dropped_packets stays ndo_get_stats64 tx_dropped only.
-  Per-queue counters use WRITE_ONCE()/READ_ONCE() (single writer,
-  lockless readers); rx%d_polls is not counted for netpoll's
-  budget-0 call, so it keeps one writer. Per-queue -S keys that
-  duplicate standard stats are gone: the no-buffer pair is qstats
-  rx-hw-drop-overruns (and part of rx-hw-drops); tx%d_large_packets
-  and tx%d_checksum_offload are dropped, and TX large sends stay in
-  the existing tx_large_packets key. The no-buffer values no longer
-  reset on close.
+* Patch 10: MQ enable. set_channels rejects rx_count change
+  until patch 14; apply_mq_fallback sets real_num to 1; hard
+  H_FREE skips unmap. Subordinate IRQs ibmveth-<unit>-rxN.
+* Patch 11: per-queue stats via netdev_stat_ops; no_buffer
+  snapshot/retire under replenish_lock; drop duplicate
+  per-queue -S keys; WRITE_ONCE/READ_ONCE; no reset on close.
 * Patch 12: cap max_rx at the live rx_count once mq_fallback.
-  Do not advertise max_rx = 1. mq_fallback uses
-  READ_ONCE()/WRITE_ONCE().
+  Do not advertise max_rx = 1.
 * Patch 14: live -L. synchronize_net after napi_disable then
   remask; roll RX back if TX misses; skip unmask if
   set_real(keep) fails (still napi_enable); skip unmap on
@@ -182,8 +166,6 @@ Code changes:
 * Patch 15: down-path publish; -EBUSY if a queue in the new
   range is still registered. max_tx floor; max_rx cap stays
   in patch 12.
-* Commit message / kdoc / comment updates on every patch,
-  mostly to drop what the fixes now own.
 * Kept: enable_irq on schedule_prep failure; mask PHYP before
   napi_disable; get_channels reports the live rx_count (no clamp);
   ethtool -L TX shrink stops the queues and relies on
