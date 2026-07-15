@@ -317,7 +317,7 @@ struct ibmveth_rx_queue_stats {
 	u64 large_packets;
 	u64 invalid_buffers;
 	u64 no_buffer_drops;
-};
+} ____cacheline_aligned_in_smp;
 
 struct ibmveth_tx_queue_stats {
 	u64 packets;
@@ -326,13 +326,10 @@ struct ibmveth_tx_queue_stats {
 	u64 dropped_packets;
 	u64 send_failures;
 	u64 checksum_offload;
-};
+} ____cacheline_aligned_in_smp;
 
-#define IBMVETH_NUM_RX_QSTATS \
-	(sizeof(struct ibmveth_rx_queue_stats) / sizeof(u64))
-
-#define IBMVETH_NUM_TX_QSTATS \
-	(sizeof(struct ibmveth_tx_queue_stats) / sizeof(u64))
+#define IBMVETH_NUM_RX_QSTATS 7
+#define IBMVETH_NUM_TX_QSTATS 6
 
 struct ibmveth_buff_pool {
     u32 size;
