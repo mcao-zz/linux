@@ -102,9 +102,7 @@ Same 15 patches as v7. Folded from the v7 netdev-bot review
   rings are freed. Reject an ethtool -L that changes rx_count;
   later patches implement live RX set. Keep the TX grow-fail
   errno when restoring the old real_num. apply_mq_fallback
-  publishes 1 and sets real_num to match. Name replenish_* with
-  the racy counters. The helper patch adds schedule_work on
-  buffer-add H_FUNCTION; this commit makes that path reachable.
+  publishes 1 and sets real_num to match.
 * Patch 11: snapshot no_buffer_drops and retired under
   replenish_lock. After successful H_FREE fold the last
   sample into retired. Do not claim large_packets /
