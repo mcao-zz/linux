@@ -2614,8 +2614,8 @@ static int ibmveth_set_channels(struct net_device *netdev,
 	struct ibmveth_adapter *adapter = netdev_priv(netdev);
 	unsigned int old_rx = adapter->num_rx_queues;
 	unsigned int goal_rx = channels->rx_count;
-	unsigned int old = netdev->real_num_tx_queues;
-	unsigned int goal = channels->tx_count;
+	unsigned int old_tx = netdev->real_num_tx_queues;
+	unsigned int goal_tx = channels->tx_count;
 	int rxq_entries = adapter->rx_queue[0].num_slots;
 	int rc, i;
 
@@ -2637,13 +2637,20 @@ static int ibmveth_set_channels(struct net_device *netdev,
 			return -EINVAL;
 		}
 
-		/* Stash desired RX count; open() publishes it via
-		 * netif_set_real_num_rx_queues() after queue registration.
+		if (goal_tx != old_tx) {
+			rc = netif_set_real_num_tx_queues(netdev, goal_tx);
+			if (rc)
+				return rc;
+		}
+
+		/* Stash desired RX count only after TX succeeds (or was
+		 * already correct); open() publishes it via
+		 * netif_set_real_num_rx_queues().
 		 */
-		if (goal_rx != adapter->num_rx_queues)
+		if (goal_rx != old_rx)
 			adapter->num_rx_queues = goal_rx;
 
-		return netif_set_real_num_tx_queues(netdev, goal);
+		return 0;
 	}
 
 	if (goal_rx > 1 && !adapter->multi_queue) {
@@ -2673,13 +2680,17 @@ static int ibmveth_set_channels(struct net_device *netdev,
 	/* We have IBMVETH_MAX_QUEUES netdev_queue's allocated
 	 * but we may need to alloc/free the ltb's.
 	 */
-	if (goal == old)
+	if (goal_tx == old_tx)
 		return 0;
 
 	netif_tx_stop_all_queues(netdev);
 
-	/* Allocate any queue that we need */
-	for (i = old; i < goal; i++) {
+	/* Allocate any queue that we need. Initialize i to old_tx so a
+	 * scale-down path that never enters the loop still has defined
+	 * bounds if set_real_num_tx_queues() fails.
+	 */
+	i = old_tx;
+	for (; i < goal_tx; i++) {
 		if (adapter->tx_ltb_ptr[i])
 			continue;
 
@@ -2689,27 +2700,27 @@ static int ibmveth_set_channels(struct net_device *netdev,
 
 		/* if something goes wrong, free everything we just allocated */
 		netdev_err(netdev, "Failed to allocate more tx queues, returning to %d queues\n",
-			   old);
-		goal = old;
-		old = i;
+			   old_tx);
+		goal_tx = old_tx;
+		old_tx = i;
 		break;
 	}
-	rc = netif_set_real_num_tx_queues(netdev, goal);
+	rc = netif_set_real_num_tx_queues(netdev, goal_tx);
 	if (rc) {
 		netdev_err(netdev, "Failed to set real tx queues, returning to %d queues\n",
-			   old);
-		goal = old;
-		old = i;
+			   old_tx);
+		goal_tx = old_tx;
+		old_tx = i;
 	}
 	/* Free any that are no longer needed */
-	for (i = old; i > goal; i--) {
+	for (i = old_tx; i > goal_tx; i--) {
 		if (adapter->tx_ltb_ptr[i - 1])
 			ibmveth_free_tx_ltb(adapter, i - 1);
 	}
 
 	netif_tx_wake_all_queues(netdev);
 
-	return 0;
+	return rc;
 }
 
 static const struct ethtool_ops netdev_ethtool_ops = {
