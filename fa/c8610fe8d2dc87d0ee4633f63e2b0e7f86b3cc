@@ -2,7 +2,8 @@ Changes in v7:
 - extend remove_buffer_from_pool Return: -EINVAL also
   inactive / not live (skbuff or free_map NULL)
 - noted: irqsave CS and free_buffer_pool vs lock stay
-  cover leftovers; skip_bad stays in P09
+  cover leftovers (lock-protocol rewrite, not
+  two conditions); skip_bad stays in P09
 
 Changes in v6:
 - drop inline on the queue-index rxq_* accessors (plain static)
