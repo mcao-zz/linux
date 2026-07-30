@@ -14,6 +14,7 @@
 #ifndef _IBMVETH_H
 #define _IBMVETH_H
 
+#include <linux/bits.h>
 #include <linux/spinlock_types.h>
 
 /* constants for H_MULTICAST_CTRL */
@@ -39,6 +40,13 @@
 #define IBMVETH_ILLAN_IPV6_TCP_CSUM		0x0000000000000004UL
 #define IBMVETH_ILLAN_IPV4_TCP_CSUM		0x0000000000000002UL
 #define IBMVETH_ILLAN_ACTIVE_TRUNK		0x0000000000000001UL
+
+/*
+ * RSS hash algorithms for H_VIOCTL H_ILLAN_MULTIQUEUE_HASH.
+ * PAPR uses big-endian bit numbering, so bit 0 is the MSB.
+ */
+#define IBMVETH_RSS_HASH_MURMUR		BIT_ULL(63) /* Murmur3 (PAPR bit 0) */
+#define IBMVETH_RSS_HASH_ADDITIVE	BIT_ULL(62) /* Additive (PAPR bit 1) */
 
 #define IBMVETH_MIN_LSO_MSS		224	/* Minimum MSS for LSO */
 /* hcall macros */

@@ -2806,6 +2806,190 @@ static int ibmveth_set_channels(struct net_device *netdev,
 	return rc;
 }
 
+/**
+ * ibmveth_query_rss_algo - Query current RSS hash algorithm
+ * @adapter: ibmveth adapter
+ * @cur_algo: Output - current algorithm, may be NULL
+ * @supported: Output - supported algorithms bitmask, may be NULL
+ *
+ * Context: Process context
+ * Return: 0 on success, negative error code on failure
+ */
+static int ibmveth_query_rss_algo(struct ibmveth_adapter *adapter,
+				  u64 *cur_algo, u64 *supported)
+{
+	unsigned long retbuf[PLPAR_HCALL_BUFSIZE];
+	long rc;
+
+	rc = plpar_hcall(H_VIOCTL, retbuf,
+			 adapter->vdev->unit_address,
+			 H_ILLAN_MULTIQUEUE_HASH,
+			 0, 0, 0);
+
+	if (rc == H_NOT_FOUND)
+		return -EOPNOTSUPP;
+	if (rc != H_SUCCESS) {
+		netdev_dbg(adapter->netdev,
+			   "Failed to query RSS hash algorithm: rc=%ld\n", rc);
+		return -EIO;
+	}
+
+	if (supported)
+		*supported = retbuf[0];
+	if (cur_algo)
+		*cur_algo = retbuf[1];
+
+	return 0;
+}
+
+/**
+ * ibmveth_set_rss_algo - Set RSS hash algorithm
+ * @adapter: ibmveth adapter
+ * @algo: Algorithm to set
+ *
+ * Context: Process context
+ * Return: 0 on success, negative error code on failure
+ */
+static int ibmveth_set_rss_algo(struct ibmveth_adapter *adapter, u64 algo)
+{
+	unsigned long retbuf[PLPAR_HCALL_BUFSIZE];
+	long rc;
+
+	rc = plpar_hcall(H_VIOCTL, retbuf,
+			 adapter->vdev->unit_address,
+			 H_ILLAN_MULTIQUEUE_HASH,
+			 1, algo, 0);
+
+	if (rc == H_NOT_FOUND)
+		return -EOPNOTSUPP;
+	if (rc != H_SUCCESS) {
+		netdev_dbg(adapter->netdev,
+			   "Failed to set RSS hash algorithm to 0x%llx: rc=%ld\n",
+			   algo, rc);
+		return -EIO;
+	}
+
+	netdev_dbg(adapter->netdev,
+		   "RSS hash algorithm changed from 0x%lx to 0x%llx\n",
+		   retbuf[1], algo);
+
+	return 0;
+}
+
+static u32 ibmveth_get_rx_ring_count(struct net_device *netdev)
+{
+	struct ibmveth_adapter *adapter = netdev_priv(netdev);
+
+	return adapter->num_rx_queues;
+}
+
+static u32 ibmveth_get_rxfh_key_size(struct net_device *netdev)
+{
+	return 0;
+}
+
+static u32 ibmveth_get_rxfh_indir_size(struct net_device *netdev)
+{
+	return 0;
+}
+
+/**
+ * ibmveth_get_rxfh - Get RSS hash configuration
+ * @netdev: network device
+ * @rxfh: RSS hash configuration structure to fill
+ *
+ * Maps PHYP Murmur/Additive to ETH_RSS_HASH_MURMUR / ETH_RSS_HASH_ADDITIVE.
+ * Key and indirection table remain hypervisor-managed.
+ *
+ * Context: Process context
+ * Return: 0 on success, negative error code on failure
+ */
+static int ibmveth_get_rxfh(struct net_device *netdev,
+			    struct ethtool_rxfh_param *rxfh)
+{
+	struct ibmveth_adapter *adapter = netdev_priv(netdev);
+	u64 cur_algo;
+	int rc;
+
+	if (!adapter->multi_queue)
+		return -EOPNOTSUPP;
+
+	rc = ibmveth_query_rss_algo(adapter, &cur_algo, NULL);
+	if (rc)
+		return rc;
+
+	if (cur_algo & IBMVETH_RSS_HASH_MURMUR)
+		rxfh->hfunc = ETH_RSS_HASH_MURMUR;
+	else if (cur_algo & IBMVETH_RSS_HASH_ADDITIVE)
+		rxfh->hfunc = ETH_RSS_HASH_ADDITIVE;
+	else
+		rxfh->hfunc = ETH_RSS_HASH_UNKNOWN;
+
+	return 0;
+}
+
+/**
+ * ibmveth_set_rxfh - Set RSS hash configuration
+ * @netdev: network device
+ * @rxfh: RSS hash configuration to set
+ * @extack: netlink extended ack for error reporting
+ *
+ * Only murmur/additive hash-function changes are supported. Key and
+ * indirection table changes are rejected.
+ *
+ * Context: Process context
+ * Return: 0 on success, negative error code on failure
+ */
+static int ibmveth_set_rxfh(struct net_device *netdev,
+			    struct ethtool_rxfh_param *rxfh,
+			    struct netlink_ext_ack *extack)
+{
+	struct ibmveth_adapter *adapter = netdev_priv(netdev);
+	u64 algo, supported;
+	int rc;
+
+	if (!adapter->multi_queue)
+		return -EOPNOTSUPP;
+
+	/* Key and indirection table are hypervisor-managed. */
+	if (rxfh->key || rxfh->indir)
+		return -EOPNOTSUPP;
+
+	if (rxfh->hfunc != ETH_RSS_HASH_NO_CHANGE) {
+		rc = ibmveth_query_rss_algo(adapter, NULL, &supported);
+		if (rc)
+			return rc;
+
+		switch (rxfh->hfunc) {
+		case ETH_RSS_HASH_MURMUR:
+			algo = IBMVETH_RSS_HASH_MURMUR;
+			break;
+		case ETH_RSS_HASH_ADDITIVE:
+			algo = IBMVETH_RSS_HASH_ADDITIVE;
+			break;
+		default:
+			NL_SET_ERR_MSG_MOD(extack,
+					   "RSS hash function not supported");
+			return -EOPNOTSUPP;
+		}
+
+		if (!(supported & algo)) {
+			NL_SET_ERR_MSG_MOD(extack,
+					   "RSS hash function not supported");
+			return -EOPNOTSUPP;
+		}
+
+		rc = ibmveth_set_rss_algo(adapter, algo);
+		if (rc) {
+			NL_SET_ERR_MSG_MOD(extack,
+					   "Failed to set RSS hash algorithm");
+			return rc;
+		}
+	}
+
+	return 0;
+}
+
 static const struct ethtool_ops netdev_ethtool_ops = {
 	.get_drvinfo		         = netdev_get_drvinfo,
 	.get_link		         = ethtool_op_get_link,
@@ -2815,7 +2999,12 @@ static const struct ethtool_ops netdev_ethtool_ops = {
 	.get_link_ksettings	         = ibmveth_get_link_ksettings,
 	.set_link_ksettings              = ibmveth_set_link_ksettings,
 	.get_channels			 = ibmveth_get_channels,
-	.set_channels			 = ibmveth_set_channels
+	.set_channels			 = ibmveth_set_channels,
+	.get_rx_ring_count		 = ibmveth_get_rx_ring_count,
+	.get_rxfh_key_size		 = ibmveth_get_rxfh_key_size,
+	.get_rxfh_indir_size		 = ibmveth_get_rxfh_indir_size,
+	.get_rxfh			 = ibmveth_get_rxfh,
+	.set_rxfh			 = ibmveth_set_rxfh,
 };
 
 static int ibmveth_ioctl(struct net_device *dev, struct ifreq *ifr, int cmd)
@@ -3614,7 +3803,7 @@ static void ibmveth_debugfs_exit(struct ibmveth_adapter *adapter)
 }
 
 static void ibmveth_put_pool_kobjs(struct ibmveth_adapter *adapter,
-				  int pools_ready)
+				   int pools_ready)
 {
 	int i;
 
