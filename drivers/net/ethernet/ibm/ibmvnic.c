@@ -897,6 +897,7 @@ static int init_rx_pools(struct net_device *netdev)
 {
 	struct ibmvnic_adapter *adapter = netdev_priv(netdev);
 	struct device *dev = &adapter->vdev->dev;
+	struct ibmvnic_rx_pool *new_rx_pool;
 	struct ibmvnic_rx_pool *rx_pool;
 	u64 num_pools;
 	u64 pool_size;		/* # of buffers in one pool */
@@ -912,16 +913,21 @@ static int init_rx_pools(struct net_device *netdev)
 		goto update_ltb;
 	}
 
-	/* Allocate/populate the pools. */
-	release_rx_pools(adapter);
-
-	adapter->rx_pool = kcalloc(num_pools,
-				   sizeof(struct ibmvnic_rx_pool),
-				   GFP_KERNEL);
-	if (!adapter->rx_pool) {
+	/* Allocate the new pools before releasing the old ones. If the
+	 * allocation fails the old pools are still there, so the interface
+	 * keeps running on its current configuration instead of being left
+	 * with none.
+	 */
+	new_rx_pool = kcalloc(num_pools,
+			      sizeof(struct ibmvnic_rx_pool),
+			      GFP_KERNEL);
+	if (!new_rx_pool) {
 		dev_err(dev, "Failed to allocate rx pools\n");
 		return -ENOMEM;
 	}
+
+	release_rx_pools(adapter);
+	adapter->rx_pool = new_rx_pool;
 
 	/* Set num_active_rx_pools early. If we fail below after partial
 	 * allocation, release_rx_pools() will know how many to look for.
@@ -1138,6 +1144,8 @@ static int init_tx_pools(struct net_device *netdev)
 {
 	struct ibmvnic_adapter *adapter = netdev_priv(netdev);
 	struct device *dev = &adapter->vdev->dev;
+	struct ibmvnic_tx_pool *new_tso_pool;
+	struct ibmvnic_tx_pool *new_tx_pool;
 	int num_pools;
 	u64 pool_size;		/* # of buffers in pool */
 	u64 buff_size;
@@ -1154,27 +1162,29 @@ static int init_tx_pools(struct net_device *netdev)
 		goto update_ltb;
 	}
 
-	/* Allocate/populate the pools. */
-	release_tx_pools(adapter);
-
+	/* Allocate the new pools before releasing the old ones, as in
+	 * init_rx_pools(). ->tx_pool and ->tso_pool have to be swapped in
+	 * together, so that release_tx_pools() never sees one without the
+	 * other.
+	 */
 	pool_size = adapter->req_tx_entries_per_subcrq;
 	num_pools = adapter->num_active_tx_scrqs;
 
-	adapter->tx_pool = kcalloc(num_pools,
-				   sizeof(struct ibmvnic_tx_pool), GFP_KERNEL);
-	if (!adapter->tx_pool)
+	new_tx_pool = kcalloc(num_pools,
+			      sizeof(struct ibmvnic_tx_pool), GFP_KERNEL);
+	if (!new_tx_pool)
 		return -ENOMEM;
 
-	adapter->tso_pool = kcalloc(num_pools,
-				    sizeof(struct ibmvnic_tx_pool), GFP_KERNEL);
-	/* To simplify release_tx_pools() ensure that ->tx_pool and
-	 * ->tso_pool are either both NULL or both non-NULL.
-	 */
-	if (!adapter->tso_pool) {
-		kfree(adapter->tx_pool);
-		adapter->tx_pool = NULL;
+	new_tso_pool = kcalloc(num_pools,
+			       sizeof(struct ibmvnic_tx_pool), GFP_KERNEL);
+	if (!new_tso_pool) {
+		kfree(new_tx_pool);
 		return -ENOMEM;
 	}
+
+	release_tx_pools(adapter);
+	adapter->tx_pool = new_tx_pool;
+	adapter->tso_pool = new_tso_pool;
 
 	/* Set num_active_tx_pools early. If we fail below after partial
 	 * allocation, release_tx_pools() will know how many to look for.
