@@ -814,6 +814,35 @@ static void release_rx_pools(struct ibmvnic_adapter *adapter)
 }
 
 /**
+ * rx_pool_entries() - Number of buffers to put in one rx pool.
+ * @adapter: ibmvnic adapter
+ *
+ * send_request_cap() caps the negotiated entry count so that a pool fits
+ * in IBMVNIC_MAX_LTB_SIZE, but it does that arithmetic with req_mtu. The
+ * buffers are sized from the login response instead, which describes the
+ * backing device and can be much larger than req_mtu, so the negotiated
+ * count can overshoot the budget by that ratio.
+ *
+ * A pool here is a single dma region, so overshooting it is not just an
+ * over-allocation: the request goes past what the page allocator will
+ * serve in one piece and the allocation fails outright.
+ *
+ * Cap it again here against the size the buffers are really allocated at.
+ *
+ * Return: number of buffers one rx pool may hold.
+ */
+static u64 rx_pool_entries(struct ibmvnic_adapter *adapter)
+{
+	u64 buff_size = ALIGN(adapter->cur_rx_buf_sz, L1_CACHE_BYTES);
+
+	if (!buff_size)
+		return adapter->req_rx_add_entries_per_subcrq;
+
+	return min_t(u64, adapter->req_rx_add_entries_per_subcrq,
+		     IBMVNIC_MAX_LTB_SIZE / buff_size);
+}
+
+/**
  * reuse_rx_pools() - Check if the existing rx pools can be reused.
  * @adapter: ibmvnic adapter
  *
@@ -840,7 +869,7 @@ static bool reuse_rx_pools(struct ibmvnic_adapter *adapter)
 	new_num_pools = adapter->req_rx_queues;
 
 	old_pool_size = adapter->prev_rx_pool_size;
-	new_pool_size = adapter->req_rx_add_entries_per_subcrq;
+	new_pool_size = rx_pool_entries(adapter);
 
 	old_buff_size = adapter->prev_rx_buf_sz;
 	new_buff_size = adapter->cur_rx_buf_sz;
@@ -874,7 +903,7 @@ static int init_rx_pools(struct net_device *netdev)
 	u64 buff_size;
 	int i, j, rc;
 
-	pool_size = adapter->req_rx_add_entries_per_subcrq;
+	pool_size = rx_pool_entries(adapter);
 	num_pools = adapter->req_rx_queues;
 	buff_size = adapter->cur_rx_buf_sz;
 
