@@ -5372,12 +5372,17 @@ static void handle_request_cap_rsp(union ibmvnic_crq *crq,
 {
 	struct device *dev = &adapter->vdev->dev;
 	u64 *req_value;
+	u64 rsp_value;
 	char *name;
+	u16 cap;
 
 	atomic_dec(&adapter->running_cap_crqs);
 	netdev_dbg(adapter->netdev, "Outstanding request-caps: %d\n",
 		   atomic_read(&adapter->running_cap_crqs));
-	switch (be16_to_cpu(crq->request_capability_rsp.capability)) {
+
+	cap = be16_to_cpu(crq->request_capability_rsp.capability);
+
+	switch (cap) {
 	case REQ_TX_QUEUES:
 		req_value = &adapter->req_tx_queues;
 		name = "tx";
@@ -5416,20 +5421,29 @@ static void handle_request_cap_rsp(union ibmvnic_crq *crq,
 	case SUCCESS:
 		break;
 	case PARTIALSUCCESS:
-		dev_info(dev, "req=%lld, rsp=%ld in %s queue, retrying.\n",
-			 *req_value,
-			 (long)be64_to_cpu(crq->request_capability_rsp.number),
-			 name);
+		rsp_value = be64_to_cpu(crq->request_capability_rsp.number);
 
-		if (be16_to_cpu(crq->request_capability_rsp.capability) ==
-		    REQ_MTU) {
-			pr_err("mtu of %llu is not supported. Reverting.\n",
-			       *req_value);
-			*req_value = adapter->fallback.mtu;
-		} else {
-			*req_value =
-				be64_to_cpu(crq->request_capability_rsp.number);
+		/* The backing device runs at one of a small set of fixed
+		 * sizes, so the vnicserver answers every in-range REQ_MTU
+		 * with PARTIALSUCCESS and the size it settled on. Where that
+		 * size covers the request, keep what was asked for. Retrying
+		 * would only replace a usable mtu with the rounded-up one.
+		 *
+		 * It can also come back smaller, when the backing device is
+		 * not configured for the size that was asked for. Then the
+		 * request is not covered and must not be published, so fall
+		 * through and renegotiate down to what the device carries.
+		 */
+		if (cap == REQ_MTU && rsp_value >= *req_value) {
+			netdev_dbg(adapter->netdev,
+				   "backing mtu %llu covers requested %llu\n",
+				   rsp_value, *req_value);
+			break;
 		}
+
+		dev_info(dev, "req=%lld, rsp=%lld in %s queue, retrying.\n",
+			 *req_value, rsp_value, name);
+		*req_value = rsp_value;
 
 		send_request_cap(adapter, 1);
 		return;
