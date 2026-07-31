@@ -984,6 +984,11 @@ struct ibmvnic_adapter {
 	u64 max_mtu;
 	u64 req_mtu;
 	u64 prev_mtu;
+	/* mtu the backing device runs at. The vnicserver rounds a request up
+	 * to one of the sizes the backing device supports and reports that
+	 * here, so it can be larger than req_mtu.
+	 */
+	u64 backing_mtu;
 	u64 max_multicast_filters;
 	u64 vlan_header_insertion;
 	u64 rx_vlan_header_insertion;
