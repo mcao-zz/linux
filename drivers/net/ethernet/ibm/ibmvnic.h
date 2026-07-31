@@ -758,6 +758,10 @@ struct ibmvnic_crq_queue {
 	/* Used for serialization of msgs, cur */
 	spinlock_t lock;
 	bool active;
+	/* Bumped every time the connection goes away. Long term buffers
+	 * record it so they can tell whether the VIOS still knows about them.
+	 */
+	u32 gen;
 	char name[32];
 };
 
@@ -803,6 +807,8 @@ struct ibmvnic_long_term_buff {
 	dma_addr_t addr;
 	u64 size;
 	u8 map_id;
+	/* crq generation this buffer was mapped on */
+	u32 crq_gen;
 };
 
 struct ibmvnic_tx_buff {
