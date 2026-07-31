@@ -451,34 +451,38 @@ static int alloc_long_term_buff(struct ibmvnic_adapter *adapter,
 				struct ibmvnic_long_term_buff *ltb, int size)
 {
 	struct device *dev = &adapter->vdev->dev;
+	struct ibmvnic_long_term_buff new_ltb = {0};
 	int rc;
 
 	if (!reuse_ltb(ltb, size)) {
 		dev_dbg(dev,
 			"LTB size changed from 0x%llx to 0x%x, reallocating\n",
 			 ltb->size, size);
-		free_long_term_buff(adapter, ltb);
-	}
 
-	if (ltb->buff) {
-		dev_dbg(dev, "Reusing LTB [map %d, size 0x%llx]\n",
-			ltb->map_id, ltb->size);
-	} else {
-		ltb->buff = dma_alloc_coherent(dev, size, &ltb->addr,
-					       GFP_KERNEL);
-		if (!ltb->buff) {
+		/* Allocate before releasing, so that a failure here leaves
+		 * the caller with the buffer it already had rather than with
+		 * none at all.
+		 */
+		new_ltb.buff = dma_alloc_coherent(dev, size, &new_ltb.addr,
+						  GFP_KERNEL);
+		if (!new_ltb.buff) {
 			dev_err(dev, "Couldn't alloc long term buffer\n");
 			return -ENOMEM;
 		}
-		ltb->size = size;
-
-		ltb->map_id = find_first_zero_bit(adapter->map_ids,
-						  MAX_MAP_ID);
-		bitmap_set(adapter->map_ids, ltb->map_id, 1);
+		new_ltb.size = size;
+		new_ltb.map_id = find_first_zero_bit(adapter->map_ids,
+						     MAX_MAP_ID);
+		bitmap_set(adapter->map_ids, new_ltb.map_id, 1);
 
 		dev_dbg(dev,
 			"Allocated new LTB [map %d, size 0x%llx]\n",
-			 ltb->map_id, ltb->size);
+			 new_ltb.map_id, new_ltb.size);
+
+		free_long_term_buff(adapter, ltb);
+		*ltb = new_ltb;
+	} else {
+		dev_dbg(dev, "Reusing LTB [map %d, size 0x%llx]\n",
+			ltb->map_id, ltb->size);
 	}
 
 	/* Ensure ltb is zeroed - specially when reusing it. */
