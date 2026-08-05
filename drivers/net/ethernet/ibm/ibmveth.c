@@ -3166,11 +3166,18 @@ restart_poll:
 
 	ibmveth_replenish_task(adapter, queue_index);
 
-	if (frames_processed == budget) {
-		if (!netif_running(netdev) || napi_disable_pending(napi))
-			napi_complete_done(napi, frames_processed);
+	/*
+	 * Closing or disabling NAPI: complete without re-enabling the PHYP
+	 * IRQ. An early break from the loop used to fall through to
+	 * ibmveth_enable_irq() and could storm after the handler was freed.
+	 */
+	if (!netif_running(netdev) || napi_disable_pending(napi)) {
+		napi_complete_done(napi, frames_processed);
 		goto out;
 	}
+
+	if (frames_processed == budget)
+		goto out;
 
 	if (!napi_complete_done(napi, frames_processed))
 		goto out;
@@ -3188,8 +3195,6 @@ restart_poll:
 	}
 
 	if (ibmveth_rxq_pending_buffer(adapter, queue_index) &&
-	    netif_running(netdev) &&
-	    !napi_disable_pending(napi) &&
 	    napi_schedule(napi)) {
 		lpar_rc = ibmveth_disable_irq(adapter, queue_index);
 		WARN_ON(lpar_rc != H_SUCCESS);
