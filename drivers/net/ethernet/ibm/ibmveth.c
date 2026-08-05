@@ -2476,7 +2476,6 @@ static void ibmveth_aggregate_rx_qstats(struct ibmveth_adapter *adapter)
  */
 static void ibmveth_aggregate_tx_qstats(struct ibmveth_adapter *adapter)
 {
-	struct net_device *netdev = adapter->netdev;
 	u64 total_large = 0;
 	u64 total_send_failed = 0;
 	int i;
@@ -2484,7 +2483,10 @@ static void ibmveth_aggregate_tx_qstats(struct ibmveth_adapter *adapter)
 	if (!adapter->tx_qstats)
 		return;
 
-	for (i = 0; i < netdev->real_num_tx_queues; i++) {
+	/* Sum every allocated slot so shrinking TX channels cannot drop
+	 * historical counters from retired queues.
+	 */
+	for (i = 0; i < IBMVETH_MAX_QUEUES; i++) {
 		total_large += adapter->tx_qstats[i].large_packets;
 		total_send_failed += adapter->tx_qstats[i].send_failures;
 	}
@@ -3467,6 +3469,8 @@ static netdev_features_t ibmveth_features_check(struct sk_buff *skb,
  * @stats: rtnl link statistics storage
  *
  * Sums per-queue rx_qstats and tx_qstats into the rtnl counters.
+ * Walk the full allocated arrays (not the live queue count) so shrinking
+ * channels cannot make the totals go backwards.
  * Callers use ndo_get_stats64(); avoid updating netdev->stats on the
  * xmit/poll paths to keep per-queue counters off the hot cache line.
  */
@@ -3477,14 +3481,14 @@ static void ibmveth_get_stats64(struct net_device *dev,
 	int i;
 
 	if (adapter->rx_qstats) {
-		for (i = 0; i < adapter->num_rx_queues; i++) {
+		for (i = 0; i < IBMVETH_MAX_RX_QUEUES; i++) {
 			stats->rx_packets += adapter->rx_qstats[i].packets;
 			stats->rx_bytes += adapter->rx_qstats[i].bytes;
 		}
 	}
 
 	if (adapter->tx_qstats) {
-		for (i = 0; i < dev->real_num_tx_queues; i++) {
+		for (i = 0; i < IBMVETH_MAX_QUEUES; i++) {
 			stats->tx_packets += adapter->tx_qstats[i].packets;
 			stats->tx_bytes += adapter->tx_qstats[i].bytes;
 			stats->tx_dropped +=
