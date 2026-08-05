@@ -1398,9 +1398,15 @@ ibmveth_rxq_get_buffer(struct ibmveth_adapter *adapter,
  *
  * Context: called from ibmveth_poll
  *
+ * On a bad correlator (-EINVAL/-EFAULT) the ring is still advanced so poll
+ * cannot spin forever on one slot. The error is still returned: callers must
+ * not treat it as a successful take from the pool (especially reuse=false,
+ * which would hand the SKB to the stack while it remains pool-owned).
+ *
  * Return:
- * * %0    - success
- * * other - non-zero return from ibmveth_remove_buffer_from_pool
+ * * %0    - buffer removed from pool (or marked for reuse) and ring advanced
+ * * other - non-zero return from ibmveth_remove_buffer_from_pool; ring has
+ *           still been advanced for -EINVAL/-EFAULT
  */
 static int ibmveth_rxq_harvest_buffer(struct ibmveth_adapter *adapter,
 				      int queue_index, bool reuse)
@@ -1412,12 +1418,12 @@ static int ibmveth_rxq_harvest_buffer(struct ibmveth_adapter *adapter,
 	cor = rxq->queue_addr[rxq->index].correlator;
 	rc = ibmveth_remove_buffer_from_pool(adapter, cor, queue_index, reuse);
 	if (unlikely(rc)) {
+		/* Skip a corrupt slot without claiming pool ownership. */
 		if (rc == -EINVAL || rc == -EFAULT)
-			goto advance;
+			ibmveth_rxq_advance(rxq);
 		return rc;
 	}
 
-advance:
 	ibmveth_rxq_advance(rxq);
 
 	return 0;
@@ -1448,6 +1454,11 @@ ibmveth_drain_rx_queue(struct ibmveth_adapter *adapter, int queue_index)
 	       ibmveth_rxq_pending_buffer(adapter, queue_index)) {
 		rc = ibmveth_rxq_harvest_buffer(adapter, queue_index, true);
 		if (rc) {
+			/* -EINVAL/-EFAULT already advanced past the slot. */
+			if (rc == -EINVAL || rc == -EFAULT) {
+				drained++;
+				continue;
+			}
 			netdev_err(netdev,
 				   "Failed to harvest buffer from queue %d during drain: %d\n",
 				   queue_index, rc);
@@ -3017,7 +3028,8 @@ restart_poll:
 			netdev_dbg(netdev, "recycling invalid buffer\n");
 			rc = ibmveth_rxq_harvest_buffer(adapter,
 							queue_index, true);
-			if (unlikely(rc))
+			if (unlikely(rc &&
+				     rc != -EINVAL && rc != -EFAULT))
 				break;
 		} else {
 			struct sk_buff *skb, *new_skb;
@@ -3045,7 +3057,9 @@ restart_poll:
 				rc = ibmveth_rxq_harvest_buffer(adapter,
 								queue_index,
 								true);
-				if (unlikely(rc))
+				/* Advanced on -EINVAL/-EFAULT; keep polling. */
+				if (unlikely(rc &&
+					     rc != -EINVAL && rc != -EFAULT))
 					break;
 				continue;
 			}
@@ -3067,7 +3081,8 @@ restart_poll:
 				rc = ibmveth_rxq_harvest_buffer(adapter,
 								queue_index,
 								true);
-				if (unlikely(rc))
+				if (unlikely(rc &&
+					     rc != -EINVAL && rc != -EFAULT))
 					break;
 				continue;
 			}
@@ -3096,13 +3111,16 @@ restart_poll:
 							     length + offset);
 				rc = ibmveth_rxq_harvest_buffer(adapter,
 							queue_index, true);
-				if (unlikely(rc))
+				if (unlikely(rc)) {
+					kfree_skb(new_skb);
 					break;
+				}
 				skb = new_skb;
 			} else {
 				rc = ibmveth_rxq_harvest_buffer(adapter,
 								queue_index,
 								false);
+				/* Do not GRO if skb is still pool-owned. */
 				if (unlikely(rc))
 					break;
 				skb_reserve(skb, offset);
