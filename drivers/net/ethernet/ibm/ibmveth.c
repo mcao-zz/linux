@@ -2615,37 +2615,12 @@ static int ibmveth_set_channels(struct net_device *netdev,
 	struct ibmveth_adapter *adapter = netdev_priv(netdev);
 	unsigned int old_rx = adapter->num_rx_queues;
 	unsigned int goal_rx = channels->rx_count;
-	unsigned int old = netdev->real_num_tx_queues;
-	unsigned int goal = channels->tx_count;
+	unsigned int old_tx = netdev->real_num_tx_queues;
+	unsigned int goal_tx = channels->tx_count;
+	unsigned int want_tx = goal_tx;
 	int rxq_entries = adapter->rx_queue[0].num_slots;
+	bool rx_changed = false;
 	int rc, i;
-
-	/* If ndo_open has not been called yet then don't allocate, just set
-	 * desired netdev_queue's and return
-	 */
-	if (!(netdev->flags & IFF_UP)) {
-		if (goal_rx > 1 && !adapter->multi_queue) {
-			netdev_err(netdev,
-				   "Cannot resize to %u RX queues: multi-queue mode not supported by firmware\n",
-				   goal_rx);
-			return -EOPNOTSUPP;
-		}
-
-		if (goal_rx < 1 || goal_rx > IBMVETH_MAX_RX_QUEUES) {
-			netdev_err(netdev,
-				   "Invalid RX queue count %u (must be 1-%d)\n",
-				   goal_rx, IBMVETH_MAX_RX_QUEUES);
-			return -EINVAL;
-		}
-
-		/* Stash desired RX count; open() publishes it via
-		 * netif_set_real_num_rx_queues() after queue registration.
-		 */
-		if (goal_rx != adapter->num_rx_queues)
-			adapter->num_rx_queues = goal_rx;
-
-		return netif_set_real_num_tx_queues(netdev, goal);
-	}
 
 	if (goal_rx > 1 && !adapter->multi_queue) {
 		netdev_err(netdev,
@@ -2661,6 +2636,30 @@ static int ibmveth_set_channels(struct net_device *netdev,
 		return -EINVAL;
 	}
 
+	if (goal_tx < 1 || goal_tx > ibmveth_real_max_tx_queues()) {
+		netdev_err(netdev,
+			   "Invalid TX queue count %u (must be 1-%u)\n",
+			   goal_tx, ibmveth_real_max_tx_queues());
+		return -EINVAL;
+	}
+
+	/* If ndo_open has not been called yet then don't allocate, just set
+	 * desired netdev_queue's and return
+	 */
+	if (!(netdev->flags & IFF_UP)) {
+		/* Apply TX first so a failure leaves RX stash unchanged. */
+		rc = netif_set_real_num_tx_queues(netdev, goal_tx);
+		if (rc)
+			return rc;
+
+		/* Stash desired RX count; open() publishes it via
+		 * netif_set_real_num_rx_queues() after queue registration.
+		 */
+		if (goal_rx != adapter->num_rx_queues)
+			adapter->num_rx_queues = goal_rx;
+		return 0;
+	}
+
 	if (goal_rx != old_rx) {
 		rc = ibmveth_resize_rx_queues_incremental(adapter, goal_rx,
 							  rxq_entries);
@@ -2669,18 +2668,19 @@ static int ibmveth_set_channels(struct net_device *netdev,
 				   "Failed to resize RX queues: %d\n", rc);
 			return rc;
 		}
+		rx_changed = true;
 	}
 
 	/* We have IBMVETH_MAX_QUEUES netdev_queue's allocated
 	 * but we may need to alloc/free the ltb's.
 	 */
-	if (goal == old)
+	if (goal_tx == old_tx)
 		return 0;
 
 	netif_tx_stop_all_queues(netdev);
 
 	/* Allocate any queue that we need */
-	for (i = old; i < goal; i++) {
+	for (i = old_tx; i < goal_tx; i++) {
 		if (adapter->tx_ltb_ptr[i])
 			continue;
 
@@ -2689,26 +2689,41 @@ static int ibmveth_set_channels(struct net_device *netdev,
 			continue;
 
 		/* if something goes wrong, free everything we just allocated */
-		netdev_err(netdev, "Failed to allocate more tx queues, returning to %d queues\n",
-			   old);
-		goal = old;
-		old = i;
+		netdev_err(netdev, "Failed to allocate more tx queues, returning to %u queues\n",
+			   old_tx);
+		goal_tx = old_tx;
+		old_tx = i;
 		break;
 	}
-	rc = netif_set_real_num_tx_queues(netdev, goal);
+	rc = netif_set_real_num_tx_queues(netdev, goal_tx);
 	if (rc) {
-		netdev_err(netdev, "Failed to set real tx queues, returning to %d queues\n",
-			   old);
-		goal = old;
-		old = i;
+		netdev_err(netdev, "Failed to set real tx queues, returning to %u queues\n",
+			   old_tx);
+		goal_tx = old_tx;
+		old_tx = i;
 	}
 	/* Free any that are no longer needed */
-	for (i = old; i > goal; i--) {
+	for (i = old_tx; i > goal_tx; i--) {
 		if (adapter->tx_ltb_ptr[i - 1])
 			ibmveth_free_tx_ltb(adapter, i - 1);
 	}
 
 	netif_tx_wake_all_queues(netdev);
+
+	if (netdev->real_num_tx_queues != want_tx) {
+		if (rx_changed) {
+			int rb;
+
+			rb = ibmveth_resize_rx_queues_incremental(adapter,
+								  old_rx,
+								  rxq_entries);
+			if (rb)
+				netdev_err(netdev,
+					   "Failed to roll back RX queues to %u after TX failure: %d\n",
+					   old_rx, rb);
+		}
+		return rc ? rc : -ENOMEM;
+	}
 
 	return 0;
 }
