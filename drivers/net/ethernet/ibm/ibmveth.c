@@ -3394,20 +3394,25 @@ static unsigned long ibmveth_get_desired_dma(struct vio_dev *vdev)
 
 	adapter = netdev_priv(netdev);
 
-	ret = IBMVETH_BUFF_LIST_SIZE + IBMVETH_FILT_LIST_SIZE;
+	/* One buffer list page per RX queue; filter list is shared. */
+	ret = IBMVETH_BUFF_LIST_SIZE * adapter->num_rx_queues +
+	      IBMVETH_FILT_LIST_SIZE;
 	ret += IOMMU_PAGE_ALIGN(netdev->mtu, tbl);
 	/* add size of mapped tx buffers */
 	ret += IOMMU_PAGE_ALIGN(IBMVETH_MAX_TX_BUF_SIZE, tbl);
 
+	/*
+	 * Pool metadata for queues 1+ is copied from queue 0 at open time.
+	 * Always size from queue 0 so probe-time CMO (before that copy) and
+	 * post-resize updates both scale correctly with num_rx_queues.
+	 */
 	for (q = 0; q < adapter->num_rx_queues; q++) {
 		int rxqentries = 1;
 
 		for (i = 0; i < IBMVETH_NUM_BUFF_POOLS; i++) {
-			/* add the size of the active receive buffers */
 			struct ibmveth_buff_pool *bpool =
-				&adapter->rx_buff_pool[q][i];
+				&adapter->rx_buff_pool[0][i];
 
-			/* add the size of the active receive buffers */
 			if (bpool->active)
 				ret += bpool->size *
 					IOMMU_PAGE_ALIGN(bpool->buff_size, tbl);
@@ -3699,6 +3704,13 @@ static int ibmveth_probe(struct vio_dev *dev, const struct vio_device_id *id)
 		if (!error)
 			kobject_uevent(kobj, KOBJ_ADD);
 	}
+
+	/*
+	 * VIO CMO entitlement was set before probe (netdev NULL → default).
+	 * Recompute now that num_rx_queues and pool 0 metadata are known.
+	 */
+	if (firmware_has_feature(FW_FEATURE_CMO))
+		vio_cmo_set_dev_desired(dev, ibmveth_get_desired_dma(dev));
 
 	rc = netif_set_real_num_tx_queues(netdev, min(num_online_cpus(),
 						      IBMVETH_DEFAULT_QUEUES));
