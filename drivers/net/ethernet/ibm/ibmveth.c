@@ -3033,6 +3033,7 @@ restart_poll:
 				break;
 		} else {
 			struct sk_buff *skb, *new_skb;
+			unsigned int room, off, len;
 			int length = ibmveth_rxq_frame_length(adapter,
 							      queue_index);
 			int offset = ibmveth_rxq_frame_offset(adapter,
@@ -3064,14 +3065,14 @@ restart_poll:
 				continue;
 			}
 
-			if (unlikely((unsigned int)offset +
-				     (unsigned int)length >
-				     skb_tailroom(skb))) {
+			room = skb_tailroom(skb);
+			off = offset;
+			len = length;
+			if (unlikely(off >= room || len > room - off)) {
 				if (net_ratelimit())
 					netdev_err(netdev,
 						   "RX frame %u+%u exceeds buffer %u on queue %d, dropping\n",
-						   offset, length,
-						   skb_tailroom(skb),
+						   off, len, room,
 						   queue_index);
 				if (adapter->rx_qstats)
 					adapter->rx_qstats[queue_index]
