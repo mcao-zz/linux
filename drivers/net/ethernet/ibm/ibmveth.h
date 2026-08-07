@@ -362,6 +362,16 @@ struct ibmveth_adapter {
 	unsigned int queue_irq[IBMVETH_MAX_RX_QUEUES];
 	int multi_queue;
 	unsigned int num_rx_queues;
+	/* True after ndo_open succeeds until ndo_stop / close completes.
+	 * Direct close()+open() callers (pool_store, change_mtu, …) can
+	 * leave IFF_UP set after a failed reopen; key teardown and
+	 * set_channels on this flag, not bare IFF_UP.
+	 */
+	bool opened;
+	/* True after setup_rx_interrupts() installs handlers / enables
+	 * NAPI until cleanup_rx_interrupts() tears them down.
+	 */
+	bool rx_irq_setup;
 	int rx_csum;
 	int large_send;
 	bool is_active_trunk;

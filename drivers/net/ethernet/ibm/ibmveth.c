@@ -598,6 +598,7 @@ ibmveth_setup_rx_interrupts(struct ibmveth_adapter *adapter)
 		}
 	}
 
+	adapter->rx_irq_setup = true;
 	return 0;
 
 err_disable_napi:
@@ -628,11 +629,16 @@ err_dispose_mappings:
  * scale-down). free_irq() runs only after napi_disable() returns; poll must
  * not re-arm when shutdown is pending (see ibmveth_poll). Safe for close and
  * for open failure after setup_rx_interrupts() already unmasked PHYP.
+ * No-op if setup never succeeded (avoids double napi_disable / free_irq
+ * after a failed close+open while IFF_UP remains set).
  */
 static void
 ibmveth_cleanup_rx_interrupts(struct ibmveth_adapter *adapter)
 {
 	int i;
+
+	if (!adapter->rx_irq_setup)
+		return;
 
 	for (i = 0; i < adapter->num_rx_queues; i++) {
 		if (!adapter->queue_irq[i])
@@ -652,6 +658,7 @@ ibmveth_cleanup_rx_interrupts(struct ibmveth_adapter *adapter)
 	ibmveth_dispose_subordinate_irq_mappings(adapter);
 
 	/* Queue 0 uses netdev->irq; leave queue_irq[0] for next open. */
+	adapter->rx_irq_setup = false;
 }
 
 /**
@@ -2224,6 +2231,7 @@ static int ibmveth_open(struct net_device *netdev)
 
 	netif_tx_start_all_queues(netdev);
 
+	adapter->opened = true;
 	netdev_dbg(netdev, "open complete\n");
 
 	return 0;
@@ -2249,6 +2257,11 @@ static int ibmveth_close(struct net_device *netdev)
 {
 	struct ibmveth_adapter *adapter = netdev_priv(netdev);
 	int i;
+
+	if (!adapter->opened)
+		return 0;
+
+	adapter->opened = false;
 
 	netdev_dbg(netdev, "close starting\n");
 
@@ -2767,10 +2780,10 @@ static int ibmveth_set_channels(struct net_device *netdev,
 		return -EINVAL;
 	}
 
-	/* If ndo_open has not been called yet then don't allocate, just set
-	 * desired netdev_queue's and return
+	/* If RX resources are not live (never opened, or close+open failed
+	 * while IFF_UP stayed set), only stash desired queue counts.
 	 */
-	if (!(netdev->flags & IFF_UP)) {
+	if (!adapter->opened) {
 		/* Apply TX first so a failure leaves RX stash unchanged. */
 		rc = netif_set_real_num_tx_queues(netdev, goal_tx);
 		if (rc)
