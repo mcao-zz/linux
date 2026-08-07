@@ -198,6 +198,8 @@ ibmveth_alloc_filter_list(struct ibmveth_adapter *adapter)
 		netdev_err(netdev, "unable to map filter list pages\n");
 		free_page((unsigned long)adapter->filter_list_addr);
 		adapter->filter_list_addr = NULL;
+		/* Do not leave DMA_MAPPING_ERROR for free_filter_list(). */
+		adapter->filter_list_dma = 0;
 		return -ENOMEM;
 	}
 
