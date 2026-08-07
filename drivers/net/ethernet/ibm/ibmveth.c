@@ -727,6 +727,12 @@ static void ibmveth_schedule_rx_queue(struct ibmveth_adapter *adapter,
 		lpar_rc = ibmveth_disable_irq(adapter, qindex);
 		WARN_ON(lpar_rc != H_SUCCESS);
 		__napi_schedule(napi);
+	} else {
+		/* NAPI already scheduled or being disabled: still mask PHYP
+		 * delivery so close/disable cannot storm until free_irq.
+		 */
+		lpar_rc = ibmveth_disable_irq(adapter, qindex);
+		WARN_ON(lpar_rc != H_SUCCESS);
 	}
 }
 
