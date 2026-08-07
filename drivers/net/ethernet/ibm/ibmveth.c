@@ -44,6 +44,9 @@
 
 static irqreturn_t ibmveth_interrupt(int irq, void *dev_instance);
 static unsigned long ibmveth_get_desired_dma(struct vio_dev *vdev);
+static unsigned long
+ibmveth_desired_dma_for_rxqs(struct ibmveth_adapter *adapter,
+			     unsigned int rxqs);
 
 static struct kobj_type ktype_veth_pool;
 
@@ -494,6 +497,27 @@ static int
 ibmveth_enable_irq(struct ibmveth_adapter *adapter, int queue_index)
 {
 	return ibmveth_toggle_irq(adapter, queue_index, true);
+}
+
+/**
+ * ibmveth_kick_rx_queue_if_pending - Schedule NAPI if PHYP posted while masked
+ * @adapter: ibmveth adapter
+ * @queue_index: RX queue index just unmasked
+ *
+ * After enable_irq(), descriptors may already be pending (buffers were
+ * posted while PHYP was masked). Mirror the poll-side compensation so
+ * scale-up / scale-down rollback do not leave the queue idle until
+ * unrelated traffic arrives (J12-3).
+ */
+static void
+ibmveth_kick_rx_queue_if_pending(struct ibmveth_adapter *adapter,
+				 int queue_index)
+{
+	struct napi_struct *napi = &adapter->napi[queue_index];
+
+	if (ibmveth_rxq_pending_buffer(adapter, queue_index) &&
+	    napi_schedule(napi))
+		ibmveth_disable_irq(adapter, queue_index);
 }
 
 /**
@@ -2005,6 +2029,16 @@ ibmveth_resize_rx_queues_incremental(struct ibmveth_adapter *adapter,
 		netdev_dbg(netdev, "Scale-up: adding queues %d-%d\n",
 			   old_count, new_count - 1);
 
+		/*
+		 * Raise CMO desired for the target count before dma_map /
+		 * dma_alloc_coherent / replenish (same order as change_mtu).
+		 * Do not bump live num_rx_queues here — only entitlement.
+		 */
+		if (firmware_has_feature(FW_FEATURE_CMO))
+			vio_cmo_set_dev_desired(adapter->vdev,
+				ibmveth_desired_dma_for_rxqs(adapter,
+							     new_count));
+
 		for (i = old_count; i < new_count; i++) {
 			rc = ibmveth_alloc_single_rx_queue(adapter, i,
 							   rxq_entries);
@@ -2049,15 +2083,18 @@ ibmveth_resize_rx_queues_incremental(struct ibmveth_adapter *adapter,
 			rc = ibmveth_enable_irq(adapter, i);
 			if (rc) {
 				netdev_err(netdev,
-					   "Failed to enable IRQ for queue %d: %d\n",
-					   i, rc);
+					   "Failed to enable IRQ for queue %d: %ld\n",
+					   i, (long)rc);
 				adapter->num_rx_queues = i;
 				napi_disable(&adapter->napi[i]);
 				ibmveth_cleanup_single_rx_interrupt(adapter, i);
 				ibmveth_deregister_single_rx_queue(adapter, i);
 				ibmveth_free_single_rx_queue(adapter, i);
+				/* H_* must not reach ethtool as success. */
+				rc = -EIO;
 				goto cleanup_new_queues;
 			}
+			ibmveth_kick_rx_queue_if_pending(adapter, i);
 		}
 
 		rc = netif_set_real_num_rx_queues(netdev, new_count);
@@ -2097,10 +2134,20 @@ ibmveth_resize_rx_queues_incremental(struct ibmveth_adapter *adapter,
 				   new_count, rc);
 			adapter->num_rx_queues = old_count;
 			for (i = new_count; i < old_count; i++) {
+				int irq_rc;
+
 				ibmveth_replenish_task(adapter, i);
 				/* START: NAPI before PHYP unmask. */
 				napi_enable(&adapter->napi[i]);
-				ibmveth_enable_irq(adapter, i);
+				irq_rc = ibmveth_enable_irq(adapter, i);
+				if (irq_rc) {
+					netdev_err(netdev,
+						   "Failed to re-enable IRQ for queue %d during scale-down rollback (rc=%ld), scheduling reset\n",
+						   i, (long)irq_rc);
+					schedule_work(&adapter->work);
+					continue;
+				}
+				ibmveth_kick_rx_queue_if_pending(adapter, i);
 			}
 			return rc;
 		}
@@ -2123,9 +2170,14 @@ ibmveth_resize_rx_queues_incremental(struct ibmveth_adapter *adapter,
 
 cleanup_new_queues:
 	failed_queue = i;
-	netdev_err(netdev,
-		   "Scale-up failed at queue %d, cleaning up queues %d-%d\n",
-		   failed_queue, old_count, failed_queue - 1);
+	if (failed_queue > old_count)
+		netdev_err(netdev,
+			   "Scale-up failed at queue %d, cleaning up queues %d-%d\n",
+			   failed_queue, old_count, failed_queue - 1);
+	else
+		netdev_err(netdev,
+			   "Scale-up failed at queue %d, nothing to clean up\n",
+			   failed_queue);
 
 	for (i = old_count; i < failed_queue; i++) {
 		ibmveth_disable_irq(adapter, i);
@@ -2148,6 +2200,12 @@ cleanup_new_queues:
 		ibmveth_deregister_single_rx_queue(adapter, i);
 		ibmveth_free_single_rx_queue(adapter, i);
 	}
+
+	/* Roll CMO desired back to the surviving queue count. */
+	if (firmware_has_feature(FW_FEATURE_CMO))
+		vio_cmo_set_dev_desired(adapter->vdev,
+					ibmveth_get_desired_dma(adapter->vdev));
+
 	netdev_warn(netdev, "Keeping %d queues after scale-up failure\n",
 		    old_count);
 	return rc;
@@ -3639,41 +3697,35 @@ static void ibmveth_poll_controller(struct net_device *dev)
 #endif
 
 /**
- * ibmveth_get_desired_dma - Calculate IO memory desired by the driver
+ * ibmveth_desired_dma_for_rxqs - CMO entitlement for a given RX queue count
+ * @adapter: ibmveth adapter
+ * @rxqs: number of RX queues to size for
  *
- * @vdev: struct vio_dev for the device whose desired IO mem is to be returned
- *
- * Return: Number of bytes of IO data the driver will need to perform well.
+ * Same math as ibmveth_get_desired_dma(), but uses @rxqs instead of the
+ * live adapter->num_rx_queues. Scale-up raises desired for the *target*
+ * count before allocating so vio_cmo_alloc cannot fail mid-resize (J12-8).
  */
-static unsigned long ibmveth_get_desired_dma(struct vio_dev *vdev)
+static unsigned long
+ibmveth_desired_dma_for_rxqs(struct ibmveth_adapter *adapter,
+			     unsigned int rxqs)
 {
-	struct net_device *netdev = dev_get_drvdata(&vdev->dev);
-	struct ibmveth_adapter *adapter;
+	struct net_device *netdev = adapter->netdev;
 	struct iommu_table *tbl;
 	unsigned long ret;
 	int i, q;
 
-	tbl = get_iommu_table_base(&vdev->dev);
+	tbl = get_iommu_table_base(&adapter->vdev->dev);
 
-	/* netdev inits at probe time along with the structures we need below*/
-	if (netdev == NULL)
-		return IOMMU_PAGE_ALIGN(IBMVETH_IO_ENTITLEMENT_DEFAULT, tbl);
-
-	adapter = netdev_priv(netdev);
-
-	/* One buffer list page per RX queue; filter list is shared. */
-	ret = IBMVETH_BUFF_LIST_SIZE * adapter->num_rx_queues +
-	      IBMVETH_FILT_LIST_SIZE;
+	ret = IBMVETH_BUFF_LIST_SIZE * rxqs + IBMVETH_FILT_LIST_SIZE;
 	ret += IOMMU_PAGE_ALIGN(netdev->mtu, tbl);
-	/* add size of mapped tx buffers */
 	ret += IOMMU_PAGE_ALIGN(IBMVETH_MAX_TX_BUF_SIZE, tbl);
 
 	/*
 	 * Pool metadata for queues 1+ is copied from queue 0 at open time.
 	 * Always size from queue 0 so probe-time CMO (before that copy) and
-	 * post-resize updates both scale correctly with num_rx_queues.
+	 * post-resize updates both scale correctly with the requested count.
 	 */
-	for (q = 0; q < adapter->num_rx_queues; q++) {
+	for (q = 0; q < rxqs; q++) {
 		int rxqentries = 1;
 
 		for (i = 0; i < IBMVETH_NUM_BUFF_POOLS; i++) {
@@ -3686,12 +3738,34 @@ static unsigned long ibmveth_get_desired_dma(struct vio_dev *vdev)
 			rxqentries += bpool->size;
 		}
 
-		/* add the size of the receive queue entries */
 		ret += IOMMU_PAGE_ALIGN(rxqentries *
 					sizeof(struct ibmveth_rx_q_entry), tbl);
 	}
 
 	return ret;
+}
+
+/**
+ * ibmveth_get_desired_dma - Calculate IO memory desired by the driver
+ *
+ * @vdev: struct vio_dev for the device whose desired IO mem is to be returned
+ *
+ * Return: Number of bytes of IO data the driver will need to perform well.
+ */
+static unsigned long ibmveth_get_desired_dma(struct vio_dev *vdev)
+{
+	struct net_device *netdev = dev_get_drvdata(&vdev->dev);
+	struct ibmveth_adapter *adapter;
+	struct iommu_table *tbl;
+
+	tbl = get_iommu_table_base(&vdev->dev);
+
+	/* netdev inits at probe time along with the structures we need below*/
+	if (netdev == NULL)
+		return IOMMU_PAGE_ALIGN(IBMVETH_IO_ENTITLEMENT_DEFAULT, tbl);
+
+	adapter = netdev_priv(netdev);
+	return ibmveth_desired_dma_for_rxqs(adapter, adapter->num_rx_queues);
 }
 
 static int ibmveth_set_mac_addr(struct net_device *dev, void *p)
