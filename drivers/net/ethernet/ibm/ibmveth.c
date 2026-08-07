@@ -2265,14 +2265,19 @@ static int ibmveth_close(struct net_device *netdev)
 
 	netdev_dbg(netdev, "close starting\n");
 
-	netif_tx_stop_all_queues(netdev);
+	/* Disable and wait for in-flight ndo_start_xmit (stop_all_queues
+	 * alone does not). Direct close() callers bypass synchronize_net().
+	 */
+	netif_tx_disable(netdev);
 
-	/* PHYP mask + napi_disable + free_irq live in cleanup_rx_interrupts */
-	ibmveth_free_tx_resources(adapter);
 	ibmveth_cleanup_rx_interrupts(adapter);
 	for (i = 0; i < adapter->num_rx_queues; i++)
 		ibmveth_update_rx_no_buffer(adapter, i);
 	ibmveth_free_all_queues(adapter);
+	/* Free TX LTBs after quiesce and after H_FREE_LOGICAL_LAN so xmit
+	 * cannot touch unmapped bounce buffers while the LAN is live.
+	 */
+	ibmveth_free_tx_resources(adapter);
 	ibmveth_free_buffer_pools(adapter);
 	ibmveth_cleanup_rx_resources(adapter);
 	ibmveth_free_filter_list(adapter);
@@ -2943,6 +2948,12 @@ static netdev_tx_t ibmveth_start_xmit(struct sk_buff *skb,
 	union ibmveth_buf_desc desc;
 	int i, queue_num = skb_get_queue_mapping(skb);
 	unsigned long mss = 0;
+
+	/* Close / failed reopen can free LTBs while IFF_UP is still set. */
+	if (unlikely(!adapter->tx_ltb_ptr[queue_num])) {
+		dev_kfree_skb_any(skb);
+		return NETDEV_TX_OK;
+	}
 
 	if (ibmveth_is_packet_unsupported(skb, adapter, queue_num))
 		goto out;
