@@ -1297,7 +1297,9 @@ static int ibmveth_alloc_queue_buffer_pools(struct ibmveth_adapter *adapter,
  * @adapter: ibmveth adapter structure
  * @queue: queue index
  *
- * Frees all active buffer pools for the specified queue.
+ * Frees buffer pools that still hold allocations for the specified
+ * queue (by free_map / dma_addr / skbuff presence), regardless of the
+ * active flag.
  */
 static void ibmveth_free_queue_buffer_pools(struct ibmveth_adapter *adapter,
 					    int queue)
@@ -1333,7 +1335,7 @@ ibmveth_alloc_buffer_pools(struct ibmveth_adapter *adapter)
 	struct net_device *netdev = adapter->netdev;
 	int i, q, rc;
 
-	/* Initialize pool metadata for queues 1-15 from queue 0 settings */
+	/* Initialize pool metadata for queues 1..N from queue 0 settings */
 	for (q = 1; q < adapter->num_rx_queues; q++) {
 		for (i = 0; i < IBMVETH_NUM_BUFF_POOLS; i++) {
 			struct ibmveth_buff_pool *src =
