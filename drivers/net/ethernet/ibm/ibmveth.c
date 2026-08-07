@@ -1028,19 +1028,30 @@ hcall_failure:
  * because there was not a buffer in the buffer list capable of holding
  * the frame.
  */
-static void ibmveth_update_rx_no_buffer(struct ibmveth_adapter *adapter)
+static void ibmveth_update_rx_no_buffer(struct ibmveth_adapter *adapter,
+					int queue_index)
 {
-	int i;
+	__be64 *p;
+	u64 drops;
 
-	adapter->rx_no_buffer = 0;
-	for (i = 0; i < adapter->num_rx_queues; i++) {
-		__be64 *p = adapter->buffer_list_addr[i] + 4096 - 8;
-		u64 drops = be64_to_cpup(p);
+	/*
+	 * PHYP keeps an absolute no-buffer count at the end of each queue's
+	 * buffer-list page. Only refresh this queue: walking every queue
+	 * under one replenish_lock raced concurrent polls and could touch
+	 * buffer_list pages already freed by resize.
+	 */
+	if (queue_index < 0 ||
+	    queue_index >= adapter->num_rx_queues ||
+	    !adapter->buffer_list_addr[queue_index])
+		return;
 
-		if (adapter->rx_qstats)
-			adapter->rx_qstats[i].no_buffer_drops = drops;
-		adapter->rx_no_buffer += drops;
-	}
+	p = adapter->buffer_list_addr[queue_index] + 4096 - 8;
+	drops = be64_to_cpup(p);
+
+	if (adapter->rx_qstats)
+		adapter->rx_qstats[queue_index].no_buffer_drops = drops;
+	else
+		adapter->rx_no_buffer = drops;
 }
 
 /* replenish routine */
@@ -1072,7 +1083,7 @@ static void ibmveth_replenish_task(struct ibmveth_adapter *adapter,
 						      queue_index);
 	}
 
-	ibmveth_update_rx_no_buffer(adapter);
+	ibmveth_update_rx_no_buffer(adapter, queue_index);
 
 	spin_unlock_irqrestore(&rxq->replenish_lock, flags);
 }
@@ -2237,6 +2248,7 @@ out:
 static int ibmveth_close(struct net_device *netdev)
 {
 	struct ibmveth_adapter *adapter = netdev_priv(netdev);
+	int i;
 
 	netdev_dbg(netdev, "close starting\n");
 
@@ -2245,7 +2257,8 @@ static int ibmveth_close(struct net_device *netdev)
 	/* PHYP mask + napi_disable + free_irq live in cleanup_rx_interrupts */
 	ibmveth_free_tx_resources(adapter);
 	ibmveth_cleanup_rx_interrupts(adapter);
-	ibmveth_update_rx_no_buffer(adapter);
+	for (i = 0; i < adapter->num_rx_queues; i++)
+		ibmveth_update_rx_no_buffer(adapter, i);
 	ibmveth_free_all_queues(adapter);
 	ibmveth_free_buffer_pools(adapter);
 	ibmveth_cleanup_rx_resources(adapter);
@@ -2542,6 +2555,21 @@ static u64 ibmveth_sum_rx_large_packets(struct ibmveth_adapter *adapter)
 	return total;
 }
 
+static u64 ibmveth_sum_rx_no_buffer(struct ibmveth_adapter *adapter)
+{
+	u64 total = 0;
+	int i;
+
+	if (!adapter->rx_qstats)
+		return adapter->rx_no_buffer;
+
+	/* Sum-on-read: hot path only refreshes the local queue's qstat. */
+	for (i = 0; i < IBMVETH_MAX_RX_QUEUES; i++)
+		total += adapter->rx_qstats[i].no_buffer_drops;
+
+	return total;
+}
+
 static u64 ibmveth_sum_tx_large_packets(struct ibmveth_adapter *adapter)
 {
 	u64 total = 0;
@@ -2582,6 +2610,8 @@ static u64 ibmveth_ethtool_adapter_stat(struct ibmveth_adapter *adapter,
 		return ibmveth_sum_rx_invalid_buffers(adapter);
 	if (offset == IBMVETH_STAT_OFF(rx_large_packets))
 		return ibmveth_sum_rx_large_packets(adapter);
+	if (offset == IBMVETH_STAT_OFF(rx_no_buffer))
+		return ibmveth_sum_rx_no_buffer(adapter);
 	if (offset == IBMVETH_STAT_OFF(tx_large_packets))
 		return ibmveth_sum_tx_large_packets(adapter);
 	if (offset == IBMVETH_STAT_OFF(tx_send_failed))
