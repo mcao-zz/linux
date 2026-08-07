@@ -630,8 +630,10 @@ ibmveth_setup_rx_interrupts(struct ibmveth_adapter *adapter)
 				netdev_err(netdev,
 					   "Failed to enable IRQ for queue %d, rc=%d\n",
 					   i, rc);
-				while (--i >= 0)
+				while (--i >= 0) {
 					ibmveth_disable_irq(adapter, i);
+					synchronize_irq(adapter->queue_irq[i]);
+				}
 				rc = -EIO;
 				goto err_disable_napi;
 			}
@@ -1730,11 +1732,9 @@ static void ibmveth_free_tx_ltb(struct ibmveth_adapter *adapter, int idx)
 	if (!adapter->tx_ltb_ptr[idx])
 		return;
 
-	if (adapter->tx_ltb_dma[idx]) {
-		dma_unmap_single(&adapter->vdev->dev, adapter->tx_ltb_dma[idx],
-				 adapter->tx_ltb_size, DMA_TO_DEVICE);
-		adapter->tx_ltb_dma[idx] = 0;
-	}
+	dma_unmap_single(&adapter->vdev->dev, adapter->tx_ltb_dma[idx],
+			 adapter->tx_ltb_size, DMA_TO_DEVICE);
+	adapter->tx_ltb_dma[idx] = 0;
 	kfree(adapter->tx_ltb_ptr[idx]);
 	adapter->tx_ltb_ptr[idx] = NULL;
 }
@@ -1947,7 +1947,6 @@ ibmveth_register_logical_lan_queue(struct ibmveth_adapter *adapter,
  * ibmveth_register_single_rx_queue - Register one subordinate RX queue
  * @adapter: ibmveth adapter structure
  * @queue_idx: Queue index to register (1..N)
- * @mac_address: MAC address (unused; reserved for API symmetry)
  *
  * Builds the queue descriptor and registers with the hypervisor via
  * ibmveth_register_logical_lan_queue().
@@ -1956,13 +1955,11 @@ ibmveth_register_logical_lan_queue(struct ibmveth_adapter *adapter,
  */
 static int
 ibmveth_register_single_rx_queue(struct ibmveth_adapter *adapter,
-				 int queue_idx, u64 mac_address)
+				 int queue_idx)
 {
 	struct net_device *netdev = adapter->netdev;
 	union ibmveth_buf_desc rxq_desc;
 	long lpar_rc;
-
-	(void)mac_address;
 
 	if (WARN_ON(queue_idx < 1 || queue_idx >= IBMVETH_MAX_RX_QUEUES))
 		return -EINVAL;
@@ -2102,8 +2099,7 @@ ibmveth_resize_rx_queues_incremental(struct ibmveth_adapter *adapter,
 				goto cleanup_new_queues;
 			}
 
-			rc = ibmveth_register_single_rx_queue(adapter, i,
-							      mac_address);
+			rc = ibmveth_register_single_rx_queue(adapter, i);
 			if (rc) {
 				netdev_err(netdev, "Failed to register queue %d: %d\n",
 					   i, rc);
@@ -2343,7 +2339,7 @@ ibmveth_register_rx_queues(struct ibmveth_adapter *adapter, u64 mac_address)
 		   adapter->num_rx_queues - 1, adapter->num_rx_queues - 1);
 
 	for (i = 1; i < adapter->num_rx_queues; i++) {
-		rc = ibmveth_register_single_rx_queue(adapter, i, mac_address);
+		rc = ibmveth_register_single_rx_queue(adapter, i);
 		if (rc) {
 			/* Firmware MQ gone: fall back to SQ on next open. */
 			if (rc == -EOPNOTSUPP)
@@ -2501,6 +2497,9 @@ static int ibmveth_close(struct net_device *netdev)
 	netif_tx_disable(netdev);
 
 	ibmveth_cleanup_rx_interrupts(adapter);
+	/* Wait for softirq/poll that already passed shutdown checks. */
+	synchronize_net();
+
 	for (i = 0; i < adapter->num_rx_queues; i++)
 		ibmveth_update_rx_no_buffer(adapter, i);
 	ibmveth_free_all_queues(adapter);
