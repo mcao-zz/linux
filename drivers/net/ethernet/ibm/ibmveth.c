@@ -2978,9 +2978,15 @@ static int ibmveth_set_channels(struct net_device *netdev,
 
 		/* Stash desired RX count; open() publishes it via
 		 * netif_set_real_num_rx_queues() after queue registration.
+		 * Refresh CMO now so open() can map the larger footprint
+		 * (J13-3); open itself does not call vio_cmo_set_dev_desired.
 		 */
-		if (goal_rx != adapter->num_rx_queues)
+		if (goal_rx != adapter->num_rx_queues) {
 			adapter->num_rx_queues = goal_rx;
+			if (firmware_has_feature(FW_FEATURE_CMO))
+				vio_cmo_set_dev_desired(adapter->vdev,
+					ibmveth_get_desired_dma(adapter->vdev));
+		}
 		return 0;
 	}
 
