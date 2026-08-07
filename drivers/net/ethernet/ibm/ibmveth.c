@@ -1493,6 +1493,10 @@ static void ibmveth_rxq_advance(struct ibmveth_rx_q *rxq)
  * @queue_index: RX queue index (0..num_rx_queues-1)
  * @reuse: whether to reuse buffer
  *
+ * Context: may run concurrently with netpoll replenish_task on the same
+ * queue; takes per-queue replenish_lock to serialize free_map /
+ * producer_index / available against the producer (J08-6).
+ *
  * Return:
  * * %0       - success
  * * %-EINVAL - correlator maps to pool or index out of range
@@ -1502,17 +1506,26 @@ static int ibmveth_remove_buffer_from_pool(struct ibmveth_adapter *adapter,
 					   u64 correlator, int queue_index,
 					   bool reuse)
 {
+	struct ibmveth_rx_q *rxq = &adapter->rx_queue[queue_index];
 	unsigned int pool  = correlator >> 32;
 	unsigned int index = correlator & 0xffffffffUL;
 	unsigned int free_index;
 	struct sk_buff *skb;
+	unsigned long flags;
+	int rc = 0;
 
-	if (!ibmveth_rxq_correlator_valid(adapter, queue_index, correlator))
-		return -EINVAL;
+	spin_lock_irqsave(&rxq->replenish_lock, flags);
+
+	if (!ibmveth_rxq_correlator_valid(adapter, queue_index, correlator)) {
+		rc = -EINVAL;
+		goto out_unlock;
+	}
 
 	skb = adapter->rx_buff_pool[queue_index][pool].skbuff[index];
-	if (!skb)
-		return -EFAULT;
+	if (!skb) {
+		rc = -EFAULT;
+		goto out_unlock;
+	}
 
 	/* if we are going to reuse the buffer then keep the pointers around
 	 * but mark index as available. replenish will see the skb pointer and
@@ -1544,7 +1557,9 @@ static int ibmveth_remove_buffer_from_pool(struct ibmveth_adapter *adapter,
 
 	atomic_dec(&adapter->rx_buff_pool[queue_index][pool].available);
 
-	return 0;
+out_unlock:
+	spin_unlock_irqrestore(&rxq->replenish_lock, flags);
+	return rc;
 }
 
 /* get the current buffer on the rx queue */
@@ -4280,6 +4295,8 @@ static void ibmveth_remove_buffer_from_pool_test(struct kunit *test)
 	KUNIT_ASSERT_NOT_ERR_OR_NULL(test, adapter);
 
 	INIT_WORK(&adapter->work, ibmveth_reset_kunit);
+
+	spin_lock_init(&adapter->rx_queue[0].replenish_lock);
 
 	/* Set sane values for buffer pools */
 	for (int i = 0; i < IBMVETH_NUM_BUFF_POOLS; i++)
