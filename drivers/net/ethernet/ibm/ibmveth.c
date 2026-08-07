@@ -1248,6 +1248,7 @@ static void ibmveth_free_buffer_pool(struct ibmveth_adapter *adapter,
 	pool->active = 0;
 	pool->size = 0;
 	pool->threshold = 0;
+	atomic_set(&pool->available, 0);
 }
 
 /**
@@ -3971,16 +3972,22 @@ static int ibmveth_buffer_pools_show(struct seq_file *m, void *v)
 
 	seq_puts(m, "Queue  Pool  Size  BuffSize  Active  Available\n");
 	seq_puts(m, "-----  ----  ----  --------  ------  ---------\n");
+	if (!adapter->opened)
+		seq_puts(m, "# iface down or not opened — Active/Available "
+			    "are 0 unless buffer arrays are allocated\n");
 
 	for (i = 0; i < adapter->num_rx_queues; i++) {
 		for (j = 0; j < IBMVETH_NUM_BUFF_POOLS; j++) {
 			struct ibmveth_buff_pool *pool =
 				&adapter->rx_buff_pool[i][j];
+			bool live = pool->skbuff && pool->free_map;
+			int active = live ? pool->active : 0;
+			int available = live ? atomic_read(&pool->available)
+					     : 0;
 
 			seq_printf(m, "%5d  %4d  %4u  %8u  %6d  %9d\n",
 				   i, j, pool->size, pool->buff_size,
-				   pool->active,
-				   atomic_read(&pool->available));
+				   active, available);
 		}
 	}
 
