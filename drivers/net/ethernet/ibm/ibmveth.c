@@ -3961,6 +3961,14 @@ static int ibmveth_buffer_pools_show(struct seq_file *m, void *v)
 	struct ibmveth_adapter *adapter = m->private;
 	int i, j;
 
+	/*
+	 * Writers (veth_pool_store, open template copy, reset close/open)
+	 * update these fields under RTNL. Take the same lock so the dump
+	 * is not a torn scalar snapshot (J11-1). Not required for
+	 * memory safety — embedded arrays only.
+	 */
+	rtnl_lock();
+
 	seq_puts(m, "Queue  Pool  Size  BuffSize  Active  Available\n");
 	seq_puts(m, "-----  ----  ----  --------  ------  ---------\n");
 
@@ -3976,6 +3984,7 @@ static int ibmveth_buffer_pools_show(struct seq_file *m, void *v)
 		}
 	}
 
+	rtnl_unlock();
 	return 0;
 }
 DEFINE_SHOW_ATTRIBUTE(ibmveth_buffer_pools);
