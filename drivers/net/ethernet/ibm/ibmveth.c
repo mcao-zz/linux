@@ -3869,14 +3869,19 @@ static void ibmveth_remove(struct vio_dev *dev)
 	struct ibmveth_adapter *adapter = netdev_priv(netdev);
 	int i;
 
-	cancel_work_sync(&adapter->work);
-
 	ibmveth_debugfs_exit(adapter);
 
 	for (i = 0; i < IBMVETH_NUM_BUFF_POOLS; i++)
 		kobject_put(&adapter->rx_buff_pool[0][i].kobj);
 
+	/*
+	 * Unregister first so NAPI/xmit cannot re-arm reset work after we
+	 * cancel it. cancel_work_sync() before unregister left a window
+	 * where poll could schedule_work() and the worker ran after
+	 * free_netdev().
+	 */
 	unregister_netdev(netdev);
+	cancel_work_sync(&adapter->work);
 
 	ibmveth_free_tx_qstats(adapter);
 	ibmveth_free_rx_qstats(adapter);
