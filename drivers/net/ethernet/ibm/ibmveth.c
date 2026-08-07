@@ -1797,7 +1797,7 @@ static int ibmveth_register_logical_lan(struct ibmveth_adapter *adapter,
 	unsigned long ua = adapter->vdev->unit_address;
 	unsigned long buf_dma = adapter->buffer_list_dma[0];
 	unsigned long filter_dma = adapter->filter_list_dma;
-	u64 *qh0 = &adapter->queue_handle[0];
+	unsigned long qh0;
 
 	/*
 	 * After a kexec the adapter will still be open, so our attempt to
@@ -1813,7 +1813,9 @@ retry:
 							rxq_desc.desc,
 							filter_dma,
 							mac_address,
-							qh0);
+							&qh0);
+		if (rc == H_SUCCESS)
+			adapter->queue_handle[0] = qh0;
 	} else {
 		rc = h_register_logical_lan(ua, buf_dma, rxq_desc.desc,
 					    filter_dma, mac_address);
@@ -1863,9 +1865,12 @@ ibmveth_register_logical_lan_queue(struct ibmveth_adapter *adapter,
 		   (unsigned long long)adapter->buffer_list_dma[queue_index],
 		   (unsigned long long)rxq_desc.desc);
 
-	lpar_rc = h_reg_logical_lan_queue(adapter->vdev->unit_address,
-					  adapter->buffer_list_dma[queue_index],
-					  rxq_desc.desc, &handle, &hwirq);
+	do {
+		lpar_rc = h_register_logical_lan_queue(adapter->vdev->unit_address,
+						       adapter->buffer_list_dma[queue_index],
+						       rxq_desc.desc, &handle,
+						       &hwirq);
+	} while (H_IS_LONG_BUSY(lpar_rc) || (lpar_rc == H_BUSY));
 	adapter->hcall_stats.reg_lan_queue++;
 
 	if (lpar_rc == H_SUCCESS) {
@@ -1907,11 +1912,11 @@ ibmveth_register_logical_lan_queue(struct ibmveth_adapter *adapter,
 	 */
 	if (lpar_rc == H_FUNCTION)
 		netdev_err(adapter->netdev,
-			   "h_reg_logical_lan_queue H_FUNCTION for queue %d (firmware MQ unsupported)\n",
+			   "h_register_logical_lan_queue H_FUNCTION for queue %d (firmware MQ unsupported)\n",
 			   queue_index);
 
 	netdev_err(adapter->netdev,
-		   "h_reg_logical_lan_queue failed for queue %d with %ld\n",
+		   "h_register_logical_lan_queue failed for queue %d with %ld\n",
 		   queue_index, lpar_rc);
 	netdev_err(adapter->netdev,
 		   "queue %d params: unit_addr=0x%x buffer_list_dma=0x%llx rxq_desc=0x%llx\n",

@@ -70,7 +70,7 @@ static inline long h_add_logical_lan_buffers(unsigned long unit_address,
 }
 
 /**
- * h_reg_logical_lan_queue - Register a subordinate receive queue
+ * h_register_logical_lan_queue - Register a subordinate receive queue
  * @unit_address: Device unit address
  * @buffer_list: DMA address of 4KB page for tracking registered buffers
  * @rec_queue: Buffer descriptor of receive queue
@@ -88,11 +88,11 @@ static inline long h_add_logical_lan_buffers(unsigned long unit_address,
  *   R4: Queue handle
  *   R5: IRQ number for this queue
  */
-static inline long h_reg_logical_lan_queue(unsigned long unit_address,
-					   unsigned long buffer_list,
-					   unsigned long rec_queue,
-					   unsigned long *queue_handle,
-					   unsigned long *irq)
+static inline long h_register_logical_lan_queue(unsigned long unit_address,
+						 unsigned long buffer_list,
+						 unsigned long rec_queue,
+						 unsigned long *queue_handle,
+						 unsigned long *irq)
 {
 	unsigned long retbuf[PLPAR_HCALL9_BUFSIZE];
 	long rc;
@@ -114,7 +114,7 @@ static inline long h_reg_logical_lan_queue(unsigned long unit_address,
 /**
  * h_add_logical_lan_buffers_queue - Add buffers to subordinate queue
  * @unit_address: Device unit address
- * @queue_handle: Queue handle from h_reg_logical_lan_queue()
+ * @queue_handle: Queue handle from h_register_logical_lan_queue()
  * @buffersznum: Buffer size (upper 32 bits) | count (lower 32 bits)
  * @ioba12: Buffer addresses 1 and 2 packed ((addr1 << 32) | addr2)
  * @ioba34: Buffer addresses 3 and 4 packed
@@ -150,7 +150,7 @@ static inline long h_add_logical_lan_buffers_queue(unsigned long unit_address,
 /**
  * h_free_logical_lan_queue - Deregister subordinate receive queue
  * @unit_address: Device unit address
- * @queue_handle: Queue handle from h_reg_logical_lan_queue()
+ * @queue_handle: Queue handle from h_register_logical_lan_queue()
  *
  * Deregisters and frees all structures associated with the subordinate queue.
  *
@@ -164,10 +164,8 @@ static inline long h_add_logical_lan_buffers_queue(unsigned long unit_address,
 static inline long h_free_logical_lan_queue(unsigned long unit_address,
 					    unsigned long queue_handle)
 {
-	unsigned long retbuf[PLPAR_HCALL9_BUFSIZE];
-
-	return plpar_hcall9(H_FREE_LOGICAL_LAN_QUEUE,
-			    retbuf, unit_address, queue_handle);
+	return plpar_hcall_norets(H_FREE_LOGICAL_LAN_QUEUE,
+				  unit_address, queue_handle);
 }
 
 /**
@@ -177,7 +175,7 @@ static inline long h_free_logical_lan_queue(unsigned long unit_address,
  * @rec_queue: Buffer descriptor of receive queue
  * @filter_list: DMA address of filter list
  * @mac_address: MAC address
- * @queue_handle: Output parameter for queue handle
+ * @queue_handle: Output parameter for queue handle (may be NULL)
  *
  * Registers the primary receive queue (queue 0) with the hypervisor and
  * returns the queue handle. This is needed in multi-queue mode to use
@@ -191,7 +189,7 @@ h_register_logical_lan_with_handle(unsigned long unit_address,
 				   unsigned long rec_queue,
 				   unsigned long filter_list,
 				   unsigned long mac_address,
-				   u64 *queue_handle)
+				   unsigned long *queue_handle)
 {
 	unsigned long retbuf[PLPAR_HCALL9_BUFSIZE];
 	long rc;
