@@ -362,6 +362,11 @@ struct ibmveth_adapter {
 	unsigned int queue_irq[IBMVETH_MAX_RX_QUEUES];
 	int multi_queue;
 	unsigned int num_rx_queues;
+	/* Set when firmware rejects MQ (register or buffer H_FUNCTION).
+	 * Applied at the next open() after teardown so num_rx_queues is
+	 * not shrunk while IRQ/NAPI still reference higher queues.
+	 */
+	bool mq_fallback;
 	/* True after ndo_open succeeds until ndo_stop / close completes.
 	 * Direct close()+open() callers (pool_store, change_mtu, …) can
 	 * leave IFF_UP set after a failed reopen; key teardown and

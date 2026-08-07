@@ -1148,6 +1148,7 @@ static void ibmveth_replenish_task(struct ibmveth_adapter *adapter,
 		netdev_err_ratelimited(adapter->netdev,
 				       "MQ buffer add H_FUNCTION (q=%d, batch=%u), reset\n",
 				       queue_index, fail.batch);
+		adapter->mq_fallback = true;
 		schedule_work(&adapter->work);
 	}
 
@@ -1860,9 +1861,9 @@ ibmveth_register_logical_lan_queue(struct ibmveth_adapter *adapter,
 
 	/*
 	 * H_FUNCTION means firmware rejected this subordinate register
-	 * (MQ unsupported). That is a hard open failure: do not clear
-	 * multi_queue or claim single-queue fallback. Keep a specific
-	 * log, then the generic failure lines below (no early return).
+	 * (MQ unsupported / dropped after LPM). Caller clears MQ mode for
+	 * the next open (J09-7); keep a specific log then the generic
+	 * failure lines below.
 	 */
 	if (lpar_rc == H_FUNCTION)
 		netdev_err(adapter->netdev,
@@ -1914,6 +1915,8 @@ ibmveth_register_single_rx_queue(struct ibmveth_adapter *adapter,
 	if (lpar_rc != H_SUCCESS) {
 		netdev_err(netdev, "Failed to register queue %d: rc=0x%lx\n",
 			   queue_idx, lpar_rc);
+		if (lpar_rc == H_FUNCTION)
+			return -EOPNOTSUPP;
 		return -EIO;
 	}
 
@@ -2235,8 +2238,12 @@ ibmveth_register_rx_queues(struct ibmveth_adapter *adapter, u64 mac_address)
 
 	for (i = 1; i < adapter->num_rx_queues; i++) {
 		rc = ibmveth_register_single_rx_queue(adapter, i, mac_address);
-		if (rc)
+		if (rc) {
+			/* Firmware MQ gone: fall back to SQ on next open. */
+			if (rc == -EOPNOTSUPP)
+				adapter->mq_fallback = true;
 			goto err_unregister;
+		}
 	}
 
 	netdev_dbg(netdev,
@@ -2251,6 +2258,36 @@ err_unregister:
 	return rc;
 }
 
+/**
+ * ibmveth_apply_mq_fallback - Drop multi-queue mode after firmware rejection
+ * @adapter: ibmveth adapter
+ *
+ * Call only when the device is not live with higher queue indices still
+ * armed (start of open / after close). Clears multi_queue and forces a
+ * single RX queue so subsequent register/buffer hcalls use the classic
+ * single-queue path (J09-7).
+ */
+static void ibmveth_apply_mq_fallback(struct ibmveth_adapter *adapter)
+{
+	struct net_device *netdev = adapter->netdev;
+
+	if (!adapter->mq_fallback)
+		return;
+
+	adapter->mq_fallback = false;
+
+	if (!adapter->multi_queue && adapter->num_rx_queues == 1)
+		return;
+
+	netdev_warn(netdev,
+		    "Falling back to single RX queue (firmware MQ unavailable)\n");
+	adapter->multi_queue = 0;
+	adapter->num_rx_queues = 1;
+	/* real_num_rx_queues is set later in open after resources exist. */
+	if (adapter->rx_buffers_per_hcall > IBMVETH_MAX_RX_REGULAR)
+		adapter->rx_buffers_per_hcall = IBMVETH_MAX_RX_REGULAR;
+}
+
 static int ibmveth_open(struct net_device *netdev)
 {
 	struct ibmveth_adapter *adapter = netdev_priv(netdev);
@@ -2260,6 +2297,8 @@ static int ibmveth_open(struct net_device *netdev)
 	int i;
 
 	netdev_dbg(netdev, "open starting\n");
+
+	ibmveth_apply_mq_fallback(adapter);
 
 	for (i = 0; i < IBMVETH_NUM_BUFF_POOLS; i++)
 		rxq_entries += adapter->rx_buff_pool[0][i].size;
@@ -4216,8 +4255,11 @@ static int ibmveth_resume(struct device *dev)
 {
 	struct net_device *netdev = dev_get_drvdata(dev);
 	struct ibmveth_adapter *adapter = netdev_priv(netdev);
+	int i;
 
-	ibmveth_schedule_rx_queue(adapter, 0);
+	for (i = 0; i < adapter->num_rx_queues; i++)
+		ibmveth_schedule_rx_queue(adapter, i);
+
 	return 0;
 }
 
