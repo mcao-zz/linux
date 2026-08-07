@@ -1222,6 +1222,10 @@ static void ibmveth_free_buffer_pool(struct ibmveth_adapter *adapter,
 		kfree(pool->skbuff);
 		pool->skbuff = NULL;
 	}
+
+	pool->active = 0;
+	pool->size = 0;
+	pool->threshold = 0;
 }
 
 /**
@@ -1498,9 +1502,21 @@ static bool ibmveth_rxq_correlator_valid(struct ibmveth_adapter *adapter,
 {
 	unsigned int pool = correlator >> 32;
 	unsigned int index = correlator & 0xffffffffUL;
+	struct ibmveth_buff_pool *bpool;
 
-	return pool < IBMVETH_NUM_BUFF_POOLS &&
-	       index < adapter->rx_buff_pool[queue_index][pool].size;
+	if (pool >= IBMVETH_NUM_BUFF_POOLS)
+		return false;
+
+	bpool = &adapter->rx_buff_pool[queue_index][pool];
+
+	/* init_buffer_pool() sets size for inactive pools; free_buffer_pool()
+	 * clears skbuff but used to leave size/active set. Require a live
+	 * pool with allocated arrays before indexing (J14-2).
+	 */
+	if (!bpool->active || !bpool->skbuff || !bpool->free_map)
+		return false;
+
+	return index < bpool->size;
 }
 
 static void ibmveth_rxq_advance(struct ibmveth_rx_q *rxq)
@@ -1989,6 +2005,23 @@ ibmveth_deregister_single_rx_queue(struct ibmveth_adapter *adapter,
 }
 
 /**
+ * ibmveth_destroy_subordinate_rx_queue - Tear down one subordinate RX queue
+ * @adapter: ibmveth adapter structure
+ * @queue_idx: Queue index to destroy (1..N)
+ *
+ * Deregister with PHYP before unmapping buffer pools so hypervisor buffer
+ * ownership is released while queue metadata is still valid (J14-H1).
+ */
+static void
+ibmveth_destroy_subordinate_rx_queue(struct ibmveth_adapter *adapter,
+				     int queue_idx)
+{
+	ibmveth_deregister_single_rx_queue(adapter, queue_idx);
+	ibmveth_cleanup_single_rx_interrupt(adapter, queue_idx);
+	ibmveth_free_single_rx_queue(adapter, queue_idx);
+}
+
+/**
  * ibmveth_resize_rx_queues_incremental - Resize RX queue count incrementally
  * @adapter: ibmveth adapter structure
  * @new_count: Target number of RX queues
@@ -2152,11 +2185,8 @@ ibmveth_resize_rx_queues_incremental(struct ibmveth_adapter *adapter,
 			return rc;
 		}
 
-		for (i = new_count; i < old_count; i++) {
-			ibmveth_cleanup_single_rx_interrupt(adapter, i);
-			ibmveth_deregister_single_rx_queue(adapter, i);
-			ibmveth_free_single_rx_queue(adapter, i);
-		}
+		for (i = new_count; i < old_count; i++)
+			ibmveth_destroy_subordinate_rx_queue(adapter, i);
 	}
 
 	netdev_info(netdev, "Successfully resized to %d RX queues (incremental)\n",
@@ -2195,11 +2225,8 @@ cleanup_new_queues:
 	/* Drop the live count before freeing the half-added queues. */
 	adapter->num_rx_queues = old_count;
 
-	for (i = old_count; i < failed_queue; i++) {
-		ibmveth_cleanup_single_rx_interrupt(adapter, i);
-		ibmveth_deregister_single_rx_queue(adapter, i);
-		ibmveth_free_single_rx_queue(adapter, i);
-	}
+	for (i = old_count; i < failed_queue; i++)
+		ibmveth_destroy_subordinate_rx_queue(adapter, i);
 
 	/* Roll CMO desired back to the surviving queue count. */
 	if (firmware_has_feature(FW_FEATURE_CMO))
@@ -3351,6 +3378,166 @@ static void ibmveth_rx_csum_helper(struct sk_buff *skb,
 	}
 }
 
+static void ibmveth_poll_bump_invalid(struct ibmveth_adapter *adapter,
+				      int queue_index)
+{
+	if (adapter->rx_qstats)
+		adapter->rx_qstats[queue_index].invalid_buffers++;
+	else
+		adapter->rx_invalid_buffer++;
+}
+
+static bool ibmveth_poll_stopping(struct net_device *netdev,
+				  struct napi_struct *napi)
+{
+	return !netif_running(netdev) || napi_disable_pending(napi);
+}
+
+/* Harvest one ring slot; return false if poll should stop. */
+static bool ibmveth_poll_harvest_slot(struct ibmveth_adapter *adapter,
+				      int queue_index, bool reuse)
+{
+	int rc = ibmveth_rxq_harvest_buffer(adapter, queue_index, reuse);
+
+	return !rc || rc == -EINVAL || rc == -EFAULT;
+}
+
+static bool ibmveth_poll_recycle_invalid(struct net_device *netdev,
+					 struct ibmveth_adapter *adapter,
+					 int queue_index)
+{
+	netdev_dbg(netdev, "recycling invalid buffer\n");
+	ibmveth_poll_bump_invalid(adapter, queue_index);
+	return ibmveth_poll_harvest_slot(adapter, queue_index, true);
+}
+
+static bool ibmveth_poll_skip_bad_correlator(struct net_device *netdev,
+					     struct ibmveth_adapter *adapter,
+					     int queue_index)
+{
+	if (net_ratelimit()) {
+		netdev_err(netdev,
+			   "bad correlator on queue %d, skipping slot\n",
+			   queue_index);
+		/* Residual stale slot after resize: recover via reset
+		 * rather than spinning forever (J14-4).
+		 */
+		schedule_work(&adapter->work);
+	}
+	ibmveth_poll_bump_invalid(adapter, queue_index);
+	return ibmveth_poll_harvest_slot(adapter, queue_index, true);
+}
+
+static bool ibmveth_poll_drop_oversize(struct net_device *netdev,
+				     struct ibmveth_adapter *adapter,
+				     int queue_index, unsigned int off,
+				     unsigned int len, unsigned int room)
+{
+	if (net_ratelimit())
+		netdev_err(netdev,
+			   "RX frame %u+%u exceeds buffer %u on queue %d, dropping\n",
+			   off, len, room, queue_index);
+	ibmveth_poll_bump_invalid(adapter, queue_index);
+	return ibmveth_poll_harvest_slot(adapter, queue_index, true);
+}
+
+/**
+ * ibmveth_poll_deliver_frame - Build SKB from one valid RX slot and GRO it
+ *
+ * Return: 1 frame delivered, 0 if the slot was skipped cleanly, -1 on error.
+ */
+static int ibmveth_poll_deliver_frame(struct napi_struct *napi,
+				      struct ibmveth_adapter *adapter,
+				      struct net_device *netdev,
+				      int queue_index)
+{
+	struct sk_buff *skb, *new_skb;
+	unsigned int room, off, len;
+	int length, offset, csum_good, lrg_pkt;
+	__sum16 iph_check = 0;
+	u16 mss = 0;
+	int rc;
+
+	length = ibmveth_rxq_frame_length(adapter, queue_index);
+	offset = ibmveth_rxq_frame_offset(adapter, queue_index);
+	csum_good = ibmveth_rxq_csum_good(adapter, queue_index);
+	lrg_pkt = ibmveth_rxq_large_packet(adapter, queue_index);
+
+	skb = ibmveth_rxq_get_buffer(adapter, queue_index);
+	if (unlikely(!skb)) {
+		if (!ibmveth_poll_skip_bad_correlator(netdev, adapter,
+						      queue_index))
+			return -1;
+		return 0;
+	}
+
+	room = skb_tailroom(skb);
+	off = offset;
+	len = length;
+	if (unlikely(off >= room || len > room - off)) {
+		if (!ibmveth_poll_drop_oversize(netdev, adapter, queue_index,
+						off, len, room))
+			return -1;
+		return 0;
+	}
+
+	if (lrg_pkt) {
+		__be64 *rxmss = (__be64 *)(skb->data + 8);
+
+		mss = (u16)be64_to_cpu(*rxmss);
+	}
+
+	new_skb = NULL;
+	if (length < rx_copybreak)
+		new_skb = netdev_alloc_skb(netdev, length);
+
+	if (new_skb) {
+		skb_copy_to_linear_data(new_skb, skb->data + offset, length);
+		if (rx_flush)
+			ibmveth_flush_buffer(skb->data, length + offset);
+		rc = ibmveth_rxq_harvest_buffer(adapter, queue_index, true);
+		if (unlikely(rc)) {
+			kfree_skb(new_skb);
+			return -1;
+		}
+		skb = new_skb;
+	} else {
+		rc = ibmveth_rxq_harvest_buffer(adapter, queue_index, false);
+		if (unlikely(rc))
+			return -1;
+		skb_reserve(skb, offset);
+	}
+
+	skb_put(skb, length);
+	skb->protocol = eth_type_trans(skb, netdev);
+
+	if (skb->protocol == cpu_to_be16(ETH_P_IP))
+		iph_check = ip_hdr(skb)->check;
+
+	if ((length > netdev->mtu + ETH_HLEN) || lrg_pkt ||
+	    iph_check == 0xffff) {
+		ibmveth_rx_mss_helper(skb, mss, lrg_pkt);
+		if (adapter->rx_qstats)
+			adapter->rx_qstats[queue_index].large_packets++;
+		else
+			adapter->rx_large_packets++;
+	}
+
+	if (csum_good) {
+		skb->ip_summed = CHECKSUM_UNNECESSARY;
+		ibmveth_rx_csum_helper(skb, adapter);
+	}
+
+	napi_gro_receive(napi, skb);
+
+	if (adapter->rx_qstats) {
+		adapter->rx_qstats[queue_index].packets++;
+		adapter->rx_qstats[queue_index].bytes += length;
+	}
+
+	return 1;
+}
+
 static int ibmveth_poll(struct napi_struct *napi, int budget)
 {
 	struct net_device *netdev = napi->dev;
@@ -3358,14 +3545,13 @@ static int ibmveth_poll(struct napi_struct *napi, int budget)
 	int frames_processed = 0;
 	unsigned long lpar_rc;
 	int queue_index, rc;
-	u16 mss = 0;
 
 	queue_index = napi - adapter->napi;
 
 	if (WARN_ON(queue_index < 0 || queue_index >= adapter->num_rx_queues))
 		return 0;
 
-	if (!netif_running(netdev) || napi_disable_pending(napi)) {
+	if (ibmveth_poll_stopping(netdev, napi)) {
 		napi_complete_done(napi, 0);
 		return 0;
 	}
@@ -3375,7 +3561,7 @@ static int ibmveth_poll(struct napi_struct *napi, int budget)
 
 restart_poll:
 	while (frames_processed < budget) {
-		if (!netif_running(netdev) || napi_disable_pending(napi))
+		if (ibmveth_poll_stopping(netdev, napi))
 			break;
 
 		if (!ibmveth_rxq_pending_buffer(adapter, queue_index))
@@ -3384,162 +3570,23 @@ restart_poll:
 		smp_rmb();
 		if (!ibmveth_rxq_buffer_valid(adapter, queue_index)) {
 			wmb(); /* suggested by larson1 */
-			if (adapter->rx_qstats)
-				adapter->rx_qstats[queue_index]
-					.invalid_buffers++;
-			else
-				adapter->rx_invalid_buffer++;
-			netdev_dbg(netdev, "recycling invalid buffer\n");
-			rc = ibmveth_rxq_harvest_buffer(adapter,
-							queue_index, true);
-			if (unlikely(rc &&
-				     rc != -EINVAL && rc != -EFAULT))
+			if (!ibmveth_poll_recycle_invalid(netdev, adapter,
+							  queue_index))
 				break;
 		} else {
-			struct sk_buff *skb, *new_skb;
-			unsigned int room, off, len;
-			int length = ibmveth_rxq_frame_length(adapter,
-							      queue_index);
-			int offset = ibmveth_rxq_frame_offset(adapter,
-							      queue_index);
-			int csum_good = ibmveth_rxq_csum_good(adapter,
-							      queue_index);
-			int lrg_pkt = ibmveth_rxq_large_packet(adapter,
-							       queue_index);
-			__sum16 iph_check = 0;
-
-			skb = ibmveth_rxq_get_buffer(adapter, queue_index);
-			if (unlikely(!skb)) {
-				if (net_ratelimit())
-					netdev_err(netdev,
-						   "bad correlator on queue %d, skipping slot\n",
-						   queue_index);
-				if (adapter->rx_qstats)
-					adapter->rx_qstats[queue_index]
-						.invalid_buffers++;
-				else
-					adapter->rx_invalid_buffer++;
-				rc = ibmveth_rxq_harvest_buffer(adapter,
-								queue_index,
-								true);
-				/* Advanced on -EINVAL/-EFAULT; keep polling. */
-				if (unlikely(rc &&
-					     rc != -EINVAL && rc != -EFAULT))
-					break;
-				continue;
-			}
-
-			room = skb_tailroom(skb);
-			off = offset;
-			len = length;
-			if (unlikely(off >= room || len > room - off)) {
-				if (net_ratelimit())
-					netdev_err(netdev,
-						   "RX frame %u+%u exceeds buffer %u on queue %d, dropping\n",
-						   off, len, room,
-						   queue_index);
-				if (adapter->rx_qstats)
-					adapter->rx_qstats[queue_index]
-						.invalid_buffers++;
-				else
-					adapter->rx_invalid_buffer++;
-				rc = ibmveth_rxq_harvest_buffer(adapter,
-								queue_index,
-								true);
-				if (unlikely(rc &&
-					     rc != -EINVAL && rc != -EFAULT))
-					break;
-				continue;
-			}
-
-			/* if the large packet bit is set in the rx queue
-			 * descriptor, the mss will be written by PHYP eight
-			 * bytes from the start of the rx buffer, which is
-			 * skb->data at this stage
-			 */
-			if (lrg_pkt) {
-				__be64 *rxmss = (__be64 *)(skb->data + 8);
-
-				mss = (u16)be64_to_cpu(*rxmss);
-			}
-
-			new_skb = NULL;
-			if (length < rx_copybreak)
-				new_skb = netdev_alloc_skb(netdev, length);
-
-			if (new_skb) {
-				skb_copy_to_linear_data(new_skb,
-							skb->data + offset,
-							length);
-				if (rx_flush)
-					ibmveth_flush_buffer(skb->data,
-							     length + offset);
-				rc = ibmveth_rxq_harvest_buffer(adapter,
-								queue_index,
-								true);
-				if (unlikely(rc)) {
-					kfree_skb(new_skb);
-					break;
-				}
-				skb = new_skb;
-			} else {
-				rc = ibmveth_rxq_harvest_buffer(adapter,
-								queue_index,
-								false);
-				/* Do not GRO if skb is still pool-owned. */
-				if (unlikely(rc))
-					break;
-				skb_reserve(skb, offset);
-			}
-
-			skb_put(skb, length);
-			skb->protocol = eth_type_trans(skb, netdev);
-
-			/* PHYP without PLSO support places a -1 in the ip
-			 * checksum for large send frames.
-			 */
-			if (skb->protocol == cpu_to_be16(ETH_P_IP)) {
-				struct iphdr *iph = (struct iphdr *)skb->data;
-
-				iph_check = iph->check;
-			}
-
-			if ((length > netdev->mtu + ETH_HLEN) ||
-			    lrg_pkt || iph_check == 0xffff) {
-				ibmveth_rx_mss_helper(skb, mss, lrg_pkt);
-				if (adapter->rx_qstats)
-					adapter->rx_qstats[queue_index]
-						.large_packets++;
-				else
-					adapter->rx_large_packets++;
-			}
-
-			if (csum_good) {
-				skb->ip_summed = CHECKSUM_UNNECESSARY;
-				ibmveth_rx_csum_helper(skb, adapter);
-			}
-
-			napi_gro_receive(napi, skb);	/* send it up */
-
-			if (adapter->rx_qstats) {
-				adapter->rx_qstats[queue_index].packets++;
-				adapter->rx_qstats[queue_index].bytes += length;
-			}
-
-			frames_processed++;
+			rc = ibmveth_poll_deliver_frame(napi, adapter, netdev,
+							queue_index);
+			if (rc < 0)
+				break;
+			if (rc > 0)
+				frames_processed++;
 		}
 	}
 
 	ibmveth_replenish_task(adapter, queue_index);
 
-	/*
-	 * Closing or disabling NAPI: complete without re-enabling the PHYP
-	 * IRQ. An early break from the loop previously reached
-	 * ibmveth_enable_irq() and could storm after the handler was freed.
-	 */
-	if (!netif_running(netdev) || napi_disable_pending(napi)) {
+	if (ibmveth_poll_stopping(netdev, napi)) {
 		napi_complete_done(napi, frames_processed);
-		/* After complete_done, must not return full budget. */
 		return frames_processed ? frames_processed - 1 : 0;
 	}
 
@@ -3549,9 +3596,6 @@ restart_poll:
 	if (!napi_complete_done(napi, frames_processed))
 		goto out;
 
-	/* We think we are done - reenable interrupts,
-	 * then check once more to make sure we are done.
-	 */
 	lpar_rc = ibmveth_enable_irq(adapter, queue_index);
 	if (lpar_rc != H_SUCCESS) {
 		netdev_err(netdev,
