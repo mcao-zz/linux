@@ -2135,11 +2135,17 @@ ibmveth_resize_rx_queues_incremental(struct ibmveth_adapter *adapter,
 				netdev_err(netdev,
 					   "Failed to enable IRQ for queue %d: %ld\n",
 					   i, (long)rc);
+				/*
+				 * Published, replenished, and NAPI-enabled, but
+				 * PHYP never unmasked. Match scale-down / shared
+				 * cleanup: drain posted buffers, then deregister
+				 * before unmap via destroy_subordinate (J14-H1).
+				 */
 				ibmveth_publish_num_rx_queues(adapter, i);
 				napi_disable(&adapter->napi[i]);
-				ibmveth_cleanup_single_rx_interrupt(adapter, i);
-				ibmveth_deregister_single_rx_queue(adapter, i);
-				ibmveth_free_single_rx_queue(adapter, i);
+				ibmveth_drain_rx_queue(adapter, i);
+				synchronize_net();
+				ibmveth_destroy_subordinate_rx_queue(adapter, i);
 				/* H_* must not reach ethtool as success. */
 				rc = -EIO;
 				goto cleanup_new_queues;
