@@ -437,20 +437,20 @@ ibmveth_cleanup_rx_resources(struct ibmveth_adapter *adapter)
  * h_register_logical_lan(). For subordinate queues (1+), uses H_VIOCTL
  * with H_ENABLE/DISABLE_VIO_INTERRUPT for per-queue interrupt control.
  *
- * Return: 0 on success, error code otherwise
+ * Return: 0 on success, negative errno on failure (never raw H_*).
  */
 static int
 ibmveth_toggle_irq(struct ibmveth_adapter *adapter, int queue_index,
 		   bool enable)
 {
-	unsigned long rc;
+	unsigned long h_rc;
 	unsigned long irq = adapter->queue_irq[queue_index];
 	const char *action = enable ? "enable" : "disable";
 
 	if (queue_index == 0) {
 		/* Primary queue: use h_vio_signal() */
-		rc = h_vio_signal(adapter->vdev->unit_address,
-				  enable ? VIO_IRQ_ENABLE : VIO_IRQ_DISABLE);
+		h_rc = h_vio_signal(adapter->vdev->unit_address,
+				    enable ? VIO_IRQ_ENABLE : VIO_IRQ_DISABLE);
 	} else {
 		/* Subordinate queues: use H_VIOCTL with hardware IRQ */
 		struct irq_data *irq_data = irq_get_irq_data(irq);
@@ -466,15 +466,17 @@ ibmveth_toggle_irq(struct ibmveth_adapter *adapter, int queue_index,
 		}
 
 		hwirq = irqd_to_hwirq(irq_data);
-		rc = plpar_hcall_norets(H_VIOCTL,
-					adapter->vdev->unit_address,
-					vioctl_cmd,
-					hwirq, 0, 0);
+		h_rc = plpar_hcall_norets(H_VIOCTL,
+					  adapter->vdev->unit_address,
+					  vioctl_cmd,
+					  hwirq, 0, 0);
 
-		if (rc == H_PARAMETER) {
-			/* H_PARAMETER is non-fatal when IRQ is already in
-			 * the requested state.
-			 */
+		/*
+		 * H_PARAMETER means the IRQ is already in the requested state.
+		 * Fold only on disable (idempotent mask). On enable it would
+		 * hide a stuck-masked queue with no recovery (J05-1).
+		 */
+		if (h_rc == H_PARAMETER && !enable) {
 			netdev_warn_once(adapter->netdev,
 					 "H_VIOCTL %s IRQ returned H_PARAMETER for queue %d (hwirq=%lu)\n",
 					 action, queue_index, hwirq);
@@ -482,11 +484,13 @@ ibmveth_toggle_irq(struct ibmveth_adapter *adapter, int queue_index,
 		}
 	}
 
-	if (rc)
+	if (h_rc) {
 		netdev_err(adapter->netdev,
-			   "Failed to %s IRQ for queue %d, rc=%ld\n",
-			   action, queue_index, rc);
-	return rc;
+			   "Failed to %s IRQ for queue %d, rc=0x%lx\n",
+			   action, queue_index, h_rc);
+		return -EIO;
+	}
+	return 0;
 }
 
 /**
@@ -494,7 +498,7 @@ ibmveth_toggle_irq(struct ibmveth_adapter *adapter, int queue_index,
  * @adapter: ibmveth adapter structure
  * @queue_index: Index of the queue (0 for primary, 1+ for subordinate)
  *
- * Return: 0 on success, error code otherwise
+ * Return: 0 on success, negative errno on failure
  */
 static int
 ibmveth_disable_irq(struct ibmveth_adapter *adapter, int queue_index)
@@ -507,7 +511,7 @@ ibmveth_disable_irq(struct ibmveth_adapter *adapter, int queue_index)
  * @adapter: ibmveth adapter structure
  * @queue_index: Index of the queue (0 for primary, 1+ for subordinate)
  *
- * Return: 0 on success, error code otherwise
+ * Return: 0 on success, negative errno on failure
  */
 static int
 ibmveth_enable_irq(struct ibmveth_adapter *adapter, int queue_index)
@@ -2133,8 +2137,8 @@ ibmveth_resize_rx_queues_incremental(struct ibmveth_adapter *adapter,
 			rc = ibmveth_enable_irq(adapter, i);
 			if (rc) {
 				netdev_err(netdev,
-					   "Failed to enable IRQ for queue %d: %ld\n",
-					   i, (long)rc);
+					   "Failed to enable IRQ for queue %d: %d\n",
+					   i, rc);
 				/*
 				 * Published, replenished, and NAPI-enabled, but
 				 * PHYP never unmasked. Match scale-down / shared
@@ -2146,7 +2150,7 @@ ibmveth_resize_rx_queues_incremental(struct ibmveth_adapter *adapter,
 				ibmveth_drain_rx_queue(adapter, i);
 				synchronize_net();
 				ibmveth_destroy_subordinate_rx_queue(adapter, i);
-				/* H_* must not reach ethtool as success. */
+				/* enable_irq already returns errno; keep -EIO. */
 				rc = -EIO;
 				goto cleanup_new_queues;
 			}
@@ -2198,8 +2202,8 @@ ibmveth_resize_rx_queues_incremental(struct ibmveth_adapter *adapter,
 				irq_rc = ibmveth_enable_irq(adapter, i);
 				if (irq_rc) {
 					netdev_err(netdev,
-						   "Failed to re-enable IRQ for queue %d during scale-down rollback (rc=%ld), scheduling reset\n",
-						   i, (long)irq_rc);
+						   "Failed to re-enable IRQ for queue %d during scale-down rollback (rc=%d), scheduling reset\n",
+						   i, irq_rc);
 					schedule_work(&adapter->work);
 					continue;
 				}
@@ -3633,7 +3637,7 @@ restart_poll:
 	lpar_rc = ibmveth_enable_irq(adapter, queue_index);
 	if (lpar_rc != H_SUCCESS) {
 		netdev_err(netdev,
-			   "Failed to enable IRQ for queue %d (rc=0x%lx), scheduling reset\n",
+			   "Failed to enable IRQ for queue %d (rc=%ld), scheduling reset\n",
 			   queue_index, lpar_rc);
 		schedule_work(&adapter->work);
 		goto out;
