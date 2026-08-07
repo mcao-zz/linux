@@ -867,9 +867,29 @@ static long ibmveth_add_logical_lan_buffers(struct ibmveth_adapter *adapter,
 /* replenish the buffers for a pool.  note that we don't need to
  * skb_reserve these since they are used for incoming...
  */
-static void ibmveth_replenish_buffer_pool(struct ibmveth_adapter *adapter,
+/* Outcomes for ibmveth_replenish_buffer_pool(); logged after unlock. */
+enum {
+	IBMVETH_REPLENISH_OK = 0,
+	IBMVETH_REPLENISH_RESET_MAP,
+	IBMVETH_REPLENISH_RESET_MQ,
+	IBMVETH_REPLENISH_HCALL_FAIL,
+	IBMVETH_REPLENISH_BATCH_FALLBACK,
+};
+
+struct ibmveth_replenish_fail {
+	unsigned long lpar_rc;
+	u32 filled;
+	u32 batch;
+};
+
+/*
+ * Caller must hold the per-queue replenish_lock. Do not printk here —
+ * netconsole on the same device can re-enter replenish_task (J08-4).
+ */
+static int ibmveth_replenish_buffer_pool(struct ibmveth_adapter *adapter,
 					  struct ibmveth_buff_pool *pool,
-					  int queue_index)
+					  int queue_index,
+					  struct ibmveth_replenish_fail *fail)
 {
 	union ibmveth_buf_desc descs[IBMVETH_MAX_RX_PER_HCALL] = {0};
 	u32 remaining = pool->size - atomic_read(&pool->available);
@@ -881,6 +901,7 @@ static void ibmveth_replenish_buffer_pool(struct ibmveth_adapter *adapter,
 	dma_addr_t dma_addr;
 	struct device *dev;
 	u32 index;
+	int outcome = IBMVETH_REPLENISH_OK;
 
 	vdev = adapter->vdev;
 	dev = &vdev->dev;
@@ -895,12 +916,9 @@ static void ibmveth_replenish_buffer_pool(struct ibmveth_adapter *adapter,
 		/* Fill a batch of descriptors */
 		for (filled = 0; filled < min(remaining, batch); filled++) {
 			index = pool->free_map[free_index];
-			if (WARN_ON(index == IBM_VETH_INVALID_MAP)) {
+			if (index == IBM_VETH_INVALID_MAP) {
 				adapter->replenish_add_buff_failure++;
-				netdev_info(adapter->netdev,
-					    "Invalid map index %u, reset\n",
-					    index);
-				schedule_work(&adapter->work);
+				outcome = IBMVETH_REPLENISH_RESET_MAP;
 				break;
 			}
 
@@ -952,6 +970,9 @@ static void ibmveth_replenish_buffer_pool(struct ibmveth_adapter *adapter,
 				free_index = 0;
 		}
 
+		if (outcome != IBMVETH_REPLENISH_OK)
+			break;
+
 		if (!filled)
 			break;
 
@@ -961,11 +982,9 @@ static void ibmveth_replenish_buffer_pool(struct ibmveth_adapter *adapter,
 							  queue_index);
 
 		if (lpar_rc != H_SUCCESS) {
-			dev_warn_ratelimited(dev,
-					     "RX h_add_logical_lan %s failed: filled=%u, rc=%lu, batch=%u\n",
-					     adapter->multi_queue ?
-					     "_queue" : "",
-					     filled, lpar_rc, batch);
+			fail->lpar_rc = lpar_rc;
+			fail->filled = filled;
+			fail->batch = batch;
 			goto hcall_failure;
 		}
 
@@ -1007,9 +1026,12 @@ hcall_failure:
 
 		if (lpar_rc == H_FUNCTION) {
 			if (adapter->multi_queue) {
-				netdev_err(adapter->netdev,
-					   "MQ buffer add H_FUNCTION (q=%d, batch=%d)\n",
-					   queue_index, batch);
+				/*
+				 * LPM / firmware may drop MQ buffer hcalls.
+				 * Schedule reset so we do not sit forever in
+				 * no-buffer with the link still up (J08-3).
+				 */
+				outcome = IBMVETH_REPLENISH_RESET_MQ;
 			} else if (batch > 1) {
 				/*
 				 * Live Partition Migration may drop multi-
@@ -1017,17 +1039,20 @@ hcall_failure:
 				 * on the next replenish; do not continue with
 				 * a stale local batch size (infinite loop).
 				 */
-				netdev_warn(adapter->netdev,
-					    "Legacy batch add H_FUNCTION (batch=%d), fallback\n",
-					    batch);
 				adapter->rx_buffers_per_hcall = 1;
+				outcome = IBMVETH_REPLENISH_BATCH_FALLBACK;
+			} else {
+				outcome = IBMVETH_REPLENISH_HCALL_FAIL;
 			}
+		} else {
+			outcome = IBMVETH_REPLENISH_HCALL_FAIL;
 		}
 		break;
 	}
 
 	mb();
 	atomic_add(buffers_added, &(pool->available));
+	return outcome;
 }
 
 /*
@@ -1066,8 +1091,12 @@ static void ibmveth_replenish_task(struct ibmveth_adapter *adapter,
 				   int queue_index)
 {
 	struct ibmveth_rx_q *rxq = &adapter->rx_queue[queue_index];
+	struct ibmveth_replenish_fail fail = {};
 	unsigned long flags;
-	int i;
+	int i, rc;
+	int need_reset = 0;
+	int batch_fallback = 0;
+	int hcall_fail = 0;
 
 	if (queue_index >= adapter->num_rx_queues) {
 		netdev_dbg(adapter->netdev,
@@ -1085,14 +1114,55 @@ static void ibmveth_replenish_task(struct ibmveth_adapter *adapter,
 			&adapter->rx_buff_pool[queue_index][i];
 
 		if (pool->active && pool->free_map &&
-		    (atomic_read(&pool->available) < pool->threshold))
-			ibmveth_replenish_buffer_pool(adapter, pool,
-						      queue_index);
+		    (atomic_read(&pool->available) < pool->threshold)) {
+			rc = ibmveth_replenish_buffer_pool(adapter, pool,
+							    queue_index, &fail);
+			switch (rc) {
+			case IBMVETH_REPLENISH_RESET_MAP:
+			case IBMVETH_REPLENISH_RESET_MQ:
+				need_reset = rc;
+				break;
+			case IBMVETH_REPLENISH_BATCH_FALLBACK:
+				batch_fallback = 1;
+				break;
+			case IBMVETH_REPLENISH_HCALL_FAIL:
+				hcall_fail = 1;
+				break;
+			default:
+				break;
+			}
+		}
 	}
 
 	ibmveth_update_rx_no_buffer(adapter, queue_index);
 
 	spin_unlock_irqrestore(&rxq->replenish_lock, flags);
+
+	/* Log and schedule reset only after dropping replenish_lock (J08-4). */
+	if (need_reset == IBMVETH_REPLENISH_RESET_MAP) {
+		netdev_info(adapter->netdev,
+			    "Invalid RX free_map entry on queue %d, reset\n",
+			    queue_index);
+		schedule_work(&adapter->work);
+	} else if (need_reset == IBMVETH_REPLENISH_RESET_MQ) {
+		netdev_err_ratelimited(adapter->netdev,
+				       "MQ buffer add H_FUNCTION (q=%d, batch=%u), reset\n",
+				       queue_index, fail.batch);
+		schedule_work(&adapter->work);
+	}
+
+	if (batch_fallback)
+		netdev_warn_ratelimited(adapter->netdev,
+					"Legacy batch add H_FUNCTION (batch=%u), fallback\n",
+					fail.batch);
+
+	if (hcall_fail)
+		netdev_warn_ratelimited(adapter->netdev,
+					"RX %s failed: filled=%u, rc=%lu, batch=%u\n",
+					adapter->multi_queue ?
+					"h_add_logical_lan_queue" :
+					"h_add_logical_lan",
+					fail.filled, fail.lpar_rc, fail.batch);
 }
 
 /* empty and free ana buffer pool - also used to do cleanup in error paths */
