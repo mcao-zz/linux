@@ -1135,16 +1135,11 @@ static int ibmveth_alloc_queue_buffer_pools(struct ibmveth_adapter *adapter,
 				   bpool->buff_size,
 				   bpool->size);
 			bpool->active = 0;
-
-			/* Free pools allocated so far for this queue */
-			while (--i >= 0) {
-				struct ibmveth_buff_pool *fpool =
-					&adapter->rx_buff_pool[queue][i];
-
-				if (fpool->active)
-					ibmveth_free_buffer_pool(adapter,
-								 fpool);
-			}
+			/* Free by allocation presence, not active — the
+			 * failing pool cleared active first and would be
+			 * skipped by an active-only unwind.
+			 */
+			ibmveth_free_queue_buffer_pools(adapter, queue);
 			return -ENOMEM;
 		}
 	}
