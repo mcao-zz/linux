@@ -169,6 +169,22 @@ static inline int ibmveth_rxq_csum_good(struct ibmveth_adapter *adapter,
 	return ibmveth_rxq_flags(adapter, queue_index) & IBMVETH_RXQ_CSUM_GOOD;
 }
 
+/* Lockless IRQ/poll readers vs resize publishers (J12-2). */
+static inline unsigned int
+ibmveth_get_num_rx_queues(const struct ibmveth_adapter *adapter)
+{
+	return READ_ONCE(adapter->num_rx_queues);
+}
+
+static inline void
+ibmveth_publish_num_rx_queues(struct ibmveth_adapter *adapter,
+			      unsigned int num)
+{
+	/* Per-queue state must be visible before readers observe num. */
+	smp_wmb();
+	WRITE_ONCE(adapter->num_rx_queues, num);
+}
+
 static unsigned int ibmveth_real_max_tx_queues(void)
 {
 	unsigned int n_cpu = num_online_cpus();
@@ -751,7 +767,7 @@ static void ibmveth_schedule_rx_queue(struct ibmveth_adapter *adapter,
 	struct napi_struct *napi = &adapter->napi[qindex];
 	unsigned long lpar_rc;
 
-	if (WARN_ON(qindex < 0 || qindex >= adapter->num_rx_queues))
+	if (WARN_ON(qindex < 0 || qindex >= ibmveth_get_num_rx_queues(adapter)))
 		return;
 
 	if (napi_schedule_prep(napi)) {
@@ -1097,7 +1113,7 @@ static void ibmveth_update_rx_no_buffer(struct ibmveth_adapter *adapter,
 	 * buffer_list pages already freed by resize.
 	 */
 	if (queue_index < 0 ||
-	    queue_index >= adapter->num_rx_queues ||
+	    queue_index >= ibmveth_get_num_rx_queues(adapter) ||
 	    !adapter->buffer_list_addr[queue_index])
 		return;
 
@@ -1122,10 +1138,10 @@ static void ibmveth_replenish_task(struct ibmveth_adapter *adapter,
 	int batch_fallback = 0;
 	int hcall_fail = 0;
 
-	if (queue_index >= adapter->num_rx_queues) {
+	if (queue_index >= ibmveth_get_num_rx_queues(adapter)) {
 		netdev_dbg(adapter->netdev,
 			   "Skipping replenish for freed queue %d (num_queues=%d)\n",
-			   queue_index, adapter->num_rx_queues);
+			   queue_index, ibmveth_get_num_rx_queues(adapter));
 		return;
 	}
 
@@ -2114,7 +2130,7 @@ ibmveth_resize_rx_queues_incremental(struct ibmveth_adapter *adapter,
 			 * That way ibmveth_interrupt() cannot run on an
 			 * unpublished, empty, or NAPI-disabled queue.
 			 */
-			adapter->num_rx_queues = i + 1;
+			ibmveth_publish_num_rx_queues(adapter, i + 1);
 			ibmveth_replenish_task(adapter, i);
 			napi_enable(&adapter->napi[i]);
 
@@ -2123,7 +2139,7 @@ ibmveth_resize_rx_queues_incremental(struct ibmveth_adapter *adapter,
 				netdev_err(netdev,
 					   "Failed to enable IRQ for queue %d: %ld\n",
 					   i, (long)rc);
-				adapter->num_rx_queues = i;
+				ibmveth_publish_num_rx_queues(adapter, i);
 				napi_disable(&adapter->napi[i]);
 				ibmveth_cleanup_single_rx_interrupt(adapter, i);
 				ibmveth_deregister_single_rx_queue(adapter, i);
@@ -2164,13 +2180,13 @@ ibmveth_resize_rx_queues_incremental(struct ibmveth_adapter *adapter,
 
 		synchronize_net();
 
-		adapter->num_rx_queues = new_count;
+		ibmveth_publish_num_rx_queues(adapter, new_count);
 
 		rc = netif_set_real_num_rx_queues(netdev, new_count);
 		if (rc) {
 			netdev_err(netdev, "Failed to set real RX queues to %d: %d\n",
 				   new_count, rc);
-			adapter->num_rx_queues = old_count;
+			ibmveth_publish_num_rx_queues(adapter, old_count);
 			for (i = new_count; i < old_count; i++) {
 				int irq_rc;
 
@@ -2228,7 +2244,7 @@ cleanup_new_queues:
 	synchronize_net();
 
 	/* Drop the live count before freeing the half-added queues. */
-	adapter->num_rx_queues = old_count;
+	ibmveth_publish_num_rx_queues(adapter, old_count);
 
 	for (i = old_count; i < failed_queue; i++)
 		ibmveth_destroy_subordinate_rx_queue(adapter, i);
@@ -2372,7 +2388,7 @@ static void ibmveth_apply_mq_fallback(struct ibmveth_adapter *adapter)
 	netdev_warn(netdev,
 		    "Falling back to single RX queue (firmware MQ unavailable)\n");
 	adapter->multi_queue = 0;
-	adapter->num_rx_queues = 1;
+	ibmveth_publish_num_rx_queues(adapter, 1);
 	/* real_num_rx_queues is set later in open after resources exist. */
 	if (adapter->rx_buffers_per_hcall > IBMVETH_MAX_RX_REGULAR)
 		adapter->rx_buffers_per_hcall = IBMVETH_MAX_RX_REGULAR;
@@ -3014,7 +3030,12 @@ static int ibmveth_set_channels(struct net_device *netdev,
 		 * (J13-3); open itself does not call vio_cmo_set_dev_desired.
 		 */
 		if (goal_rx != adapter->num_rx_queues) {
-			adapter->num_rx_queues = goal_rx;
+			ibmveth_publish_num_rx_queues(adapter, goal_rx);
+			rc = netif_set_real_num_rx_queues(netdev, goal_rx);
+			if (rc) {
+				ibmveth_publish_num_rx_queues(adapter, old_rx);
+				return rc;
+			}
 			if (firmware_has_feature(FW_FEATURE_CMO))
 				vio_cmo_set_dev_desired(adapter->vdev,
 					ibmveth_get_desired_dma(adapter->vdev));
@@ -3553,8 +3574,11 @@ static int ibmveth_poll(struct napi_struct *napi, int budget)
 
 	queue_index = napi - adapter->napi;
 
-	if (WARN_ON(queue_index < 0 || queue_index >= adapter->num_rx_queues))
+	if (WARN_ON(queue_index < 0 ||
+		    queue_index >= ibmveth_get_num_rx_queues(adapter))) {
+		napi_complete_done(napi, 0);
 		return 0;
+	}
 
 	if (ibmveth_poll_stopping(netdev, napi)) {
 		napi_complete_done(napi, 0);
@@ -3629,7 +3653,7 @@ static irqreturn_t ibmveth_interrupt(int irq, void *dev_instance)
 	int qindex;
 
 	qindex = napi - adapter->napi;
-	if (WARN_ON(qindex < 0 || qindex >= adapter->num_rx_queues))
+	if (WARN_ON(qindex < 0 || qindex >= ibmveth_get_num_rx_queues(adapter)))
 		return IRQ_NONE;
 
 	if (adapter->rx_qstats)
@@ -3741,12 +3765,13 @@ static int ibmveth_change_mtu(struct net_device *dev, int new_mtu)
 static void ibmveth_poll_controller(struct net_device *dev)
 {
 	struct ibmveth_adapter *adapter = netdev_priv(dev);
+	unsigned int num = ibmveth_get_num_rx_queues(adapter);
 	int i;
 
-	for (i = 0; i < adapter->num_rx_queues; i++)
+	for (i = 0; i < num; i++)
 		ibmveth_replenish_task(adapter, i);
 
-	for (i = 0; i < adapter->num_rx_queues; i++)
+	for (i = 0; i < num; i++)
 		ibmveth_schedule_rx_queue(adapter, i);
 }
 #endif
@@ -4087,13 +4112,15 @@ static int ibmveth_probe(struct vio_dev *dev, const struct vio_device_id *id)
 	if (ret == H_SUCCESS &&
 	    (ret_attr & IBMVETH_ILLAN_RX_MULTI_QUEUE_SUPPORT)) {
 		adapter->multi_queue = 1;
-		adapter->num_rx_queues = min(num_online_cpus(),
-					     IBMVETH_DEFAULT_QUEUES);
+		ibmveth_publish_num_rx_queues(adapter,
+					      min(num_online_cpus(),
+						  IBMVETH_DEFAULT_QUEUES));
 		netdev_dbg(netdev, "RX multi queue mode enabled: %d queues\n",
 			   adapter->num_rx_queues);
 	} else {
 		adapter->multi_queue = 0;
-		adapter->num_rx_queues = IBMVETH_DEFAULT_RX_QUEUES;
+		ibmveth_publish_num_rx_queues(adapter,
+					      IBMVETH_DEFAULT_RX_QUEUES);
 	}
 
 	if (ret == H_SUCCESS &&
@@ -4384,9 +4411,10 @@ static int ibmveth_resume(struct device *dev)
 {
 	struct net_device *netdev = dev_get_drvdata(dev);
 	struct ibmveth_adapter *adapter = netdev_priv(netdev);
+	unsigned int num = ibmveth_get_num_rx_queues(adapter);
 	int i;
 
-	for (i = 0; i < adapter->num_rx_queues; i++)
+	for (i = 0; i < num; i++)
 		ibmveth_schedule_rx_queue(adapter, i);
 
 	return 0;
