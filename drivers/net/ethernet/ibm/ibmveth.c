@@ -3637,10 +3637,19 @@ static int ibmveth_buffer_pools_show(struct seq_file *m, void *v)
 }
 DEFINE_SHOW_ATTRIBUTE(ibmveth_buffer_pools);
 
+/* Driver-owned root so per-adapter dirs use a stable vio name, not the
+ * mutable netdev->name (avoids stale names / eth0 collisions after rename).
+ */
+static struct dentry *ibmveth_dbg_root;
+
 static void ibmveth_debugfs_init(struct ibmveth_adapter *adapter)
 {
-	adapter->debugfs_dir = debugfs_create_dir(adapter->netdev->name,
-						  NULL);
+	if (!ibmveth_dbg_root)
+		ibmveth_dbg_root = debugfs_create_dir(ibmveth_driver_name, NULL);
+
+	adapter->debugfs_dir =
+		debugfs_create_dir(dev_name(&adapter->vdev->dev),
+				   ibmveth_dbg_root);
 	debugfs_create_file("buffer_pools", 0400, adapter->debugfs_dir,
 			    adapter, &ibmveth_buffer_pools_fops);
 }
@@ -4103,6 +4112,8 @@ static int __init ibmveth_module_init(void)
 static void __exit ibmveth_module_exit(void)
 {
 	vio_unregister_driver(&ibmveth_driver);
+	debugfs_remove_recursive(ibmveth_dbg_root);
+	ibmveth_dbg_root = NULL;
 }
 
 module_init(ibmveth_module_init);
