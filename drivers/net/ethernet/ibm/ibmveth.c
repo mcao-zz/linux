@@ -3669,6 +3669,10 @@ static void ibmveth_probe_cleanup(struct ibmveth_adapter *adapter,
 
 	ibmveth_free_tx_qstats(adapter);
 	ibmveth_free_rx_qstats(adapter);
+	/* Probe failure never reaches ibmveth_remove(); clear before free so
+	 * CMO get_desired_dma() cannot see a freed netdev on rebind.
+	 */
+	dev_set_drvdata(&adapter->vdev->dev, NULL);
 	free_netdev(netdev);
 }
 
