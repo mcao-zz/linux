@@ -1281,9 +1281,12 @@ static void ibmveth_free_buffer_pool(struct ibmveth_adapter *adapter,
 		pool->skbuff = NULL;
 	}
 
-	pool->active = 0;
-	pool->size = 0;
-	pool->threshold = 0;
+	/*
+	 * Keep probe/sysfs geometry (active, size, buff_size, threshold).
+	 * Clearing active here was a v3 ifdown/up regression: open skips
+	 * !active pools, so reopen posted no RX buffers (TX OK, ARP/RX
+	 * dead) at any queue count, including RX=8 with no -L.
+	 */
 	atomic_set(&pool->available, 0);
 }
 
