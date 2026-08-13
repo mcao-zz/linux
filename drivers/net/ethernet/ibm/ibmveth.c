@@ -653,12 +653,12 @@ err_dispose_mappings:
  * @adapter: ibmveth adapter structure
  *
  * Mask and synchronize each queue IRQ before napi_disable() so the handler
- * cannot miss a PHYP mask while NAPI is already dead. free_irq() runs only
- * after napi_disable() returns. Poll must not re-arm once shutdown is
- * pending (poll harden lands with the SQ poll helpers later in the series).
- * Safe for close and for open failure after setup_rx_interrupts() already
- * unmasked PHYP. No-op if setup never succeeded (avoids double
- * napi_disable / free_irq after a failed close+open while IFF_UP remains set).
+ * cannot miss a PHYP mask while NAPI is already dead. Remask after
+ * napi_disable() in case an in-flight poll re-armed PHYP while we waited.
+ * free_irq() runs only after that. Safe for close and for open failure after
+ * setup_rx_interrupts() already unmasked PHYP. No-op if setup never
+ * succeeded (avoids double napi_disable / free_irq after a failed close+open
+ * while IFF_UP remains set).
  */
 static void
 ibmveth_cleanup_rx_interrupts(struct ibmveth_adapter *adapter)
@@ -677,6 +677,13 @@ ibmveth_cleanup_rx_interrupts(struct ibmveth_adapter *adapter)
 
 	for (i = 0; i < adapter->num_rx_queues; i++)
 		napi_disable(&adapter->napi[i]);
+
+	for (i = 0; i < adapter->num_rx_queues; i++) {
+		if (!adapter->queue_irq[i])
+			continue;
+		ibmveth_disable_irq(adapter, i);
+		synchronize_irq(adapter->queue_irq[i]);
+	}
 
 	for (i = 0; i < adapter->num_rx_queues; i++) {
 		if (adapter->queue_irq[i])
@@ -2262,9 +2269,11 @@ ibmveth_resize_rx_queues_incremental(struct ibmveth_adapter *adapter,
 
 		/*
 		 * Mask PHYP before napi_disable so the handler cannot miss
-		 * a mask while NAPI is already dead, then drain and drop the
-		 * live count before freeing so netpoll cannot walk dying
-		 * queues.
+		 * a mask while NAPI is already dead. An in-flight poll can
+		 * still re-arm PHYP while napi_disable() waits, so remask
+		 * and sync again after NAPI is stopped. Then drain and drop
+		 * the live count before freeing so netpoll cannot walk dying
+		 * queues (handler may still be registered until destroy).
 		 */
 		for (i = new_count; i < old_count; i++) {
 			ibmveth_disable_irq(adapter, i);
@@ -2273,6 +2282,11 @@ ibmveth_resize_rx_queues_incremental(struct ibmveth_adapter *adapter,
 
 		for (i = new_count; i < old_count; i++)
 			napi_disable(&adapter->napi[i]);
+
+		for (i = new_count; i < old_count; i++) {
+			ibmveth_disable_irq(adapter, i);
+			synchronize_irq(adapter->queue_irq[i]);
+		}
 
 		for (i = new_count; i < old_count; i++)
 			ibmveth_drain_rx_queue(adapter, i);
@@ -2343,6 +2357,12 @@ cleanup_new_queues:
 
 	for (i = old_count; i < failed_queue; i++)
 		napi_disable(&adapter->napi[i]);
+
+	/* Same remask as scale-down: poll may have re-armed during disable. */
+	for (i = old_count; i < failed_queue; i++) {
+		ibmveth_disable_irq(adapter, i);
+		synchronize_irq(adapter->queue_irq[i]);
+	}
 
 	for (i = old_count; i < failed_queue; i++)
 		ibmveth_drain_rx_queue(adapter, i);
@@ -3780,6 +3800,15 @@ restart_poll:
 	if (!napi_complete_done(napi, frames_processed))
 		goto out;
 
+	/*
+	 * napi_disable() sets DISABLE then waits for this poll. Without a
+	 * second stopping check here, enable_irq() can re-arm PHYP after
+	 * resize already masked the queue — late IRQs then hit the handler
+	 * after num_rx_queues was published lower (lab WARN at interrupt).
+	 */
+	if (ibmveth_poll_stopping(netdev, napi))
+		goto out;
+
 	rc = ibmveth_enable_irq(adapter, queue_index);
 	if (rc) {
 		netdev_err(netdev,
@@ -3808,7 +3837,12 @@ static irqreturn_t ibmveth_interrupt(int irq, void *dev_instance)
 	int qindex;
 
 	qindex = napi - adapter->napi;
-	if (WARN_ON(qindex < 0 || qindex >= ibmveth_get_num_rx_queues(adapter)))
+	/*
+	 * Quiet on out-of-range: scale-down publishes a lower live count
+	 * before free_irq(). A residual IRQ must not WARN-storm; return
+	 * IRQ_NONE until the handler is removed.
+	 */
+	if (qindex < 0 || qindex >= ibmveth_get_num_rx_queues(adapter))
 		return IRQ_NONE;
 
 	if (adapter->rx_qstats)
