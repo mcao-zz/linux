@@ -748,15 +748,17 @@ ibmveth_cleanup_single_rx_interrupt(struct ibmveth_adapter *adapter,
  *
  * Shared by the IRQ handler and process-context kick sites (open, resume,
  * pool sysfs, poll_controller).
+ *
+ * Return: true if NAPI was scheduled (and PHYP masked), false if prep failed
  */
-static void ibmveth_schedule_rx_queue(struct ibmveth_adapter *adapter,
+static bool ibmveth_schedule_rx_queue(struct ibmveth_adapter *adapter,
 				      int qindex)
 {
 	struct napi_struct *napi = &adapter->napi[qindex];
 	int rc;
 
 	if (WARN_ON(qindex < 0 || qindex >= ibmveth_get_num_rx_queues(adapter)))
-		return;
+		return false;
 
 	/*
 	 * Only mask PHYP when NAPI will run. Masking on prep failure can
@@ -768,7 +770,9 @@ static void ibmveth_schedule_rx_queue(struct ibmveth_adapter *adapter,
 		rc = ibmveth_disable_irq(adapter, qindex);
 		WARN_ON(rc);
 		__napi_schedule(napi);
+		return true;
 	}
+	return false;
 }
 
 /**
@@ -1218,6 +1222,30 @@ out_unlock:
 				      "h_add_logical_lan_buffer" :
 				      "h_add_logical_lan_buffers"),
 				     fail.filled, fail.lpar_rc, fail.batch);
+}
+
+/**
+ * ibmveth_restart_rx_queue - Post buffers and ensure Q can take RX
+ * @adapter: ibmveth adapter
+ * @qindex: RX queue index
+ *
+ * SQ open leaves PHYP masked until the first poll. If schedule_prep fails,
+ * NAPI never runs and the queue stays masked (TX OK, RX/ARP dead) until
+ * reload. Replenish first so an enable_irq fallback can actually deliver.
+ * Also used after every open (SQ and MQ) and after scale-down so a
+ * queue is not left idle+masked.
+ */
+static void ibmveth_restart_rx_queue(struct ibmveth_adapter *adapter,
+				     int qindex)
+{
+	int rc;
+
+	ibmveth_replenish_task(adapter, qindex);
+	if (ibmveth_schedule_rx_queue(adapter, qindex))
+		return;
+
+	rc = ibmveth_enable_irq(adapter, qindex);
+	WARN_ON(rc);
 }
 
 /* empty and free ana buffer pool - also used to do cleanup in error paths */
@@ -2276,6 +2304,13 @@ ibmveth_resize_rx_queues_incremental(struct ibmveth_adapter *adapter,
 
 		for (i = new_count; i < old_count; i++)
 			ibmveth_destroy_subordinate_rx_queue(adapter, i);
+
+		/* Q0 (and any still-live queues) were not in the teardown
+		 * loop. Scale-down can leave Q0 masked with NAPI idle — kick
+		 * so ARP/RX does not die until rmmod (lab: -L rx 1).
+		 */
+		for (i = 0; i < new_count; i++)
+			ibmveth_restart_rx_queue(adapter, i);
 	}
 
 	netdev_info(netdev, "Successfully resized to %d RX queues (incremental)\n",
@@ -2506,35 +2541,24 @@ static int ibmveth_open(struct net_device *netdev)
 	}
 
 	/*
-	 * MQ: post buffers before setup_rx_interrupts() unmasks PHYP
-	 * (avoids drops if traffic arrives during open; PHYP allows
-	 * either order). Single-queue keeps the classic kick: setup
-	 * (no unmask) then schedule_rx_queue() so the first poll
-	 * replenishes and enables.
+	 * Post buffers before setup_rx_interrupts(). MQ setup then unmasks
+	 * PHYP; SQ setup leaves PHYP masked. kick_if_pending alone is not
+	 * enough: after ifdown/up (RX=8, no -L) NAPI can be idle with no
+	 * pending descriptor and the queue stays dead (TX OK, ARP/RX fail).
+	 * restart_rx_queue() replenishes, schedules NAPI, and unmasks if
+	 * prep fails.
 	 */
-	if (adapter->multi_queue && adapter->num_rx_queues > 1) {
-		for (i = 0; i < adapter->num_rx_queues; i++) {
-			netdev_dbg(netdev,
-				   "initial replenish cycle for queue %d\n", i);
-			ibmveth_replenish_task(adapter, i);
-		}
+	for (i = 0; i < adapter->num_rx_queues; i++) {
+		netdev_dbg(netdev, "initial replenish cycle for queue %d\n", i);
+		ibmveth_replenish_task(adapter, i);
 	}
 
 	rc = ibmveth_setup_rx_interrupts(adapter);
 	if (rc)
 		goto out_free_all_queues; /* setup already disposed IRQs */
 
-	if (adapter->multi_queue && adapter->num_rx_queues > 1) {
-		/*
-		 * Same pending compensation as resize after enable_irq:
-		 * replenish ran while PHYP was still masked.
-		 */
-		for (i = 0; i < adapter->num_rx_queues; i++)
-			ibmveth_kick_rx_queue_if_pending(adapter, i);
-	} else {
-		netdev_dbg(netdev, "initial replenish cycle\n");
-		ibmveth_schedule_rx_queue(adapter, 0);
-	}
+	for (i = 0; i < adapter->num_rx_queues; i++)
+		ibmveth_restart_rx_queue(adapter, i);
 
 	rc = ibmveth_alloc_tx_resources(adapter);
 	if (rc)
