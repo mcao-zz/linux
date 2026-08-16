@@ -613,7 +613,7 @@ ibmveth_setup_rx_interrupts(struct ibmveth_adapter *adapter)
 				netdev_err(netdev,
 					   "Failed to enable IRQ for queue %d, rc=%d\n",
 					   i, rc);
-				while (--i >= 0) {
+				for (; i >= 0; i--) {
 					ibmveth_disable_irq(adapter, i);
 					synchronize_irq(adapter->queue_irq[i]);
 				}
@@ -630,9 +630,15 @@ ibmveth_setup_rx_interrupts(struct ibmveth_adapter *adapter)
 	return 0;
 
 err_disable_napi:
-	/* PHYP unmask was rolled back above; disable NAPI before free_irq */
+	/* STOP: remask after napi_disable; an in-flight poll can re-arm. */
 	for (i = 0; i < num; i++)
 		napi_disable(&adapter->napi[i]);
+	for (i = 0; i < num; i++) {
+		if (!adapter->queue_irq[i])
+			continue;
+		ibmveth_disable_irq(adapter, i);
+		synchronize_irq(adapter->queue_irq[i]);
+	}
 	for (i = 0; i < num; i++) {
 		if (adapter->queue_irq[i])
 			free_irq(adapter->queue_irq[i], &adapter->napi[i]);
