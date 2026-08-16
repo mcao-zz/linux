@@ -2673,6 +2673,10 @@ static void ibmveth_reset(struct work_struct *w)
 	netdev_dbg(netdev, "reset starting\n");
 
 	rtnl_lock();
+	if (netdev->reg_state != NETREG_REGISTERED) {
+		rtnl_unlock();
+		return;
+	}
 
 	dev_close(adapter->netdev);
 	dev_open(adapter->netdev, NULL);
