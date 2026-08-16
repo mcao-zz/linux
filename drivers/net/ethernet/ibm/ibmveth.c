@@ -3806,9 +3806,11 @@ restart_poll:
 	ibmveth_replenish_task(adapter, queue_index);
 
 	if (ibmveth_poll_stopping(netdev, napi)) {
-		if (budget && napi_complete_done(napi, frames_processed))
+		if (budget) {
+			napi_complete_done(napi, frames_processed);
 			return min(frames_processed, budget - 1);
-		return frames_processed;
+		}
+		return 0;
 	}
 
 	if (frames_processed == budget)
