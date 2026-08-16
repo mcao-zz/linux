@@ -3753,12 +3753,14 @@ static int ibmveth_poll(struct napi_struct *napi, int budget)
 
 	if (WARN_ON(queue_index < 0 ||
 		    queue_index >= ibmveth_get_num_rx_queues(adapter))) {
-		napi_complete_done(napi, 0);
+		if (budget)
+			napi_complete_done(napi, 0);
 		return 0;
 	}
 
 	if (ibmveth_poll_stopping(netdev, napi)) {
-		napi_complete_done(napi, 0);
+		if (budget)
+			napi_complete_done(napi, 0);
 		return 0;
 	}
 
@@ -3792,8 +3794,9 @@ restart_poll:
 	ibmveth_replenish_task(adapter, queue_index);
 
 	if (ibmveth_poll_stopping(netdev, napi)) {
-		napi_complete_done(napi, frames_processed);
-		return frames_processed ? frames_processed - 1 : 0;
+		if (budget && napi_complete_done(napi, frames_processed))
+			return min(frames_processed, budget - 1);
+		return frames_processed;
 	}
 
 	if (frames_processed == budget)
