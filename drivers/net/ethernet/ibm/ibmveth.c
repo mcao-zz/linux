@@ -475,12 +475,8 @@ ibmveth_toggle_irq(struct ibmveth_adapter *adapter, int queue_index,
 		 * keep it an error so a stuck-masked queue stays visible to
 		 * poll/resize recovery.
 		 */
-		if (h_rc == H_PARAMETER && !enable) {
-			dev_warn_ratelimited(&adapter->netdev->dev,
-					     "H_VIOCTL %s IRQ returned H_PARAMETER for queue %d (hwirq=%lu)\n",
-					     action, queue_index, hwirq);
+		if (h_rc == H_PARAMETER && !enable)
 			return 0;
-		}
 	}
 
 	if (h_rc) {
