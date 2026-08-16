@@ -4697,7 +4697,8 @@ static void ibmveth_remove_buffer_from_pool_test(struct kunit *test)
 	pool = &adapter->rx_buff_pool[0][0];
 	pool->skbuff = kunit_kcalloc(test, pool->size, sizeof(void *), GFP_KERNEL);
 	KUNIT_ASSERT_NOT_ERR_OR_NULL(test, pool->skbuff);
-	pool->free_map = kunit_kcalloc(test, pool->size, sizeof(u16), GFP_KERNEL);
+	pool->free_map = kunit_kcalloc(test, pool->size, sizeof(u16),
+				       GFP_KERNEL);
 	KUNIT_ASSERT_NOT_ERR_OR_NULL(test, pool->free_map);
 
 	correlator = ((u64)IBMVETH_NUM_BUFF_POOLS << 32) | 0;
@@ -4763,7 +4764,8 @@ static void ibmveth_rxq_get_buffer_test(struct kunit *test)
 	pool = &adapter->rx_buff_pool[0][0];
 	pool->skbuff = kunit_kcalloc(test, pool->size, sizeof(void *), GFP_KERNEL);
 	KUNIT_ASSERT_NOT_ERR_OR_NULL(test, pool->skbuff);
-	pool->free_map = kunit_kcalloc(test, pool->size, sizeof(u16), GFP_KERNEL);
+	pool->free_map = kunit_kcalloc(test, pool->size, sizeof(u16),
+				       GFP_KERNEL);
 	KUNIT_ASSERT_NOT_ERR_OR_NULL(test, pool->free_map);
 
 	adapter->rx_queue[0].queue_addr[0].correlator =
