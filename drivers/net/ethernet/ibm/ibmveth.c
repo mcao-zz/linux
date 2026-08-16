@@ -236,13 +236,11 @@ ibmveth_free_filter_list(struct ibmveth_adapter *adapter)
 {
 	struct device *dev = &adapter->vdev->dev;
 
-	if (adapter->filter_list_dma) {
+	/* Unmap by CPU pointer: SPAPR can return DMA address 0. */
+	if (adapter->filter_list_addr) {
 		dma_unmap_single(dev, adapter->filter_list_dma, 4096,
 				 DMA_BIDIRECTIONAL);
 		adapter->filter_list_dma = 0;
-	}
-
-	if (adapter->filter_list_addr) {
 		free_page((unsigned long)adapter->filter_list_addr);
 		adapter->filter_list_addr = NULL;
 	}
@@ -346,6 +344,8 @@ ibmveth_alloc_rx_queues(struct ibmveth_adapter *adapter, int rxq_entries)
 			netdev_err(netdev,
 				   "unable to map buffer list for queue %d\n",
 				   i);
+			free_page((unsigned long)adapter->buffer_list_addr[i]);
+			adapter->buffer_list_addr[i] = NULL;
 			adapter->buffer_list_dma[i] = 0;
 			goto err_cleanup;
 		}
@@ -371,7 +371,7 @@ ibmveth_alloc_rx_queues(struct ibmveth_adapter *adapter, int rxq_entries)
 err_cleanup:
 	/* Clean up previously allocated queues */
 	for (; i >= 0; i--) {
-		if (adapter->buffer_list_dma[i]) {
+		if (adapter->buffer_list_addr[i]) {
 			dma_unmap_single(dev, adapter->buffer_list_dma[i],
 					 4096, DMA_BIDIRECTIONAL);
 			adapter->buffer_list_dma[i] = 0;
@@ -405,7 +405,7 @@ ibmveth_cleanup_rx_resources(struct ibmveth_adapter *adapter)
 		   ibmveth_get_num_rx_queues(adapter));
 
 	for (i = 0; i < ibmveth_get_num_rx_queues(adapter); i++) {
-		if (adapter->buffer_list_dma[i]) {
+		if (adapter->buffer_list_addr[i]) {
 			dma_unmap_single(dev, adapter->buffer_list_dma[i],
 					 4096, DMA_BIDIRECTIONAL);
 			adapter->buffer_list_dma[i] = 0;
@@ -1547,7 +1547,7 @@ ibmveth_free_single_rx_queue(struct ibmveth_adapter *adapter, int queue_idx)
 
 	ibmveth_free_queue_buffer_pools(adapter, queue_idx);
 
-	if (adapter->buffer_list_dma[queue_idx]) {
+	if (adapter->buffer_list_addr[queue_idx]) {
 		dma_unmap_single(dev, adapter->buffer_list_dma[queue_idx],
 				 4096, DMA_BIDIRECTIONAL);
 		adapter->buffer_list_dma[queue_idx] = 0;
