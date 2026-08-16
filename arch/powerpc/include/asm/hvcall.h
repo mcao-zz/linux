@@ -387,6 +387,7 @@
 #define H_ENABLE_VIO_INTERRUPT	0x0C
 #define H_GET_SESSION_TOKEN	0x19
 #define H_SESSION_ERR_DETECTED	0x1A
+#define H_ILLAN_MULTIQUEUE_HASH	0x1F
 
 
 /* Platform specific hcalls, used by KVM */
