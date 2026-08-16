@@ -3716,7 +3716,7 @@ static int ibmveth_poll_deliver_frame(struct napi_struct *napi,
 	skb->protocol = eth_type_trans(skb, netdev);
 
 	if (skb->protocol == cpu_to_be16(ETH_P_IP))
-		iph_check = ip_hdr(skb)->check;
+		iph_check = ((struct iphdr *)skb->data)->check;
 
 	if ((length > netdev->mtu + ETH_HLEN) || lrg_pkt ||
 	    iph_check == 0xffff) {
