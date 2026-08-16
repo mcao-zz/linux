@@ -3203,24 +3203,29 @@ static int ibmveth_set_channels(struct net_device *netdev,
 		return rc;
 
 	/* If RX resources are not live (never opened, or close+open failed
-	 * while IFF_UP stayed set), only stash desired queue counts.
+	 * while IFF_UP stayed set), publish desired counts for the next
+	 * open(); do not allocate RX mappings/IRQs while down.
 	 */
 	if (!adapter->opened) {
-		/* Apply TX first so a failure leaves RX stash unchanged. */
+		/* Apply TX first so a failure leaves RX unchanged. */
 		rc = netif_set_real_num_tx_queues(netdev, goal_tx);
 		if (rc)
 			return rc;
 
-		/* Stash desired RX count; open() publishes it via
-		 * netif_set_real_num_rx_queues() after queue registration.
-		 * Refresh CMO now so open() can map the larger footprint;
-		 * open itself does not call vio_cmo_set_dev_desired.
+		/* Publish desired RX count now (CMO uses it before open).
+		 * open() still allocates and calls netif_set_real_num_rx
+		 * after queue registration.
 		 */
 		if (goal_rx != ibmveth_get_num_rx_queues(adapter)) {
 			ibmveth_publish_num_rx_queues(adapter, goal_rx);
 			rc = netif_set_real_num_rx_queues(netdev, goal_rx);
 			if (rc) {
 				ibmveth_publish_num_rx_queues(adapter, old_rx);
+				if (netif_set_real_num_tx_queues(netdev,
+								 old_tx))
+					netdev_err(netdev,
+						   "Failed to roll TX queues back to %u after RX set_real failure\n",
+						   old_tx);
 				return rc;
 			}
 			if (firmware_has_feature(FW_FEATURE_CMO)) {
