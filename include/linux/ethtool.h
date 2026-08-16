@@ -66,6 +66,8 @@ enum {
 	ETH_RSS_HASH_TOP_BIT, /* Configurable RSS hash function - Toeplitz */
 	ETH_RSS_HASH_XOR_BIT, /* Configurable RSS hash function - Xor */
 	ETH_RSS_HASH_CRC32_BIT, /* Configurable RSS hash function - Crc32 */
+	ETH_RSS_HASH_MURMUR_BIT, /* Configurable RSS hash function - Murmur */
+	ETH_RSS_HASH_ADDITIVE_BIT, /* RSS hash function - Additive */
 
 	/*
 	 * Add your fresh new hash function bits above and remember to update
@@ -125,6 +127,8 @@ enum ethtool_supported_ring_param {
 #define ETH_RSS_HASH_TOP	__ETH_RSS_HASH(TOP)
 #define ETH_RSS_HASH_XOR	__ETH_RSS_HASH(XOR)
 #define ETH_RSS_HASH_CRC32	__ETH_RSS_HASH(CRC32)
+#define ETH_RSS_HASH_MURMUR	__ETH_RSS_HASH(MURMUR)
+#define ETH_RSS_HASH_ADDITIVE	__ETH_RSS_HASH(ADDITIVE)
 
 #define ETH_RSS_HASH_UNKNOWN	0
 #define ETH_RSS_HASH_NO_CHANGE	0
