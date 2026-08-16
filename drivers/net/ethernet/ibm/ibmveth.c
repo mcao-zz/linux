@@ -2273,9 +2273,10 @@ ibmveth_resize_rx_queues_incremental(struct ibmveth_adapter *adapter,
 		 * Mask PHYP before napi_disable so the handler cannot miss
 		 * a mask while NAPI is already dead. An in-flight poll can
 		 * still re-arm PHYP while napi_disable() waits, so remask
-		 * and sync again after NAPI is stopped. Then drain and drop
-		 * the live count before freeing so netpoll cannot walk dying
-		 * queues (handler may still be registered until destroy).
+		 * and sync again after NAPI is stopped. Then drain, publish
+		 * the surviving count, and synchronize_net() before destroy
+		 * so netpoll cannot walk dying queues (handler may still be
+		 * registered until destroy).
 		 */
 		for (i = new_count; i < old_count; i++) {
 			ibmveth_disable_irq(adapter, i);
@@ -2293,9 +2294,8 @@ ibmveth_resize_rx_queues_incremental(struct ibmveth_adapter *adapter,
 		for (i = new_count; i < old_count; i++)
 			ibmveth_drain_rx_queue(adapter, i);
 
-		synchronize_net();
-
 		ibmveth_publish_num_rx_queues(adapter, new_count);
+		synchronize_net();
 
 		rc = netif_set_real_num_rx_queues(netdev, new_count);
 		if (rc) {
@@ -2369,10 +2369,9 @@ cleanup_new_queues:
 	for (i = old_count; i < failed_queue; i++)
 		ibmveth_drain_rx_queue(adapter, i);
 
-	synchronize_net();
-
 	/* Drop the live count before freeing the half-added queues. */
 	ibmveth_publish_num_rx_queues(adapter, old_count);
+	synchronize_net();
 
 	for (i = old_count; i < failed_queue; i++)
 		ibmveth_destroy_subordinate_rx_queue(adapter, i);
