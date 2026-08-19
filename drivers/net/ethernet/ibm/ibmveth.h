@@ -177,6 +177,8 @@ struct ibmveth_adapter {
 	struct ibmveth_rx_q rx_queue[IBMVETH_MAX_RX_QUEUES];
 	unsigned int queue_irq[IBMVETH_MAX_RX_QUEUES];
 	unsigned int num_rx_queues;
+	/* Lifetime: true while RX IRQ handlers / NAPI are installed. */
+	bool rx_irq_setup;
 	int rx_csum;
 	int large_send;
 	bool is_active_trunk;
