@@ -8,8 +8,8 @@ Changes in v7:
 - noted: no Fixes: peel of the opened-gate hang (named in
   the v6 body after v5); standalone [PATCH net] after this
   series
-- noted: keep enable_irq after napi_complete_done; late
-  enable after free_irq stays in P09 (poll_stopping)
+- noted: keep enable_irq after napi_complete_done; P09
+  poll_stopping skips late enable if DISABLE is pending
 - noted: mask-before-free_irq already here; PHYP mask ack
   is leftover after this series
 - noted: pool-fail without h_free predates this; P06 issues
