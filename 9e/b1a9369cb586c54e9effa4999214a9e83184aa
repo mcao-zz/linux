@@ -1,5 +1,6 @@
 Changes in v7:
-- no P05 code change (schedule_rx_queue kdoc only)
+- reword schedule_rx_queue() kdoc: out-of-range is
+  WARN_ON, then false
 - commit message: remask only catches a re-arm that lands
   before it; name harvest before h_free and synchronize_net()
   after teardown
