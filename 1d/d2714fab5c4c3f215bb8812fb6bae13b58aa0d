@@ -1,5 +1,7 @@
 Changes in v7:
 - close() harvests no_buffer under replenish_lock
+- remove() uses put_pool_kobjs so the wait lands
+  before free_netdev
 - noted: unregister then cancel + NETREG stay
   here (no Fixes: peel); -S / get_stats64 /
   hw_drops mapping stays; irqsave /
