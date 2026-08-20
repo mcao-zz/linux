@@ -1,3 +1,8 @@
+Changes in v7:
+- no P08 code change
+- noted: irqsave CS and free_buffer_pool vs lock stay
+  cover leftovers; skip_bad stays in P09
+
 Changes in v6:
 - drop inline on the queue-index rxq_* accessors (plain static)
 - initialise the replenish locks once in probe; open() no longer
