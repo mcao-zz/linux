@@ -3,6 +3,11 @@ Changes in v7:
 - noted: restart enable_irq on prep fail stays (C1);
   counters / cancel_work stay in P11; poll_controller
   !opened stays in P15; pool kobj leftover stays cover
+- noted: no CMO+MQ partition (CMO is P9, MQ is P11+);
+  default-8 is the TX match, not a CMO tradeoff;
+  get_desired_dma TX term is CMO desired-hint only;
+  real TX LTBs already scale; those two CMO leftovers
+  drop from the v7 cover
 
 Changes in v6:
 - ibmveth_get_num_rx_queues / ibmveth_publish_num_rx_queues are
