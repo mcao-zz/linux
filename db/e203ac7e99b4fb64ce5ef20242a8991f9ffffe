@@ -10,8 +10,8 @@ Changes in v7:
   series
 - noted: keep enable_irq after napi_complete_done; P09
   poll_stopping skips late enable if DISABLE is pending
-- noted: mask-before-free_irq already here; PHYP mask ack
-  is leftover after this series
+- noted: mask-before-free_irq already here; no PHYP mask
+  ack in this 15 (disable return is discarded)
 - noted: pool-fail without h_free predates this; P06 issues
   h_free, P07 allocates pools before register
 
