@@ -2,11 +2,16 @@ Changes in v7:
 - NULL-check buffer_list_addr[0] in update_rx_no_buffer()
 - reword err_cleanup comment for the mixed map-failure state
 - drop the failed-reopen then ndo_stop double-free claim from the body
-- noted: TX LTB stale handle / shared-i predates this; P06
-- noted: pool-fail after register without h_free predates this; P06/P07
+- noted: no Fixes: peel of the DMA-handle checks; standalone after
+  this series
+- noted: TX LTB stale handle predates this; P06 (pointer check, zero dma)
+- noted: shared-i TX LTB leak predates this; P06 (own counter, TX
+  after pools)
+- noted: pool-fail without h_free predates this; P06 adds it, P07
+  allocates pools first
 - noted: napi imbalance on failed reopen predates this; P05
-- noted: poll_controller !opened stays in P15; leftover netpoll/irqsave
-  after this series
+- noted: opened on close/poll_controller stays in P05/P15; leftover
+  netpoll/irqsave after this series
 
 Changes in v6:
 - on RX-queue dma_alloc or map failure, free the buffer-list page
