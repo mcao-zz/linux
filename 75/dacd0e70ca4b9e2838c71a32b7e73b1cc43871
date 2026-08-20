@@ -1,3 +1,11 @@
+Changes in v7:
+- no P14 code change
+- noted: mask-then-napi_disable stays (C2);
+  H_FREE log-and-continue and PHYP mask ack
+  stay leftover; scale-up set_real last stays;
+  scale-up register site does not latch
+  (open path does)
+
 Changes in v6:
 - harvest no_buffer on retiring queues under that queue's
   replenish_lock before publish: netpoll still reaches them until
