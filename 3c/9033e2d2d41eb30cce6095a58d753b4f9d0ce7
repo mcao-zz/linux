@@ -1,3 +1,8 @@
+Changes in v7:
+- no P09 code change
+- noted: poll_stopping stays mask-first; skip vs budget stays;
+  oversize stays skb_tailroom; cancel_work stays in P11
+
 Changes in v6:
 - read the IPv4 header check through skb->data, as mainline does.
   v5 used ip_hdr(), which reads the network header offset that
