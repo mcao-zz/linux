@@ -2,7 +2,8 @@ Changes in v7:
 - no P04 code change
 - noted: err_cleanup comment reworded in P03
 - noted: no Fixes: peel of the shared-i TX LTB leak (named
-  in the v6 body after v5); standalone after this series
+  in the v6 body after v5); standalone [PATCH net] after
+  this series
 - noted: no pool-before-register reorder here; P06 issues h_free
   on the pool-fail path, P07 allocates pools before register
 
