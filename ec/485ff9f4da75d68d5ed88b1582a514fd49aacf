@@ -1,5 +1,6 @@
 Changes in v7:
-- no P15 code change
+- no P15 code change (RX rollback comment only)
+- refresh the TX-fail RX rollback comment
 - noted: get_channels keeps the live rx_count;
   mq_fallback caps max_rx; do not clamp
   rx_count
