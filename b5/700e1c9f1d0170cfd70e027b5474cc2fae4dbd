@@ -1,3 +1,9 @@
+Changes in v7:
+- no P06 code change
+- noted: no Fixes: peel of the pool-fail h_free (named in
+  the v6 commit message after v5); one standalone
+  [PATCH net] after this series (Fixes: d43732ce021f)
+
 Changes in v6:
 - NULL tx_ltb_ptr[idx] and zero tx_ltb_dma[idx] before unmap/free, so a
   racing start_xmit() fails the pointer check. Close-path safety is
