@@ -10,6 +10,10 @@ Changes in v7:
   checks close a double free_page / stale dma_unmap on failed
   reopen then ndo_stop (Sashiko N03-2). That path hits
   napi_disable first. Checks stay; no Fixes: peel in this 15
+- noted: TX LTB still unmaps unconditionally here (stale handle
+  / shared-i on pool-fail). Same pointer check and zeroed
+  tx_ltb_dma land in the TX helper patch (P06), already in
+  this series (Sashiko N03-P1 / N03-P2)
 
 Changes in v6:
 - on RX-queue dma_alloc or map failure, free the buffer-list page
