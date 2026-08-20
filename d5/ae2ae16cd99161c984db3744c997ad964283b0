@@ -1,3 +1,6 @@
+Changes in v7:
+- no P13 code change
+
 Changes in v6:
 - create the debugfs root in module_init() instead of lazily on
   first probe, which raced concurrent probes and could orphan the
