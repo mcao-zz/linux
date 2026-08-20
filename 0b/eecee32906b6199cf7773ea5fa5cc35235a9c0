@@ -1,0 +1,37 @@
+Changes in v6:
+- wrap the qstats local in replenish (81 cols)
+- replenish_* per-queue u64, summed on the existing adapter-wide keys;
+  no per-queue replenish key; no atomics
+- netdev_stat_ops for packets/bytes/drops, not private -S strings
+- enum ibmveth_stat_src so existing -S keys keep names while storage
+  moves; ARRAY_SIZE() for the per-queue key counts
+- no hcall_* keys (buffer-submit and H_SEND_LOGICAL_LAN)
+- drop the three pool%d_ keys (15 ethtool entries)
+- drop the fifteen qstats NULL checks outside the allocators
+  (five in the RX hot path)
+- per-queue no_buffer_retired carry
+- get_base_stats() reports the retired-queue remainder
+- gate reset on NETREG_REGISTERED
+- noted: harvest no_buffer on -L shrink is patch 14
+
+Changes in v5:
+- Series renumber: mailed v4 10/14 stats -> tip P11 (P09 peel;
+  get_channels -> P12)
+- rx_no_buffer_retired + sum MAX_* slots so adapter no-buffer / qstat
+  totals stay monotonic across reopen and channel shrink
+- probe_cleanup: clear vio drvdata before free_netdev (CMO cannot see a
+  freed netdev on rebind)
+- remove: unregister_netdev then cancel_work_sync (no UAF reset worker)
+
+Changes in v4:
+- Merge v3's separate RX and TX stats commits into one patch.
+- Introduce rx_queue_stats / tx_qstats / NUM macros here (first use).
+- Allocate/free qstats at probe/remove instead of open/close.
+- Report adapter-level ethtool strings by summing per-queue counters on
+  read; drop aggregate_* helpers.
+- Sum global rx_no_buffer across MQ queues into this statistics patch.
+- Cacheline-align per-queue stats; derive field counts with offsetof so
+  alignment padding is not counted as a statistic.
+- probe_cleanup() cancels reset work, puts pool kobjects via helper from
+  the prior patch, and frees qstats on probe failure paths.
+- Keep plain u64 qstats like existing ibmveth / ibmvnic (PPC_PSERIES).
