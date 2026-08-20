@@ -5,9 +5,6 @@ Changes in v7:
 - NULL buffer_list_addr reader after cleanup stays in P10
   (update_rx_no_buffer early return). Not moved into this helper
   extract (N03-1)
-- No Fixes: split for the DMA-handle guards (N03-2). Same policy as
-  the v6 cover: standalone unwind after this series
-  (Fixes: d43732ce021f)
 - Drop the commit-message claim that the pointer/DMA-handle
   checks close a double free_page / stale dma_unmap on failed
   reopen then ndo_stop (Sashiko N03-2). That path hits
