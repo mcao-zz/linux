@@ -1,3 +1,11 @@
+Changes in v7:
+- no P04 code change
+- noted: err_cleanup comment reworded in P03
+- noted: no Fixes: peel of the shared-i TX LTB leak; standalone
+  after this series
+- noted: pool-fail without h_free predates this; P06 adds it, P07
+  allocates pools first
+
 Changes in v6:
 - retarget the free-by-presence comment to the later resize paths;
   alloc_buffer_pool() already undoes its own partials, so this
