@@ -14,6 +14,14 @@ Changes in v7:
   / shared-i on pool-fail). Same pointer check and zeroed
   tx_ltb_dma land in the TX helper patch (P06), already in
   this series (Sashiko N03-P1 / N03-P2)
+- noted: pool-fail after register without h_free is P06/P07,
+  already in this series. h_free log-and-continue stays a
+  follow-up after this series (N03-P4)
+- noted: napi_enable at open entry / close() double-disable
+  is the opened gate in the IRQ-helper patch (P05) (N03-P3)
+- noted: poll_controller !opened is the last patch (P15).
+  Remaining netpoll vs replenish / irqsave is a follow-up
+  after this series (N03-P5)
 
 Changes in v6:
 - on RX-queue dma_alloc or map failure, free the buffer-list page
