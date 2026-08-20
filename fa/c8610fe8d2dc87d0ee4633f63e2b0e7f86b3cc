@@ -1,7 +1,6 @@
 Changes in v7:
-- no P08 code change (remove_buffer_from_pool Return kdoc only)
-- extend Return: -EINVAL also inactive / not live
-  (skbuff or free_map NULL)
+- extend remove_buffer_from_pool Return: -EINVAL also
+  inactive / not live (skbuff or free_map NULL)
 - noted: irqsave CS and free_buffer_pool vs lock stay
   cover leftovers; skip_bad stays in P09
 
