@@ -1,3 +1,9 @@
+Changes in v7:
+- no P15 code change
+- noted: get_channels keeps the live rx_count;
+  mq_fallback caps max_rx; do not clamp
+  rx_count
+
 Changes in v6:
 - get_channels() caps max_rx at the live rx_count when mq_fallback
   is set; rx_count stays live
