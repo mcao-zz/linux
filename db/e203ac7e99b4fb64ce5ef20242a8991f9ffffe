@@ -1,19 +1,10 @@
 Changes in v7:
-- name close() no-buffer harvest before h_free, and
-  synchronize_net() after IRQ/NAPI teardown, in the commit message
-- reword schedule_rx_queue() kdoc: out-of-range is WARN_ON
-  then false (quiet past-live-count form stays later)
-- drop the claim that the second remask closes an in-flight
-  poll re-arm; it only catches a re-arm that lands before it
-- noted: no Fixes: peel of the opened-gate hang (named in
-  the v6 commit message after v5); stays in this patch, not the
-  unwind standalone
-- noted: keep enable_irq after napi_complete_done; P09
-  poll_stopping skips late enable if DISABLE is pending
-- noted: mask-before-free_irq already here; no PHYP mask
-  ack in this 15 (disable return is discarded)
-- noted: pool-fail without h_free predates this; P06 issues
-  h_free, P07 allocates pools before register
+- no P05 code change (schedule_rx_queue kdoc only)
+- commit message: remask only catches a re-arm that lands
+  before it; name harvest before h_free and synchronize_net()
+  after teardown
+- noted: no Fixes: peel of the opened-gate hang; stays in
+  this patch, not the unwind standalone
 
 Changes in v6:
 - setup_rx enable-fail remasks queues 0..i, including the one that
