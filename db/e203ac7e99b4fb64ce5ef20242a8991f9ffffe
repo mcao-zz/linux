@@ -6,8 +6,8 @@ Changes in v7:
 - drop the claim that the second remask closes an in-flight
   poll re-arm; it only catches a re-arm that lands before it
 - noted: no Fixes: peel of the opened-gate hang (named in
-  the v6 body after v5); standalone [PATCH net] after this
-  series
+  the v6 body after v5); stays in this patch, not the
+  unwind standalone
 - noted: keep enable_irq after napi_complete_done; P09
   poll_stopping skips late enable if DISABLE is pending
 - noted: mask-before-free_irq already here; no PHYP mask
