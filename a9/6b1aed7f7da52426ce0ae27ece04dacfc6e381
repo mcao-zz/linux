@@ -1,5 +1,7 @@
 Changes in v7:
-- no P14 code change
+- no P14 code change (drain_rx_queue kdoc only)
+- drain kdoc: return is slots processed, not
+  buffers recycled
 - noted: mask-then-napi_disable stays;
   H_FREE log-and-continue and PHYP mask ack
   stay leftover; scale-up set_real last stays;
