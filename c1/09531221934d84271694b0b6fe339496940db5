@@ -3,8 +3,8 @@ Changes in v7:
 - noted: err_cleanup comment reworded in P03
 - noted: no Fixes: peel of the shared-i TX LTB leak; standalone
   after this series
-- noted: pool-fail without h_free predates this; P06 adds it, P07
-  allocates pools first
+- noted: no pool-before-register reorder here; P06 issues h_free
+  on the pool-fail path, P07 allocates pools before register
 
 Changes in v6:
 - retarget the free-by-presence comment to the later resize paths;
