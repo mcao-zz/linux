@@ -1,9 +1,10 @@
 Changes in v7:
-- no P11 code change
+- close() harvests no_buffer under replenish_lock
 - noted: unregister then cancel + NETREG stay
   here (no Fixes: peel); -S / get_stats64 /
-  hw_drops mapping stays; close harvest lock
-  stays leftover
+  hw_drops mapping stays; irqsave /
+  free_buffer_pool / netpoll_poll_disable
+  stay leftover
 
 Changes in v6:
 - wrap the qstats local in replenish (81 cols)
