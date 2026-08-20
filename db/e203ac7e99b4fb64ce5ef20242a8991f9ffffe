@@ -1,12 +1,12 @@
 Changes in v7:
 - name close() no-buffer harvest before h_free, and
-  synchronize_net() after IRQ/NAPI teardown, in the body
+  synchronize_net() after IRQ/NAPI teardown, in the commit message
 - reword schedule_rx_queue() kdoc: out-of-range is WARN_ON
   then false (quiet past-live-count form stays later)
 - drop the claim that the second remask closes an in-flight
   poll re-arm; it only catches a re-arm that lands before it
 - noted: no Fixes: peel of the opened-gate hang (named in
-  the v6 body after v5); stays in this patch, not the
+  the v6 commit message after v5); stays in this patch, not the
   unwind standalone
 - noted: keep enable_irq after napi_complete_done; P09
   poll_stopping skips late enable if DISABLE is pending
