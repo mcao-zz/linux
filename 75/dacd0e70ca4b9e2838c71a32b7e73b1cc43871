@@ -1,6 +1,6 @@
 Changes in v7:
 - no P14 code change
-- noted: mask-then-napi_disable stays (C2);
+- noted: mask-then-napi_disable stays;
   H_FREE log-and-continue and PHYP mask ack
   stay leftover; scale-up set_real last stays;
   scale-up register site does not latch
