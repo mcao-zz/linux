@@ -1,3 +1,9 @@
+Changes in v7:
+- no P10 code change
+- noted: restart enable_irq on prep fail stays (C1);
+  counters / cancel_work stay in P11; poll_controller
+  !opened stays in P15; pool kobj leftover stays cover
+
 Changes in v6:
 - ibmveth_get_num_rx_queues / ibmveth_publish_num_rx_queues are
   static, not static inline
