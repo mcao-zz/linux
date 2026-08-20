@@ -1,3 +1,10 @@
+Changes in v7:
+- no P11 code change
+- noted: unregister then cancel + NETREG stay
+  here (no Fixes: peel); -S / get_stats64 /
+  hw_drops mapping stays; close harvest lock
+  stays leftover
+
 Changes in v6:
 - wrap the qstats local in replenish (81 cols)
 - replenish_* per-queue u64, summed on the existing adapter-wide keys;
