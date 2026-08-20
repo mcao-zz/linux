@@ -1,3 +1,8 @@
+Changes in v7:
+- no P07 code change
+- noted: free_all_queues() log-and-continue is the SQ
+  leftover (cover); not the unwind standalone
+
 Changes in v6:
 - drop the eight hypercall counters, struct ibmveth_hcall_stats, and
   the adapter field. Only reg_lan and free_lan had writers here;
