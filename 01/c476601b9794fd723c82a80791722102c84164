@@ -3,9 +3,9 @@ Changes in v7:
   not buffers recycled
 - noted: mask-then-napi_disable stays;
   H_FREE log-and-continue and PHYP mask ack
-  stay leftover; scale-up set_real last stays;
-  scale-up register site does not latch
-  (open path does)
+  stay leftover; scale-up set_real last
+  stays leftover (cover); scale-up register
+  site does not latch (open path does)
 
 Changes in v6:
 - harvest no_buffer on retiring queues under that queue's
