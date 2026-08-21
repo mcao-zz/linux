@@ -99,7 +99,9 @@ Same 15 patches as v7. Folded from the v7 netdev-bot review
   if set_real(keep) fails; still napi_enable so close/reset
   is not a second napi_disable hang. Close skips unmap on
   H_FREE fail-before-start and retries on the next open and
-  remove.
+  remove. H_FREE_LOGICAL_LAN_QUEUE H_PARAMETER is
+  already-free, same as H_FREE_LOGICAL_LAN: clear the
+  handle and unmap.
 * Patch 15: down-path publish returns -EBUSY if a handle is
   still set in the new range. Opened TX shrink uses
   netif_tx_disable(). free_tx_resources() walks every LTB
