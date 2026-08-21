@@ -10,6 +10,8 @@ Changes in v8:
   H_PARAMETER is already-free and unmaps. ndo_stop
   still returns 0. Retry H_FREE on the next open()
   before apply_mq_fallback, and on remove()
+- H_FREE_LOGICAL_LAN_QUEUE H_PARAMETER is already-free,
+  same as H_FREE_LOGICAL_LAN: clear the handle and unmap
 - refresh restart / schedule / cleanup comments vs
   the scale-up callers
 - noted: enable_irq on prep-fail stays (PHYP: H_PARAMETER
@@ -115,6 +117,3 @@ Changes in v4:
   an unused static.
 
 - wrap close() TX-LTB free comment to 80 cols (two-step)
-
-- H_FREE_LOGICAL_LAN_QUEUE H_PARAMETER is already-free,
-  same as H_FREE_LOGICAL_LAN: clear the handle and unmap
