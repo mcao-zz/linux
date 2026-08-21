@@ -271,6 +271,17 @@ static int pool_active[] = { 1, 1, 0, 0, 1};
 
 #define IBM_VETH_INVALID_MAP ((u16)0xffff)
 
+struct ibmveth_hcall_stats {
+	atomic64_t reg_lan_queue;	/* H_REG_LOGICAL_LAN_QUEUE */
+	atomic64_t reg_lan;		/* H_REGISTER_LOGICAL_LAN */
+	atomic64_t add_bufs_queue;	/* H_ADD_LOGICAL_LAN_BUFFERS_QUEUE */
+	atomic64_t add_bufs;		/* H_ADD_LOGICAL_LAN_BUFFERS */
+	atomic64_t add_buf;		/* H_ADD_LOGICAL_LAN_BUFFER */
+	atomic64_t free_lan_queue;	/* H_FREE_LOGICAL_LAN_QUEUE */
+	atomic64_t free_lan;		/* H_FREE_LOGICAL_LAN */
+	atomic64_t send_lan;		/* H_SEND_LOGICAL_LAN */
+};
+
 struct ibmveth_buff_pool {
     u32 size;
     u32 index;
@@ -338,6 +349,9 @@ struct ibmveth_adapter {
 	u64 tx_send_failed;
 	u64 tx_large_packets;
 	u64 rx_large_packets;
+
+	/* Hypercall statistics */
+	struct ibmveth_hcall_stats hcall_stats;
 	/* Ethtool settings */
 	u8 duplex;
 	u32 speed;
