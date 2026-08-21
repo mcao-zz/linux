@@ -115,3 +115,6 @@ Changes in v4:
   an unused static.
 
 - wrap close() TX-LTB free comment to 80 cols (two-step)
+
+- H_FREE_LOGICAL_LAN_QUEUE H_PARAMETER is already-free,
+  same as H_FREE_LOGICAL_LAN: clear the handle and unmap
