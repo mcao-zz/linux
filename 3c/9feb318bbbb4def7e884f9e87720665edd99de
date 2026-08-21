@@ -1,0 +1,160 @@
+Changes in v8:
+- scale-down, the scale-up unwind and the scale-up keep path wait for
+  the poll tail with synchronize_net() between napi_disable() and the
+  remask, as cleanup_rx_interrupts() does
+- free_all_queues() Return: 0 also means single-queue after a failed
+  H_FREE (caller unmaps)
+- free_stranded also reclaims mapped leftovers with handle 0
+  after successful H_FREE
+- poll records RX queue only when index < real_num (keep-path RPS)
+- keep-path fencing: poll completion does not enable_irq,
+  interrupt() does not schedule NAPI, and resume() does not
+  walk queues at or above real_num_rx_queues
+- free_tx_resources walks every TX LTB slot (IBMVETH_MAX_QUEUES):
+  a skip-unmap close plus a TX shrink while down leaked the LTBs
+  above the new real_num
+- scale-down takes the final no_buffer sample after successful
+  H_FREE, while the page is still mapped (retire), instead of the
+  pre-publish irqsave harvest; retire samples without the
+  live-count bound since the lower count is already published
+- mq_fallback accesses use READ_ONCE()/WRITE_ONCE()
+- combined ethtool -L rolls RX back if TX does not
+  reach the request (moved here from the down-path patch)
+- skip unmask if set_real(keep) fails after real_num
+  was lowered; still napi_enable so close/reset is
+  not a second napi_disable hang. scale-down
+  set_real(new_count) fail still re-enables
+- multi-queue only: skip unmap of the live set on
+  H_FREE_LOGICAL_LAN fail-before-start (PHYP); do not
+  zero handles. Single-queue logs and unmaps as before
+  (CMO). H_PARAMETER is already-free and unmaps. ndo_stop
+  still returns 0. Retry H_FREE on the next open()
+  before apply_mq_fallback, and on remove()
+- open() unwind also skips the unmap when its own H_FREE
+  fails, or when a queue handle is still set after a
+  failed register
+- poolN sysfs store returns -EBUSY while a skip-unmap close
+  still holds the pools (after reopening a running device to
+  retry H_FREE): the deferred free uses pool->size and
+  pool->buff_size, which a store would otherwise change
+- H_FREE_LOGICAL_LAN_QUEUE H_PARAMETER is already-free,
+  same as H_FREE_LOGICAL_LAN: clear the handle and unmap
+  (deregister and the IRQ-map-failure free in register)
+- refresh restart / schedule / cleanup comments vs
+  the scale-up callers
+- no ndo_poll_controller (fixes series patch 1, "ibmveth: fix
+  netpoll races with RX replenish"): napi_disable() on retiring
+  queues keeps netpoll's poll_napi() off them; comments no
+  longer cite ndo_poll_controller. schedule_rx_queue stays
+  quiet past the live count for resume()'s walk
+- drop the set_channels IFF_UP -> adapter->opened switch: now
+  done by the fixes series (patch 2, "ibmveth: do not close
+  twice after a failed reopen")
+- ibmveth_free_all_queues() already returns int (-EIO) from the
+  MQ enable patch; this patch only adds the skip-unmap rules
+- add the ibmveth_rxq_harvest_buffer() wrapper here with its
+  first caller (drain), not in an earlier patch with no caller
+- commit message: scale-up brings up one new queue at a time
+- noted: enable_irq on prep-fail stays (PHYP: H_PARAMETER
+  on enable is LISN not in range, not already-enabled)
+- noted: down-path publish and max_tx floor stay later
+
+Changes in v7:
+- drain_rx_queue kdoc and debug log: slots
+  processed, not buffers recycled
+- skip unmap when H_FREE_LOGICAL_LAN_QUEUE fails;
+  keep the handle and restore remaining queues
+- widen set_real before scale-up unmask;
+  restore real_num on scale-up failure
+- scale-up register fail: keep handle and skip
+  unmap if H_FREE after IRQ map fails
+- scale-up enable_irq fail: if destroy fails,
+  keep that queue in the live set
+- scale-up register / IRQ-setup failure with a failed
+  H_FREE: close() frees that queue after successful
+  H_FREE_LOGICAL_LAN; a scale-up to it returns -EBUSY
+- scale-up register site latches mq_fallback
+  on -EOPNOTSUPP
+- scale-up enable_irq failure: remask PHYP after
+  napi_disable(), as scale-down does
+- CMO desired sites share ibmveth_refresh_cmo_desired();
+  desired_dma_for_rxqs comment notes CMO and MQ do not
+  coexist
+- free_single_rx_queue() keys buffer-list unmap on
+  allocation presence because DMA address zero is valid
+- reject an RX count change while down with -EOPNOTSUPP
+  until patch 15 publishes the down-path count
+- split resize_rx_queues_incremental() into
+  scale_up_rx_queues() / scale_down_rx_queues() plus a
+  dispatcher; code motion only
+- schedule_rx_queue kdoc: past the live count is quiet
+- noted: mask-then-napi_disable stays;
+  no PHYP mask ack; no reset on failed
+  H_FREE (skip unmap); shrinks to 2..live-1
+  stay -EOPNOTSUPP once mq_fallback
+
+Changes in v6:
+- harvest no_buffer on retiring queues under that queue's
+  replenish_lock before publish: netpoll still reaches them until
+  the surviving count is stored, and update_rx_no_buffer() ignores
+  indexes at or above the live count
+- publish num_rx_queues, then synchronize_net(), then destroy.
+  Scale-down runs set_real_num_rx_queues() between sync and destroy
+  (destroy only if that succeeds); cleanup_new_queues does not harvest
+- napi_disable() before publishing the lowered count on scale-up
+  enable_irq failure, matching scale-down
+- restart_rx_queue() after the checked enable_irq() on scale-up and
+  on scale-down rollback; kick_rx_queue_if_pending() cannot retry a
+  queue whose replenish posted nothing
+- drop the scale-down survivor restart_rx_queue() loop: those queues
+  were never quiesced, and enable_irq() on prep-fail unmasks behind
+  a live poll (subordinate H_PARAMETER on enable is -EIO and reset)
+- schedule_rx_queue() returns quietly when only the upper bound
+  trips: netpoll walks a snapshot of the old count, so an ethtool -L
+  shrink raced it into a WARN userspace can trigger at will
+- drop leftover spin_lock_init() from alloc_single_rx_queue(); scale-up
+  runs on a live adapter and probe already inits the lock
+- zero buffer_list_dma[] on the alloc_single_rx_queue() map-failure
+  path; free_single_rx_queue() keys its unmap on that field
+- skip PHYP mask and remask on scale-down when queue_irq[i] is 0
+- put the rx > 1 / mq_fallback gate below the no-op check, and refuse
+  any rx > 1 once mq_fallback is set, so a TX-only read-modify-write
+  is not rejected
+- noted: down-path stash/CMO and RX rollback on TX fail are patch 15
+- noted: KUnit free_map fixtures are patch 8
+
+Changes in v5:
+- resize / get_desired_dma read live count via get_num_rx_queues()
+- Scale-down / scale-up-fail: remask+sync after napi_disable (poll may
+  re-arm while disable waits)
+- Series renumber: mailed v4 12/14 resize -> tip P14 (14->15)
+- Absorb kitchen-sink resize ownership: teardown-first scale-down
+  (drain/deregister before unmap) + live-pool correlator_valid /
+  schedule_work (cover has peel map)
+- Ordered num_rx_queues publish + publish-before-destroy
+- After unmask: kick if pending; enable_irq errno + rollback check;
+  raise CMO before scale-up allocs
+- Scale-up enable_irq-fail: publish-down / napi_disable / drain / destroy
+- After scale-down destroy, restart remaining RX queues so Q0 cannot stay
+  masked with NAPI idle
+- resize_rx_channels: reject rx>1 without MQ / validate 1..MAX; call
+  before !opened early return (stash still tip P15)
+
+Changes in v4:
+- Copy pool->index when cloning buffer pools for incrementally added
+  queues.
+- Scale-up order: publish -> replenish -> napi_enable -> enable_irq
+  (vs older enable-before-publish drafts); mirror NAPI-before-unmask on
+  set_real_num_rx rollback.
+- Linux-owned subordinate virq disposal; deregister is PHYP-only;
+  dispose bound to MAX_RX_QUEUES; dispose on request_irq failure.
+- Drain-path smp_rmb() before harvest.
+- Mask PHYP before napi_disable/drain on scale-down and scale-up fail
+  cleanup.
+- Replenish before re-enabling IRQ/NAPI on set_real_num_rx scale-down
+  rollback.
+- Keep set_channels wiring as the following patch (same split as v3)
+  but call resize_rx_channels() here when IFF_UP so the helper is not
+  an unused static.
+
+- wrap close() TX-LTB free comment to 80 cols (two-step)
