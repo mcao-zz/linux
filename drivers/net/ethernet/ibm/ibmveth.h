@@ -287,6 +287,32 @@ struct ibmveth_hcall_stats {
 	atomic64_t send_lan;		/* H_SEND_LOGICAL_LAN */
 };
 
+struct ibmveth_rx_queue_stats {
+	u64 packets;
+	u64 bytes;
+	u64 interrupts;
+	u64 polls;
+	u64 large_packets;
+	u64 invalid_buffers;
+	u64 no_buffer_drops;
+} ____cacheline_aligned_in_smp;
+
+struct ibmveth_tx_queue_stats {
+	u64 packets;
+	u64 bytes;
+	u64 large_packets;
+	u64 dropped_packets;
+	u64 send_failures;
+	u64 checksum_offload;
+} ____cacheline_aligned_in_smp;
+
+/*
+ * ethtool string count: driver-specific per-queue counters exposed via
+ * ethtool -S. Standard per-queue packets/bytes/drops use netdev_stat_ops.
+ */
+#define IBMVETH_NUM_RX_QSTATS 5
+#define IBMVETH_NUM_TX_QSTATS 3
+
 struct ibmveth_buff_pool {
     u32 size;
     u32 index;
@@ -352,6 +378,7 @@ struct ibmveth_adapter {
 	atomic64_t replenish_add_buff_success;
 	u64 rx_invalid_buffer;
 	u64 rx_no_buffer;
+	u64 rx_no_buffer_retired; /* PHYP page reset / queue-reuse carry */
 	u64 tx_map_failed;
 	u64 tx_send_failed;
 	u64 tx_large_packets;
@@ -359,6 +386,9 @@ struct ibmveth_adapter {
 
 	/* Hypercall statistics */
 	struct ibmveth_hcall_stats hcall_stats;
+	struct ibmveth_rx_queue_stats *rx_qstats;
+	struct ibmveth_tx_queue_stats *tx_qstats;
+
 	/* Ethtool settings */
 	u8 duplex;
 	u32 speed;
