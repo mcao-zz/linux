@@ -1,0 +1,88 @@
+Changes in v8:
+- per-queue counters: writers use WRITE_ONCE() through
+  IBMVETH_STAT_INC/ADD, lockless readers (get_stats64, qstats,
+  ethtool -S) use READ_ONCE(); single writer per counter, so still
+  no atomic or u64_stats_sync. start_xmit takes a local txs
+  pointer; replenish counts failures via ibmveth_count_add_fail()
+- ndo_get_stats64 fills rx_missed_errors from the no_buffer pair
+- count driver RX drops (bad correlator, failed harvest,
+  recycle-invalid harvest failure) in per-queue
+  rx_qstats[].dropped, written from that queue's NAPI poll and
+  summed into ndo_get_stats64 rx_dropped: netdev->stats.rx_dropped
+  (fixes series patch 4) is hidden once ndo_get_stats64 exists
+- snapshot no_buffer_drops and no_buffer_retired under
+  replenish_lock (spin_lock_bh) on ethtool, qstats and
+  get_stats64 reads. pair() takes the lock; the writer
+  holds it for the two-store carry
+- after successful H_FREE, fold the last sample into
+  retired and clear drops; live replenish stores the
+  page absolute. Skip retire if H_FREE failed (PHYP:
+  fail-before-start, page still live). close() no longer
+  samples under an irqsave lock before H_FREE
+- remove(): free the qstats arrays after unregister_netdev();
+  the reset work is disabled at the top of remove() by the
+  fixes series (patch 3, "ibmveth: disable the reset work
+  before unregister in remove"), so the message no longer
+  cites cancel_work_sync()
+- probe failures use the fixes series' err_put_pools label
+  (patch 5); ibmveth_probe_cleanup() replaces its body
+- do not claim large_packets / checksum_offload /
+  no_buffer_drops have no standard equivalent
+- do not fill needs_csum / hw_gso_packets /
+  hw_drop_overruns. TX hw_drops left unset;
+  dropped_packets stays ndo_get_stats64
+  tx_dropped only. H_DROPPED send() unchanged
+- rx%d_no_buffer_drops exports drops + retired, so it survives
+  close like every other key
+- rx%d_polls is not counted for netpoll's budget-0 call, keeping it
+  single-writer; struct comment: every no_buffer writer holds
+  replenish_lock
+- oversize RX drops count in per-queue dropped (rx_dropped)
+
+Changes in v7:
+- close() harvests no_buffer under replenish_lock
+- remove() uses put_pool_kobjs so the wait lands
+  before free_netdev
+- remove-path unregister/cancel reorder and reset gate
+  moved to P10 with the reset producer
+- noted: -S / get_stats64 / hw_drops mapping stays;
+  irqsave / free_buffer_pool / netpoll_poll_disable
+  stay leftover
+
+Changes in v6:
+- wrap the qstats local in replenish (81 cols)
+- replenish_* per-queue u64, summed on the existing adapter-wide keys;
+  no per-queue replenish key; no atomics
+- netdev_stat_ops for packets/bytes/drops, not private -S strings
+- enum ibmveth_stat_src so existing -S keys keep names while storage
+  moves; ARRAY_SIZE() for the per-queue key counts
+- no hcall_* keys (buffer-submit and H_SEND_LOGICAL_LAN)
+- drop the three pool%d_ keys (15 ethtool entries)
+- drop the fifteen qstats NULL checks outside the allocators
+  (five in the RX hot path)
+- per-queue no_buffer_retired carry
+- get_base_stats() reports the retired-queue remainder
+- gate reset on NETREG_REGISTERED
+- noted: harvest no_buffer on -L shrink is patch 14
+
+Changes in v5:
+- Series renumber: mailed v4 10/14 stats -> tip P11 (P09 peel;
+  get_channels -> P12)
+- rx_no_buffer_retired + sum MAX_* slots so adapter no-buffer / qstat
+  totals stay monotonic across reopen and channel shrink
+- probe_cleanup: clear vio drvdata before free_netdev (CMO cannot see a
+  freed netdev on rebind)
+- remove: unregister_netdev then cancel_work_sync (no UAF reset worker)
+
+Changes in v4:
+- Merge v3's separate RX and TX stats commits into one patch.
+- Introduce rx_queue_stats / tx_qstats / NUM macros here (first use).
+- Allocate/free qstats at probe/remove instead of open/close.
+- Report adapter-level ethtool strings by summing per-queue counters on
+  read; drop aggregate_* helpers.
+- Sum global rx_no_buffer across MQ queues into this statistics patch.
+- Cacheline-align per-queue stats; derive field counts with offsetof so
+  alignment padding is not counted as a statistic.
+- probe_cleanup() cancels reset work, puts pool kobjects via helper from
+  the prior patch, and frees qstats on probe failure paths.
+- Keep plain u64 qstats like existing ibmveth / ibmvnic (PPC_PSERIES).
