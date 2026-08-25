@@ -318,7 +318,9 @@ struct ibmveth_adapter {
 	struct ibmveth_buff_pool
 		rx_buff_pool[IBMVETH_MAX_RX_QUEUES][IBMVETH_NUM_BUFF_POOLS];
 	struct ibmveth_rx_q rx_queue[IBMVETH_MAX_RX_QUEUES];
+	/* Opaque PHYP cookie; 0 can be live. queue_registered[] is slot-live. */
 	u64 queue_handle[IBMVETH_MAX_RX_QUEUES];
+	bool queue_registered[IBMVETH_MAX_RX_QUEUES];
 	unsigned int queue_irq[IBMVETH_MAX_RX_QUEUES];
 	int multi_queue;
 	unsigned int num_rx_queues;
