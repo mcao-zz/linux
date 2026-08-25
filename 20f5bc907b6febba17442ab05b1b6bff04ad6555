@@ -27,7 +27,7 @@ get/set for that algorithm is deferred to a follow-up series so this
 one stays MQ datapath only.
 
 User-visible bits: ethtool -l/-L (channels); standard per-queue
-packets/bytes/drops via netdev_stat_ops (ethtool -S keeps only
+packets/bytes and RX drops via netdev_stat_ops (ethtool -S keeps only
 driver-specific counters; ndo_get_stats64 is the aggregate, including
 retired-queue history); and a read-only debugfs buffer_pools dump
 (v3's multi-line sysfs dump moved to debugfs; the historical queue-0
@@ -63,8 +63,9 @@ Series layout (15 patches):
 - Patch 10 is the switch: probe sets multi_queue from firmware, raises
   num_rx_queues, registers subordinates, and replenishes every active
   queue.
-- Patch 11 moves counters per-queue and exports packets/bytes/drops
-  through netdev_stat_ops. The thirteen existing -S keys stay; no
+- Patch 11 moves counters per-queue and exports packets/bytes
+  and RX drops through netdev_stat_ops. TX hw_drops is left
+  unset. The thirteen existing -S keys stay; no
   hcall_* or pool%d_ keys.
 
 Testing:
@@ -93,6 +94,8 @@ Same 15 patches as v7. Folded from the v7 netdev-bot review
   apply_mq_fallback also sets real_num to 1.
 * Patch 11: snapshot no_buffer_drops and retired under
   replenish_lock; fold the last sample after successful H_FREE.
+  TX hw_drops left unset; dropped_packets stays
+  ndo_get_stats64 tx_dropped only.
 * Patch 12: cap max_rx at the live rx_count once mq_fallback.
   Do not advertise max_rx = 1.
 * Patch 14: combined -L rolls RX back if TX misses. Skip unmask
