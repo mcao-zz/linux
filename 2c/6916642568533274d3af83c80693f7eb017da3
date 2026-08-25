@@ -9,9 +9,10 @@ Changes in v8:
   fail-before-start, page still live)
 - do not claim large_packets / checksum_offload /
   no_buffer_drops have no standard equivalent
-- noted: do not fill needs_csum / hw_gso_packets /
-  hw_drop_overruns; dropped_packets stays tx_dropped
-  and hw_drops; H_DROPPED send() unchanged
+- do not fill needs_csum / hw_gso_packets /
+  hw_drop_overruns. TX hw_drops left unset;
+  dropped_packets stays ndo_get_stats64
+  tx_dropped only. H_DROPPED send() unchanged
 
 Changes in v7:
 - close() harvests no_buffer under replenish_lock
