@@ -1,0 +1,57 @@
+Changes in v6:
+- mask the failing queue too on the setup_rx enable-fail unwind: the
+  rollback loop used while (--i), so queue i stayed unmasked across
+  the napi_disable wait. It now remasks and synchronizes queues 0..i,
+  and err_disable_napi remasks after napi_disable the way cleanup does
+- drop WARN_ON() on ibmveth_toggle_irq() returns; the helper already
+  logs the hcall rc, and rate-limit that print
+- reword schedule_rx_queue() kdoc: true means NAPI was scheduled and
+  the mask attempted; a failed disable_irq() is logged by the helper
+  and does not change the return, and an out-of-range qindex returns
+  false without being a prep failure. Masking still happens only when
+  prep succeeds
+- clarified: no standalone Fixes: tag. The hang the opened gate closes
+  is now named in the body, but the fix depends on the helpers, flags
+  and queue_irq[] added here, so it is not backportable alone
+- noted: open-fail without h_free_logical_lan on pool-fail predates
+  this patch, the LAN is registered before the buffer pools. The
+  opened gate does remove the accidental h_free recovery a later
+  ndo_stop used to give after a failed reopen. P06 orders h_free
+  before the pool DMA and P07 moves pools ahead of register_rx_queues
+- noted: the early !opened return can skip TX LTB free only if
+  set_channels allocates while the adapter is closed, which v5 allowed
+  by keying on IFF_UP. P14 gates set_channels on opened and P15
+  publishes the RX count and CMO while down without allocating. close
+  still frees TX LTBs whenever opened was true
+- noted: per-queue poll() and enable_irq(qindex) land in P08, where
+  the buffer-submit helper first needs a queue index, and the range
+  check in P09; both before MQ is enabled in P10. Here the handler
+  already passes &napi[i], but only napi[0] is registered
+
+Changes in v5:
+- Remask+sync after napi_disable in cleanup (in-flight poll can re-arm)
+- Interrupt: quiet IRQ_NONE on out-of-range qindex (no WARN storm)
+- Opened / rx_irq_setup gate cleanup so close after a failed open
+  cannot napi_disable / free_irq without a prior enable/request; set
+  opened on successful open; rx_irq_setup only on full setup success
+- H_PARAMETER fold disable-only; enable stays error (stuck-masked visible)
+- IRQ helpers return 0 / negative errno only (never raw H_* to ethtool)
+- Decision: keep open IRQ order request_irq -> napi_enable while PHYP
+  stays masked until schedule/enable (coherent with later scale-up)
+- schedule_rx_queue returns bool (napi_schedule_prep success)
+- Keep mask-only-on-prep-success (no else-mask; avoids idle+masked race)
+- Call out free_irq-before-free_lan as intentional once PHYP is masked
+- Poll re-arm during teardown lands with SQ poll-harden (not claimed here)
+- synchronize_net() after RX IRQ/NAPI teardown in close
+- Add subordinate IRQ dispose helpers (per-queue + bulk 1..N; bound to MAX)
+
+Changes in v4:
+- Include irq.h / irqdomain.h with first irq_dispose_mapping() use.
+- Introduce IRQ helpers in the same patch that wires open/close/poll
+  callers, instead of leaving unused statics.
+- Factor process-context RX kicks into ibmveth_schedule_rx_queue();
+  keep ibmveth_interrupt() as the IRQ-only wrapper.
+- On cleanup, mask PHYP and synchronize_irq before napi_disable
+  (storm-safety; not fully behavior-preserving vs classic close).
+- Leave queue_irq[0] set after cleanup (queue 0 uses netdev->irq;
+  next open reuses it). Only subordinate virqs are disposed.
