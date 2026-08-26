@@ -10,7 +10,9 @@ Changes in v6:
 - document ibmveth_free_all_queues() return contract in kdoc
   (log-and-continue legacy behavior; queue_handle[] cleared)
 - update commit message to reflect correct label flow
-- state PHYP registration release holds on H_SUCCESS
+- state that queue 0's handle is kept only on an H_SUCCESS
+  registration; teardown is unconditional and is documented
+  separately in the free_all_queues() kdoc
 
 Changes in v5:
 - Rename helpers to ibmveth_register_logical_lan() and
