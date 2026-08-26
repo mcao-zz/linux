@@ -1,0 +1,18 @@
+Changes in v6:
+- Read IPv4 check via skb->data after eth_type_trans
+- Do not complete NAPI or return budget when budget==0
+- Not pure motion: rx_invalid_buffer also counts oversize and
+  skipped slots; skip_bad_correlator escalates valid-correlator + NULL
+  skb (-EFAULT) to reset; new off/len check before skb_put. Intentional.
+  Skip/drop does not count toward NAPI budget.
+
+Changes in v5:
+- Wrap poll_stopping return after complete so it stays under 80 cols
+- On poll_stopping after the budget loop: return < budget after
+  napi_complete_done (was frames_processed-1 even when under budget)
+- New in v5: peel SQ poll harden + helpers before MQ enable so tip P10
+  stays bring-up focused (mailed v4 09/14 MQ enable -> tip P10; also
+  14->15). Kitchen-sink / enable-path poll fixes land here on the live
+  single-queue path first.
+- After napi_complete_done, check poll_stopping again before enable_irq
+  (avoid re-arm while resize/close waits on napi_disable)
