@@ -1,14 +1,14 @@
 Changes in v6:
-- align dma_map_single_attrs() arguments; restore newline at EOF
+- initialise replenish locks once in probe; open() no longer
+  reinitialises them in alloc_rx_queues()
 - static_assert IBMVETH_MAX_RX_REGULAR == 8 and
   IBMVETH_MAX_RX_PER_HCALL == 12 against the hand-written
   legacy descs[0..7] and MQ ioba[0..5] argument lists
+- add clarifying comment on legacy 8-buffer hcall batch bound
 - pass DMA_ATTR_NO_WARN to dma_map_single_attrs() in replenish
   loop to prevent printk recursion under netconsole
-- add clarifying comment on legacy 8-buffer hcall batch bound
 - fix KUnit test fixtures allocating dummy free_map
-- initialise replenish locks once in probe; open() no longer
-  reinitialises them in alloc_rx_queues()
+- align dma_map_single_attrs() arguments; restore newline at EOF
 
 Changes in v5:
 - Extract buffer submit switch into ibmveth_add_logical_lan_buffers()
