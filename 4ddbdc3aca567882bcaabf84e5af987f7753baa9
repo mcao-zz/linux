@@ -23,3 +23,10 @@ Changes in v5:
   (v4 used u64 * on with_handle)
 - h_free_logical_lan_queue() uses plpar_hcall_norets() like
   h_free_logical_lan() (v4 used plpar_hcall9 with unused retbuf)
+
+Changes in v4:
+- Document @queue_handle and @irq in h_reg_logical_lan_queue() kdoc.
+- Wrap h_register_logical_lan_with_handle() prototype for readability /
+  checkpatch.
+- Drop unused H_FREE_LOGICAL_LAN_BUFFER_QUEUE wrapper/opcode (no caller;
+  buffer return is local harvest + queue free).
