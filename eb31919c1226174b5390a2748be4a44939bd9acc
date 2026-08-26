@@ -4,15 +4,15 @@ Changes in v6:
   open-fail path (free-by-presence policy unchanged)
 - debug fmt %u for unsigned num_rx_queues in
   alloc/free_buffer_pools
+- pool helper unwind no longer consumes open-path i, so TX LTB
+  fall-through free works on pool-fail (pre-existing shared-i leak);
+  not a standalone Fixes: tag; P06 gives TX its own unwind
 - post-register pool-fail without h_free_logical_lan predates this
   helper patch (inline pool loop fell through the same way). Series tip
   fixes ordering in P06 (h_free before pool DMA on open-fail via
   out_unregister_lan) and P07 (pools before register_rx_queues;
   post-register errors funnel through free_all_queues). No further change
   on P04.
-- pool helper unwind no longer consumes open-path i, so TX LTB
-  fall-through free works on pool-fail (pre-existing shared-i leak);
-  not a standalone Fixes: tag; P06 gives TX its own unwind
 
 Changes in v5:
 - vs mailed v4: keep pool_active[] = {1,1,0,0,1} (v4 set the 64 KiB
