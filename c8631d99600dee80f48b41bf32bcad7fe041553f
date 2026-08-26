@@ -1,16 +1,16 @@
 Changes in v6:
-- subject: complete down-path / mq_fallback max_rx cap (P14
-  already wires live ethtool -L rx)
 - get_channels() keeps reporting the live rx_count and caps max_rx at
   it when mq_fallback is latched; clamping rx_count itself would be
   applied as a silent RX shrink by read-modify-write ethtool -L
 - roll back TX real_num if down-path RX set_real fails
+- guard poll_controller against unallocated queues while !opened
 - down-path comment/changelog describe immediate publish/CMO refresh
   rather than stash
-- guard poll_controller against unallocated queues while !opened
+- clarify TX alloc loop index initialization is readability
+- subject: complete down-path / mq_fallback max_rx cap (P14
+  already wires live ethtool -L rx)
 - commit message: drop the opened-vs-IFF_UP gate claim; P14's diff
   makes that change, not this one
-- clarify TX alloc loop index initialization is readability
 
 Changes in v5:
 - set_channels / resize_rx_channels read via get_num_rx_queues()
