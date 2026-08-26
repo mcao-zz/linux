@@ -1,0 +1,18 @@
+Changes in v6:
+- open() allocates buffer pools before register_rx_queues so a
+  pool-fail path never has a live LAN
+- trace the logical-LAN registration hypercalls, and the free retry in
+  that same path, with netdev_dbg() instead of counting them; they fire
+  on open/close and resize, not per packet, so a permanent ethtool -S
+  counter earned its keep less than a debug line does. The queue
+  teardown paths are left alone: they already report failures with
+  netdev_err()
+- document ibmveth_free_all_queues() return contract in kdoc
+  (log-and-continue legacy behavior; queue_handle[] cleared)
+- update commit message to reflect correct label flow
+- state PHYP registration release holds on H_SUCCESS
+
+Changes in v5:
+- Rename helpers to ibmveth_register_logical_lan() and
+  ibmveth_free_all_queues()
+- Retain single-queue registration for legacy paths
