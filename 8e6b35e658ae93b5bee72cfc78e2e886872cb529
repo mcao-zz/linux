@@ -1,9 +1,9 @@
 Changes in v6:
+- drop the redundant atomic_dec inner parentheses (style; the [0]
+  hunk is not index-only)
 - adapter->num_rx_queues is the lockless live bound, not a
   duplicate of netdev->real_num_rx_queues; acquire/release publish
   lands in P10
-- drop the redundant atomic_dec inner parentheses (style; the [0]
-  hunk is not index-only)
 - first use of new adapter fields — queue_irq[] in P05 (IRQ
   control), queue_handle[] in P07 (register helpers);
   num_rx_queues via helpers in P07 and P12; multi_queue and
@@ -27,8 +27,7 @@ Changes in v4:
 - Keep IBMVETH_MAX_RX_QUEUES at 1 until MQ enablement (same idea as v3,
   but v3 also planted unused stats types here).
 - Layout-only: queue-indexed adapter fields only. Do not introduce
-  hcall_stats / rx_qstats here (first-use).
-- Defer hcall_stats to patch 7 (register helpers) and rx/tx qstats +
-  NUM macros to patch 10 (statistics collection).
+  the rx/tx qstats here (first-use); they land with the per-queue
+  statistics patch.
 - Subject: "Prepare MQ RX adapter data structures" (was "...and
   statistics structures" in earlier drafts).
