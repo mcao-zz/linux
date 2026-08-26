@@ -1,0 +1,30 @@
+Changes in v6:
+- subject: complete down-path / mq_fallback max_rx cap (P14
+  already wires live ethtool -L rx)
+- get_channels() keeps reporting the live rx_count and caps max_rx at
+  it when mq_fallback is latched; clamping rx_count itself would be
+  applied as a silent RX shrink by read-modify-write ethtool -L
+- roll back TX real_num if down-path RX set_real fails
+- down-path comment/changelog describe immediate publish/CMO refresh
+  rather than stash
+- guard poll_controller against unallocated queues while !opened
+- the rx > 1 rejection under mq_fallback lives in P14's
+  resize_rx_channels(); this patch only removes the duplicate
+  !multi_queue gate that shadowed it
+- clarify TX alloc loop index initialization is readability
+
+Changes in v5:
+- set_channels / resize_rx_channels read via get_num_rx_queues()
+- Series renumber: mailed v4 13/14 set_channels -> tip P15 (end; 14->15)
+- set_channels: gate on adapter->opened (not IFF_UP) for live RX resize
+  vs while-down stash
+- Down-path RX stash also refreshes CMO (publish + set_real_num_rx)
+- When up: resize RX then TX; roll RX back if TX cannot reach goal
+
+Changes in v4:
+- On !IFF_UP, stash num_rx_queues only after TX set succeeds; do not
+  allocate live subordinate IRQs/buffers while down.
+- Initialize i = old_tx on the TX adjust path.
+- Always return rc from set_channels().
+- Split from the resize-helper patch (same split as v3) while keeping
+  a live caller of resize_rx_channels() in the previous patch.
