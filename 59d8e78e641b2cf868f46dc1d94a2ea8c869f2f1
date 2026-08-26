@@ -1,0 +1,35 @@
+Changes in v6:
+- get_base_stats() reports the retired-queue remainder so netdev-genl
+  qstats and ndo_get_stats64 agree after ethtool -L shrinks the queue
+  count
+- implement struct netdev_stat_ops for standard per-queue
+  packets/bytes/drops instead of private ethtool strings
+- keep replenish_* as plain per-queue u64 rather than atomics; the
+  adapter-wide ethtool -S keys are summed on read and no per-queue
+  keys are added for them
+- add a per-queue no_buffer_retired carry; adapter->rx_no_buffer was
+  last-queue-wins once more than one RX queue ran, and could go
+  backwards across a reopen
+- do not add buffer-submit hypercall counters: which of the three
+  hcalls a replenish batch picks is an implementation detail, not
+  something worth a permanent ethtool key
+- table-drive ethtool -S with enum ibmveth_stat_src, and derive the
+  per-queue key counts with ARRAY_SIZE()
+- drop the H_SEND_LOGICAL_LAN counter: it incremented once per
+  successful send, which just duplicates tx_packets, and it was the
+  only counter that needed a queue index plumbed into ibmveth_send()
+- drop the three pool%d_ ethtool keys the v5 draft added. size and
+  active duplicate the writable poolN/num and poolN/active sysfs
+  attributes, and available is reported for every queue by the
+  debugfs buffer_pools table instead of for queue 0 alone, so the
+  keys were 15 entries of permanent ABI carrying nothing new
+- gate ibmveth_reset() on netdev->reg_state == NETREG_REGISTERED so a
+  queued reset worker cannot re-open an unregistered device
+
+Changes in v5:
+- Expose per-queue packet/byte counters via ethtool -S (v6 moves the
+  standard packets/bytes/drops to netdev_stat_ops; -S keeps
+  driver-specific counters only)
+- Implement .ndo_get_stats64
+- Fix remove teardown order: unregister_netdev before cancel_work_sync
+- Clear vio drvdata before free_netdev on probe error
