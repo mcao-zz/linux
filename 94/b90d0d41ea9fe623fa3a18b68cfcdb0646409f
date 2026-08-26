@@ -18,15 +18,10 @@ Changes in v6:
   opened gate does remove the accidental h_free recovery a later
   ndo_stop used to give after a failed reopen. P06 orders h_free
   before the pool DMA and P07 moves pools ahead of register_rx_queues
-- noted: the early !opened return can skip TX LTB free only if
-  set_channels allocates while the adapter is closed, which v5 allowed
-  by keying on IFF_UP. P14 gates set_channels on opened and P15
-  publishes the RX count and CMO while down without allocating. close
-  still frees TX LTBs whenever opened was true
-- noted: per-queue poll() and enable_irq(qindex) land in P08, where
-  the buffer-submit helper first needs a queue index, and the range
-  check in P09; both before MQ is enabled in P10. Here the handler
-  already passes &napi[i], but only napi[0] is registered
+- noted: no code change. The !opened TX LTB window, and how P14 and
+  P15 close it, is described in the body
+- noted: no code change. Why per-queue poll() and enable_irq(qindex)
+  are peeled to P08 and P09 is described in the body
 
 Changes in v5:
 - Remask+sync after napi_disable in cleanup (in-flight poll can re-arm)
