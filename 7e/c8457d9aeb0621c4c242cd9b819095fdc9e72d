@@ -13,8 +13,8 @@ Changes in v6:
   closes it for close(); the netpoll path through replenish_task()
   stays open until the per-queue guard
 - clarified: the double-free and stale-unmap fixes are now named in
-  the commit body, not only in the changelog that git am strips.
-  Zeroing filter_list_dma on map error is unchanged from v5
+  the commit body. Zeroing filter_list_dma on map error is unchanged
+  from v5
 - noted: the shared-i TX LTB leak on pool-fail predates this patch;
   P04 stops the helper consuming i and P06 gives TX its own unwind
 - noted: pool-fail after register frees pages PHYP is still mapped
