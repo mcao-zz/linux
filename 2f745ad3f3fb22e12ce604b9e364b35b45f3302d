@@ -15,8 +15,10 @@ Changes in v6:
   on open-fail via out_unregister_lan) and P07 (pools before
   register_rx_queues; post-register errors funnel through
   free_all_queues). No change on P03.
-- NULL buffer_list after cleanup — opened gate at tip in P05; no
-  change on P03 (hang sentence + no standalone Fixes in P05)
+- cleanup helpers NULL buffer_list_addr[] and filter_list_addr as
+  they free, so a later free path cannot unmap a stale pointer.
+  The reopen hang itself is closed by the opened gate in P05, not
+  here; no standalone Fixes: tag
 
 Changes in v5:
 - On filter_list DMA map failure: free_page and zero filter_list_dma so
