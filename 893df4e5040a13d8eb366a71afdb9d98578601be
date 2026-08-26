@@ -16,3 +16,13 @@ Changes in v5:
 - Rename helpers to ibmveth_register_logical_lan() and
   ibmveth_free_all_queues()
 - Retain single-queue registration for legacy paths
+
+Changes in v4:
+- Introduce register/free helpers in the same patch that wires their
+  first open/close callers; keep subordinate-only helpers deferred
+  until MQ enablement.
+- Introduce adapter->hcall_stats here (first use); not in patch 2.
+- Correct open/close unwind so free_all_queues() precedes
+  free_buffer_pools().
+- Drop the orphaned big-bang "open/close pipeline" patch from v3; that
+  wiring is incremental across helper patches 3-7 instead.
