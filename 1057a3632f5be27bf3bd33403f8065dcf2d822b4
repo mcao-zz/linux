@@ -1,17 +1,17 @@
 Changes in v6:
 - publish num_rx_queues with smp_store_release()/smp_load_acquire();
   record RX queue on the skb before GRO
-- MQ firmware raises the replenish batch from 8 to 12 buffers per
-  hypercall. Drop the IBMVETH_MAX_RX_QUEUE alias this used to go
-  through: it duplicated IBMVETH_MAX_RX_PER_HCALL, which P08 had
-  already widened to 12, and sat one line from the unrelated
-  IBMVETH_MAX_RX_QUEUES
 - restart_rx_queue enable_irq on prep fail is deliberate (not
   mask-on-fail); drop WARN_ON(rc) on that enable — firmware rc,
   helper already logs
 - apply_mq_fallback on next successful open; reset does not retry open
 - register_rx_queues kdoc: this function latches mq_fallback on
   -EOPNOTSUPP
+- MQ firmware raises the replenish batch from 8 to 12 buffers per
+  hypercall. Drop the IBMVETH_MAX_RX_QUEUE alias this used to go
+  through: it duplicated IBMVETH_MAX_RX_PER_HCALL, which P08 had
+  already widened to 12, and sat one line from the unrelated
+  IBMVETH_MAX_RX_QUEUES
 - core RX packets/bytes and adapter rx_invalid_buffer /
   rx_large_packets stay racy across NAPI instances until the
   next patch moves them into per-queue qstats
