@@ -27,3 +27,12 @@ Changes in v5:
 - Call out rc = -ENOMEM before the TX LTB loop after RX helper extract
   (already in v4; still required so allocate_tx_ltb failure returns a
   useful errno)
+
+Changes in v4:
+- Introduce RX/filter allocation helpers in the same patch that wires
+  their first open/close callers; v3 left unused statics ahead of the
+  old open/close pipeline patch.
+- Preserve correct -ENOMEM return on TX LTB allocation failure after
+  the RX helper extract.
+- Drop reliance on v3's separate "open/close pipeline" patch for this
+  wiring.
