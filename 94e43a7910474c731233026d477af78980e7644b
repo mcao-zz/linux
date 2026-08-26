@@ -28,3 +28,12 @@ Changes in v5:
 - Document intentional open-fail LAN-first unwind (free_lan before RX
   pool/DMA teardown) rather than leaving it silent in a TX-only refactor
 - Drop drive-by blank-line cosmetics (header / start_xmit)
+
+Changes in v4:
+- Introduce the TX resource helpers in the same patch that wires their
+  first open/close callers.
+- Do not free TX LTBs again after a failed alloc_tx_resources();
+  harden free_tx_ltb() against unset slots.
+- Move TX allocation after RX IRQ setup / replenish kick so open()
+  failure unwind no longer depends on a shared loop index (also fixes
+  a mid-open TX LTB leak).
