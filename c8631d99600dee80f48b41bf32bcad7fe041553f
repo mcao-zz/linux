@@ -8,9 +8,8 @@ Changes in v6:
 - down-path comment/changelog describe immediate publish/CMO refresh
   rather than stash
 - guard poll_controller against unallocated queues while !opened
-- the rx > 1 rejection under mq_fallback lives in P14's
-  resize_rx_channels(); this patch only removes the duplicate
-  !multi_queue gate that shadowed it
+- commit message: drop the opened-vs-IFF_UP gate claim; P14's diff
+  makes that change, not this one
 - clarify TX alloc loop index initialization is readability
 
 Changes in v5:
