@@ -8,17 +8,14 @@ Changes in v6:
   The reopen hang itself is closed by the opened gate in P05, not
   here; no standalone Fixes: tag
 - debug fmt %u for unsigned num_rx_queues in alloc/cleanup helpers
-- name the double-free and stale-unmap fixes in the commit body
-  rather than only in the changelog, which git am strips. The v5
-  behaviour of zeroing filter_list_dma on map error is unchanged
-- pool-fail TX LTB shared-i leak predates helper extract; tip
-  fixed in P04 (pool helper no longer consumes i) + P06 (TX unwind). No
-  change on P03.
-- post-register pool-fail without h_free_logical_lan predates
-  this patch. Series tip fixes ordering in P06 (h_free before pool DMA
-  on open-fail via out_unregister_lan) and P07 (pools before
-  register_rx_queues; post-register errors funnel through
-  free_all_queues). No change on P03.
+- clarified: the double-free and stale-unmap fixes are now named in
+  the commit body, not only in the changelog that git am strips.
+  Zeroing filter_list_dma on map error is unchanged from v5
+- noted: the shared-i TX LTB leak on pool-fail predates this patch;
+  P04 stops the helper consuming i and P06 gives TX its own unwind
+- noted: pool-fail after register frees pages PHYP is still mapped
+  against; also pre-existing. P06 orders h_free_logical_lan before
+  the pool DMA, P07 moves pools ahead of register_rx_queues
 
 Changes in v5:
 - On filter_list DMA map failure: free_page and zero filter_list_dma so
