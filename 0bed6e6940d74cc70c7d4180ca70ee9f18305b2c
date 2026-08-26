@@ -1,4 +1,9 @@
 Changes in v6:
+- rename the pool buffer-count column from Size to Count, so the
+  debugfs table stops reusing the word sysfs poolN/size spells as a
+  byte length on the same pool object
+- widen the down banner: geometry above queue 0 is only populated
+  once open copies the queue-0 template
 - create the debugfs root in module_init() instead of lazily on first probe
 - scope the dump RTNL comment to geometry/pool->active; available is
   atomic_read
