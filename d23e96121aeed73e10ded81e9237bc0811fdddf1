@@ -31,3 +31,9 @@ Changes in v5:
   shared template; no per-queue pool sysfs in this series)
 - Call out close() pool-free before cleanup_rx_resources, after LAN/
   NAPI/IRQ teardown (order already in v4; spell it for later drain)
+
+Changes in v4:
+- Introduce the pool helpers in the same patch that wires their first
+  open/close callers, instead of leaving unused statics.
+- Copy pool->index when cloning queue-0 geometry to later queues
+  (needed for correlators; also required by incremental resize).
