@@ -3,10 +3,14 @@ Changes in v6:
   cleanup so cleanup does not dma_unmap_single() an address that was
   never mapped
 - unmap RX filter/buffer lists by CPU pointer, not dma_addr==0
+- debug fmt %u for unsigned num_rx_queues in alloc/cleanup helpers
+- cleanup helpers NULL buffer_list_addr[] and filter_list_addr as
+  they free, so a later free path cannot unmap a stale pointer.
+  The reopen hang itself is closed by the opened gate in P05, not
+  here; no standalone Fixes: tag
 - double-free/stale-unmap guards named in body; v5
   dma=0-on-map-error unchanged; not a standalone Fixes: tag (helper
   refactor + reopen path)
-- debug fmt %u for unsigned num_rx_queues in alloc/cleanup helpers
 - pool-fail TX LTB shared-i leak predates helper extract; tip
   fixed in P04 (pool helper no longer consumes i) + P06 (TX unwind). No
   change on P03.
@@ -15,10 +19,6 @@ Changes in v6:
   on open-fail via out_unregister_lan) and P07 (pools before
   register_rx_queues; post-register errors funnel through
   free_all_queues). No change on P03.
-- cleanup helpers NULL buffer_list_addr[] and filter_list_addr as
-  they free, so a later free path cannot unmap a stale pointer.
-  The reopen hang itself is closed by the opened gate in P05, not
-  here; no standalone Fixes: tag
 
 Changes in v5:
 - On filter_list DMA map failure: free_page and zero filter_list_dma so
