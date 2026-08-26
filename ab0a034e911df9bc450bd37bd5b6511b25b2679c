@@ -9,6 +9,12 @@ Changes in v6:
 - harvest no_buffer counters before freeing buffer lists
 - introduce ibmveth_kick_rx_queue_if_pending() helper here
   where its first callsite appears
+- do not add a !multi_queue gate above the no-op check; the single
+  gate below it already rejects rx > 1, and the duplicate had to be
+  deleted again in P15
+- commit message: state the scale-up order as the code has it
+  (publish, replenish, napi_enable, then PHYP unmask), and note the
+  transient RPS WARN while real_num_rx_queues trails the live count
 
 Changes in v5:
 - Incremental scale-up and scale-down logic for MQ RX rings
