@@ -12,3 +12,20 @@ Changes in v6:
 
 Changes in v5:
 - Incremental scale-up and scale-down logic for MQ RX rings
+
+Changes in v4:
+- Copy pool->index when cloning buffer pools for incrementally added
+  queues.
+- Scale-up order: publish -> replenish -> napi_enable -> enable_irq
+  (vs older enable-before-publish drafts); mirror NAPI-before-unmask on
+  set_real_num_rx rollback.
+- Linux-owned subordinate virq disposal; deregister is PHYP-only;
+  dispose bound to MAX_RX_QUEUES; dispose on request_irq failure.
+- Drain-path smp_rmb() before harvest.
+- Mask PHYP before napi_disable/drain on scale-down and scale-up fail
+  cleanup.
+- Replenish before re-enabling IRQ/NAPI on set_real_num_rx scale-down
+  rollback.
+- Keep set_channels wiring as the following patch (same split as v3)
+  but call resize_rx_channels() here when IFF_UP so the helper is not
+  an unused static.
