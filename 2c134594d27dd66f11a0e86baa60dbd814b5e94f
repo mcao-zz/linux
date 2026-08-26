@@ -1,0 +1,39 @@
+Changes in v6:
+- retarget free-by-presence comment and v5 Changes sentence to
+  later resize; alloc_buffer_pool() already undoes partials on this
+  open-fail path (free-by-presence policy unchanged)
+- debug fmt %u for unsigned num_rx_queues in
+  alloc/free_buffer_pools
+- post-register pool-fail without h_free_logical_lan predates this
+  helper patch (inline pool loop fell through the same way). Series tip
+  fixes ordering in P06 (h_free before pool DMA on open-fail via
+  out_unregister_lan) and P07 (pools before register_rx_queues;
+  post-register errors funnel through free_all_queues). No further change
+  on P04.
+- pool helper unwind no longer consumes open-path i, so TX LTB
+  fall-through free works on pool-fail (pre-existing shared-i leak);
+  not a standalone Fixes: tag; P06 gives TX its own unwind
+
+Changes in v5:
+- vs mailed v4: keep pool_active[] = {1,1,0,0,1} (v4 set the 64 KiB
+  pool inactive). No code delta vs prior patches here; SQ large-receive /
+  CMO stay at the historical baseline. change_mtu does not re-enable
+  pool4 at MTU 1500; MQ memory pressure belongs at scale-up, not SQ
+  default
+- Unwind / free pools by real allocations (free_map/dma_addr/skbuff),
+  not only pool->active (needed on later resize; a pool can still
+  hold memory after active is cleared). alloc_buffer_pool() already
+  undoes its own partials on this open-fail path
+- Clarify kdoc: free paths use allocation presence (not "all active");
+  queue 1..N metadata copy from queue 0 (v4 said "queues 1-15" while
+  MAX is still 1 here)
+- Document poolN sysfs size multiplies by num_rx_queues (queue 0 is the
+  shared template; no per-queue pool sysfs in this series)
+- Call out close() pool-free before cleanup_rx_resources, after LAN/
+  NAPI/IRQ teardown (order already in v4; spell it for later drain)
+
+Changes in v4:
+- Introduce the pool helpers in the same patch that wires their first
+  open/close callers, instead of leaving unused statics.
+- Copy pool->index when cloning queue-0 geometry to later queues
+  (needed for correlators; also required by incremental resize).
