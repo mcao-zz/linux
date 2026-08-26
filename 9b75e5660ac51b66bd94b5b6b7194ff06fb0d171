@@ -1,0 +1,43 @@
+Changes in v6:
+- core RX packets/bytes and adapter rx_invalid_buffer /
+  rx_large_packets stay racy across NAPI instances until the
+  next patch moves them into per-queue qstats
+- publish num_rx_queues with smp_store_release()/smp_load_acquire();
+  record RX queue on the skb before GRO
+- Patch 14 wires live ethtool -L rx (set_channels reads rx_count and
+  calls resize_rx_channels). Patch 15 completes the down-path
+  publish/rollback and the mq_fallback get_channels clamp. P12
+  reports counts only.
+- kick_rx_queue_if_pending moved to P14 where its first caller appears
+- rx_no_buffer stays adapter-wide; per-queue slot lands in P11
+- remove unregister-then-cancel and reset reg_state gate land in P11;
+  this patch only adds schedule_work producers
+- restart_rx_queue enable_irq on prep fail is deliberate (not
+  mask-on-fail); drop WARN_ON(rc) on that enable — firmware rc,
+  helper already logs
+- apply_mq_fallback on next successful open; reset does not retry open
+- setup_rx remask-after-napi_disable is P05
+- register_rx_queues kdoc: this function latches mq_fallback on
+  -EOPNOTSUPP
+- get_num_rx_queues / publish use smp_load_acquire / smp_store_release
+- get_desired_dma TX term still one LTB (cover Improvements)
+
+Changes in v5:
+- RTNL/serialized readers use get_num_rx_queues() once the helper exists
+  (open/close/register/apply_mq_fallback/alloc/cleanup/IRQ setup)
+- Interrupt: quiet IRQ_NONE on out-of-range qindex vs published live
+  count (scale-down residual IRQ; no WARN storm)
+- Series renumber: mailed v4 09/14 MQ enable -> tip P10 (P09 peel; 14->15)
+- Open: replenish all queues before setup; restart_rx_queue after setup
+  for SQ and MQ - replaces mailed MQ-only replenish + kick_if_pending vs
+  SQ schedule_rx_queue(0)
+- update_rx_no_buffer(queue_index): NULL-safe, no all-queue walk under one
+  lock (fixes the resize/race class). Still stores adapter->rx_no_buffer
+  for now; per-queue slot + monotonic sum lands with qstats next
+- H_FUNCTION: subordinate register fails open + stash mq_fallback;
+  buffer-add schedules reset + mq_fallback so next open drops to SQ
+- Introduce get_num_rx_queues / publish_num_rx_queues (READ/WRITE_ONCE)
+  at first use; lockless IRQ/poll/replenish/interrupt bounds use the getter
+- resume() schedules every live RX queue (not only queue 0)
+- Call out enable_irq-fail synchronize_irq and unused mac register-arg
+  cleanup (mailed enable-path review; code already earlier in tip)
