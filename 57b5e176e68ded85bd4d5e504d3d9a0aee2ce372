@@ -22,3 +22,13 @@ Changes in v5:
 - Decision: keep full ibmveth_buff_pool per queue for this series
   (unused embedded kobjects on rows 1..N); a config-vs-runtime layout
   split is out of scope here
+
+Changes in v4:
+- Keep IBMVETH_MAX_RX_QUEUES at 1 until MQ enablement (same idea as v3,
+  but v3 also planted unused stats types here).
+- Layout-only: queue-indexed adapter fields only. Do not introduce
+  hcall_stats / rx_qstats here (first-use).
+- Defer hcall_stats to patch 7 (register helpers) and rx/tx qstats +
+  NUM macros to patch 10 (statistics collection).
+- Subject: "Prepare MQ RX adapter data structures" (was "...and
+  statistics structures" in earlier drafts).
