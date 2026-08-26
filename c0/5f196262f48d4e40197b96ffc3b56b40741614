@@ -1,0 +1,37 @@
+Changes in v6:
+- NULL tx_ltb_ptr[idx] before unmap/free so a racing start_xmit()
+  fails the pointer check instead of using a freed LTB. Close-path
+  safety is still netif_tx_disable()
+- Open-fail unwind: pool-fail after LAN register adds h_free_logical_lan
+  (was missing at parent), then unmaps RX pool DMA - not a preference
+  reorder. No standalone Fixes: tag.
+- comment on allocate_tx_ltb() - caller must leave tx_ltb_ptr[idx]
+  NULL (no defensive skip that would hide a live mapping).
+- kdoc alloc/free_tx_resources says real_num_tx_queues (loop
+  unchanged; not IBMVETH_MAX_QUEUES).
+- NULL-LTB start_xmit drop increments tx_dropped and goto out.
+- close uses netif_tx_disable; ethtool -L TX shrink still
+  stop-then-free (cover Improvements). Do not fold disable-on-L.
+
+Changes in v5:
+- Quiesce TX with netif_tx_disable before free (stop_all_queues does not
+  wait for in-flight xmit); free LTBs after h_free_logical_lan - direct
+  close() callers bypass synchronize_net()
+- Guard start_xmit if tx_ltb_ptr gone so open can leave RX live while TX
+  LTB alloc still runs (also covers close/failed-reopen with IFF_UP set)
+- Drop fake mid-open TX-leak / Fixes: motivation; reword as helper
+  extraction matching RX (shared loop-index independence)
+- Free TX LTB by pointer presence (drop dma==0 sentinel; dma_mapping_error
+  already cleared the slot on map failure)
+- Document intentional open-fail LAN-first unwind (free_lan before RX
+  pool/DMA teardown) rather than leaving it silent in a TX-only refactor
+- Drop drive-by blank-line cosmetics (header / start_xmit)
+
+Changes in v4:
+- Introduce the TX resource helpers in the same patch that wires their
+  first open/close callers.
+- Do not free TX LTBs again after a failed alloc_tx_resources();
+  harden free_tx_ltb() against unset slots.
+- Move TX allocation after RX IRQ setup / replenish kick so open()
+  failure unwind no longer depends on a shared loop index. (The
+  mid-open TX LTB leak claimed here was withdrawn in v5; see above.)
