@@ -1,0 +1,12 @@
+Changes in v6:
+- Patch 14 wires live ethtool -L rx (set_channels reads rx_count and
+  calls resize_rx_channels). Patch 15 completes the down-path
+  publish/rollback and caps max_rx at the live RX count once
+  mq_fallback latches. This patch only reports max_rx /
+  rx_count.
+
+Changes in v5:
+- get_channels rx_count via get_num_rx_queues() (READ_ONCE consistency)
+- New peel: get_channels from v4 stats -> tip P12 (14->15)
+- get_channels: max_rx = MAX_RX_QUEUES when MQ else 1; rx_count =
+  get_num_rx_queues() (was mirroring real_num_rx_queues for both)
