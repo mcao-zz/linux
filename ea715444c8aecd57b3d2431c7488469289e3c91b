@@ -13,3 +13,13 @@ Changes in v6:
 Changes in v5:
 - Extract buffer submit switch into ibmveth_add_logical_lan_buffers()
 - Retain single-buffer and 8-buffer fallback paths for single-queue mode
+
+Changes in v4:
+- Introduce queue-aware replenish/poll helpers with their first callers
+  in the same patch; do not leave a 2-arg replenish call ahead of the
+  signature change.
+- Restore the pre-MQ LPM H_FUNCTION break instead of continue; do not
+  loop forever on a stale local batch size.
+- Fold per-queue replenish_lock into this patch.
+- Update kdoc for MQ parameters on remove_buffer_from_pool /
+  rxq_harvest_buffer.
