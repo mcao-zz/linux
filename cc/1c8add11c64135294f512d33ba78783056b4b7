@@ -3,10 +3,9 @@ Changes in v6:
   sentence, to the later resize paths; alloc_buffer_pool() already
   undoes its own partials, so nothing leaks on this open-fail path
 - debug fmt %u for the unsigned queue count in alloc/free_buffer_pools
-- clarified: the body now names the side effect that the pool helper
-  no longer consumes open()'s loop index, so the TX LTBs really are
-  freed on pool-fail. The shared-index leak is pre-existing, so no
-  standalone Fixes: tag; P06 gives TX its own unwind
+- clarified: no code change. The body now names the side effect that
+  the pool helper no longer consumes open()'s loop index, so the TX
+  LTBs really are freed on pool-fail
 - noted: pool-fail after register without h_free_logical_lan predates
   this patch, the inline pool loop reached the same labels. P06 orders
   h_free before the pool DMA, P07 moves pools ahead of
