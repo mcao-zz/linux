@@ -9,7 +9,6 @@ Changes in v6:
   netdev_err()
 - document ibmveth_free_all_queues() return contract in kdoc
   (log-and-continue legacy behavior; queue_handle[] cleared)
-- update commit message to reflect correct label flow
 - state that queue 0's handle is kept only on an H_SUCCESS
   registration; teardown is unconditional and is documented
   separately in the free_all_queues() kdoc
@@ -23,7 +22,6 @@ Changes in v4:
 - Introduce register/free helpers in the same patch that wires their
   first open/close callers; keep subordinate-only helpers deferred
   until MQ enablement.
-- Introduce adapter->hcall_stats here (first use); not in patch 2.
 - Correct open/close unwind so free_all_queues() precedes
   free_buffer_pools().
 - Drop the orphaned big-bang "open/close pipeline" patch from v3; that
