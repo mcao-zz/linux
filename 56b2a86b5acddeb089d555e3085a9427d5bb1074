@@ -12,3 +12,9 @@ Changes in v5:
 - rtnl_lock around dump (writers are under RTNL)
 - Show Active/Available as 0 when pool !live (debugfs view; free-path
   available clear already in the buffer-submit patch)
+
+Changes in v4:
+- Move the all-queue buffer_pools diagnostic from sysfs to debugfs;
+  subject updated to match.
+- Keep historical queue-0 poolN/{active,num,size} sysfs as one-value
+  config (template for MQ); do not add per-queue pool sysfs dirs.
