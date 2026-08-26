@@ -43,3 +43,14 @@ Changes in v5:
 - Poll re-arm during teardown lands with SQ poll-harden (not claimed here)
 - synchronize_net() after RX IRQ/NAPI teardown in close
 - Add subordinate IRQ dispose helpers (per-queue + bulk 1..N; bound to MAX)
+
+Changes in v4:
+- Include irq.h / irqdomain.h with first irq_dispose_mapping() use.
+- Introduce IRQ helpers in the same patch that wires open/close/poll
+  callers, instead of leaving unused statics.
+- Factor process-context RX kicks into ibmveth_schedule_rx_queue();
+  keep ibmveth_interrupt() as the IRQ-only wrapper.
+- On cleanup, mask PHYP and synchronize_irq before napi_disable
+  (storm-safety; not fully behavior-preserving vs classic close).
+- Leave queue_irq[0] set after cleanup (queue 0 uses netdev->irq;
+  next open reuses it). Only subordinate virqs are disposed.
