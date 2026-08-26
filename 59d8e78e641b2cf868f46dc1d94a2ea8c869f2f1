@@ -33,3 +33,16 @@ Changes in v5:
 - Implement .ndo_get_stats64
 - Fix remove teardown order: unregister_netdev before cancel_work_sync
 - Clear vio drvdata before free_netdev on probe error
+
+Changes in v4:
+- Merge v3's separate RX and TX stats commits into one patch.
+- Introduce rx_queue_stats / tx_qstats / NUM macros here (first use).
+- Allocate/free qstats at probe/remove instead of open/close.
+- Report adapter-level ethtool strings by summing per-queue counters on
+  read; drop aggregate_* helpers.
+- Sum global rx_no_buffer across MQ queues into this statistics patch.
+- Cacheline-align per-queue stats; derive field counts with offsetof so
+  alignment padding is not counted as a statistic.
+- probe_cleanup() cancels reset work, puts pool kobjects via helper from
+  the prior patch, and frees qstats on probe failure paths.
+- Keep plain u64 qstats like existing ibmveth / ibmvnic (PPC_PSERIES).
