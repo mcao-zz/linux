@@ -1,0 +1,40 @@
+Changes in v6:
+- on RX-queue dma_alloc failure, free the buffer-list page before
+  cleanup so cleanup does not dma_unmap_single() an address that was
+  never mapped
+- unmap RX filter/buffer lists by CPU pointer, not dma_addr==0
+- double-free/stale-unmap guards named in body; v5
+  dma=0-on-map-error unchanged; not a standalone Fixes: tag (helper
+  refactor + reopen path)
+- debug fmt %u for unsigned num_rx_queues in alloc/cleanup helpers
+- pool-fail TX LTB shared-i leak predates helper extract; tip
+  fixed in P04 (pool helper no longer consumes i) + P06 (TX unwind). No
+  change on P03.
+- post-register pool-fail without h_free_logical_lan predates
+  this patch. Series tip fixes ordering in P06 (h_free before pool DMA
+  on open-fail via out_unregister_lan) and P07 (pools before
+  register_rx_queues; post-register errors funnel through
+  free_all_queues). No change on P03.
+- cleanup helpers NULL buffer_list_addr[] and filter_list_addr as
+  they free, so a later free path cannot unmap a stale pointer.
+  The reopen hang itself is closed by the opened gate in P05, not
+  here; no standalone Fixes: tag
+
+Changes in v5:
+- On filter_list DMA map failure: free_page and zero filter_list_dma so
+  a later free path cannot dma_unmap the DMA_MAPPING_ERROR sentinel
+  (match buffer_list_dma convention). Closes reopen->ifdown WARN path
+  after set_csum/set_tso/change_mtu/pool_store close+open while running
+  - v4 left the sentinel
+- Call out rc = -ENOMEM before the TX LTB loop after RX helper extract
+  (already in v4; still required so allocate_tx_ltb failure returns a
+  useful errno)
+
+Changes in v4:
+- Introduce RX/filter allocation helpers in the same patch that wires
+  their first open/close callers; v3 left unused statics ahead of the
+  old open/close pipeline patch.
+- Preserve correct -ENOMEM return on TX LTB allocation failure after
+  the RX helper extract.
+- Drop reliance on v3's separate "open/close pipeline" patch for this
+  wiring.
