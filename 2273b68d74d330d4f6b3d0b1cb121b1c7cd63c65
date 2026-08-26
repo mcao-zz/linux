@@ -20,3 +20,11 @@ Changes in v5:
   vs while-down stash
 - Down-path RX stash also refreshes CMO (publish + set_real_num_rx)
 - When up: resize RX then TX; roll RX back if TX cannot reach goal
+
+Changes in v4:
+- On !IFF_UP, stash num_rx_queues only after TX set succeeds; do not
+  allocate live subordinate IRQs/buffers while down.
+- Initialize i = old_tx on the TX adjust path.
+- Always return rc from set_channels().
+- Split from the resize-helper patch (same split as v3) while keeping
+  a live caller of resize_rx_channels() in the previous patch.
