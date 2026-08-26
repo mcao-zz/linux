@@ -1,9 +1,20 @@
 Changes in v6:
+- publish num_rx_queues with smp_store_release()/smp_load_acquire();
+  record RX queue on the skb before GRO
+- MQ firmware raises the replenish batch from 8 to 12 buffers per
+  hypercall. Drop the IBMVETH_MAX_RX_QUEUE alias this used to go
+  through: it duplicated IBMVETH_MAX_RX_PER_HCALL, which P08 had
+  already widened to 12, and sat one line from the unrelated
+  IBMVETH_MAX_RX_QUEUES
+- restart_rx_queue enable_irq on prep fail is deliberate (not
+  mask-on-fail); drop WARN_ON(rc) on that enable — firmware rc,
+  helper already logs
+- apply_mq_fallback on next successful open; reset does not retry open
+- register_rx_queues kdoc: this function latches mq_fallback on
+  -EOPNOTSUPP
 - core RX packets/bytes and adapter rx_invalid_buffer /
   rx_large_packets stay racy across NAPI instances until the
   next patch moves them into per-queue qstats
-- publish num_rx_queues with smp_store_release()/smp_load_acquire();
-  record RX queue on the skb before GRO
 - Patch 14 wires live ethtool -L rx (set_channels reads rx_count and
   calls resize_rx_channels). Patch 15 completes the down-path
   publish/rollback and caps max_rx at the live RX count once
@@ -14,14 +25,7 @@ Changes in v6:
   than a sum, and can go backwards; per-queue slot lands in P11
 - remove unregister-then-cancel and reset reg_state gate land in P11;
   this patch only adds schedule_work producers
-- restart_rx_queue enable_irq on prep fail is deliberate (not
-  mask-on-fail); drop WARN_ON(rc) on that enable — firmware rc,
-  helper already logs
-- apply_mq_fallback on next successful open; reset does not retry open
 - setup_rx remask-after-napi_disable is P05
-- register_rx_queues kdoc: this function latches mq_fallback on
-  -EOPNOTSUPP
-- get_num_rx_queues / publish use smp_load_acquire / smp_store_release
 - get_desired_dma TX term still one LTB (cover Improvements)
 
 Changes in v5:
