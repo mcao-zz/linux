@@ -1,14 +1,16 @@
 Changes in v6:
-- drop the redundant atomic_dec inner parentheses (style; the [0]
-  hunk is not index-only)
-- adapter->num_rx_queues is the lockless live bound, not a
-  duplicate of netdev->real_num_rx_queues; acquire/release publish
-  lands in P10
+- correct the v5 note, which called this hunk index-only. It is the
+  [0] retarget plus one style drop, the redundant atomic_dec inner
+  parentheses that checkpatch flags. The code is unchanged from v5;
+  only the description was wrong
 - first use of new adapter fields — queue_irq[] in P05 (IRQ
   control), queue_handle[] in P07 (register helpers);
   num_rx_queues in P03 (RX resource allocation); multi_queue in
   P05, becoming behavioural only once P10 raises
   IBMVETH_MAX_RX_QUEUES above 1
+- adapter->num_rx_queues is the lockless live bound, not a
+  duplicate of netdev->real_num_rx_queues; acquire/release publish
+  lands in P10
 - probe pool-kobject / vio drvdata leak on register fail
   predates this [0] retarget; inline kobject_put in P10,
   ibmveth_probe_cleanup() in P11. No change on P02.
