@@ -24,7 +24,9 @@ Changes in v6:
   publishes RX count and CMO while down and does not allocate TX
   LTBs or wake queues. close still frees TX LTB when opened had
   been true. No change in this IRQ patch.
-- per-queue poll completion and enable_irq(qindex) in P09 before P10;
+- per-queue poll completion and enable_irq(qindex) in P08 (where the
+  buffer-submit helper first needs a queue index), range check in P09;
+  both before P10;
   IRQ handler uses &napi[i] cookie at SQ (only napi[0] registered here)
 
 Changes in v5:
