@@ -1,0 +1,30 @@
+Changes in v6:
+- open() allocates buffer pools before register_rx_queues so a
+  pool-fail path never has a live LAN
+- trace the logical-LAN registration hypercalls, and the free retry in
+  that same path, with netdev_dbg() instead of counting them; they fire
+  on open/close and resize, not per packet, so a permanent ethtool -S
+  counter earned its keep less than a debug line does. The queue
+  teardown paths are left alone: they already report failures with
+  netdev_err()
+- document ibmveth_free_all_queues() return contract in kdoc
+  (log-and-continue legacy behavior; queue_handle[] cleared)
+- update commit message to reflect correct label flow
+- state that queue 0's handle is kept only on an H_SUCCESS
+  registration; teardown is unconditional and is documented
+  separately in the free_all_queues() kdoc
+
+Changes in v5:
+- Rename helpers to ibmveth_register_logical_lan() and
+  ibmveth_free_all_queues()
+- Retain single-queue registration for legacy paths
+
+Changes in v4:
+- Introduce register/free helpers in the same patch that wires their
+  first open/close callers; keep subordinate-only helpers deferred
+  until MQ enablement.
+- Introduce adapter->hcall_stats here (first use); not in patch 2.
+- Correct open/close unwind so free_all_queues() precedes
+  free_buffer_pools().
+- Drop the orphaned big-bang "open/close pipeline" patch from v3; that
+  wiring is incremental across helper patches 3-7 instead.
