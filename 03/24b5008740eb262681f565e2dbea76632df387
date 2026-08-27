@@ -9,23 +9,17 @@ Changes in v6:
   not per packet, so a debug line is the right shape where a permanent
   counter was not. The queue teardown paths are left alone: they
   already report failures with netdev_err()
-- document ibmveth_free_all_queues() return contract in kdoc:
-  log-and-continue, queue_handle[] cleared regardless, and callers
-  still run RX pool and DMA teardown afterward
+- document ibmveth_free_all_queues()'s log-and-continue contract in its
+  kdoc, including that queue_handle[] is cleared whatever the hypercall
+  returned
 - clarified: the body now states that queue 0's handle is stored only
-  on an H_SUCCESS registration, so a failed attempt leaves no stale
-  handle. Teardown clears it unconditionally, per the kdoc above
-- clarified: the open-fail label walk is gone from the body rather than
-  corrected. It said post-register failures enter out_unregister_queues;
-  only the netif_set_real_num_rx_queues() failure does. The body now
-  states just the property that matters, that post-register errors
-  unwind through free_all_queues()
-- clarified: the claim that ordering free_all_queues() before
-  free_buffer_pools() stops PHYP retaining a registered LAN while its
-  pools are released is also gone; it only held on H_SUCCESS. open()
-  has allocated pools before registration since v5, which is what keeps
-  a pool-fail path from having a live LAN, and the body says that
-  instead
+  on an H_SUCCESS registration
+- clarified: the body drops the open-fail label walk rather than
+  correcting it. Only the netif_set_real_num_rx_queues() failure enters
+  out_unregister_queues
+- clarified: the body drops the claim that ordering free_all_queues()
+  before free_buffer_pools() stops PHYP retaining a registered LAN while
+  its pools are released. It only held on H_SUCCESS
 
 Changes in v5:
 - Rename helpers to ibmveth_register_logical_lan() and
