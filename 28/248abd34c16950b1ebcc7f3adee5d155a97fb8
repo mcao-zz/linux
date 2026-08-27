@@ -5,7 +5,7 @@ Changes in v6:
 - drop the IBMVETH_MAX_RX_QUEUE alias v5 added here: it duplicated
   IBMVETH_MAX_RX_PER_HCALL and sat next to the unrelated
   IBMVETH_MAX_RX_QUEUES
-- drop WARN_ON(rc) on restart_rx_queue()'s enable_irq — a firmware rc
+- drop WARN_ON(rc) on restart_rx_queue()'s enable_irq; a firmware rc
   the helper already logs. Enabling on prep failure is deliberate
 - move kick_rx_queue_if_pending() to patch 14 with its first caller;
   it was an uncalled static here, fatal under CONFIG_WERROR
@@ -13,7 +13,7 @@ Changes in v6:
 - clarified: the ethtool -L sentence now names patches 14 and 15,
   which actually wire it
 - clarified: the body now says which patch closes what this commit
-  leaves open — the racy RX counters and adapter-wide rx_no_buffer,
+  leaves open: the racy RX counters and adapter-wide rx_no_buffer,
   and the remove/reg_state reorder, all in patch 11
 Changes in v5:
 - RTNL/serialized readers use get_num_rx_queues() once the helper exists
