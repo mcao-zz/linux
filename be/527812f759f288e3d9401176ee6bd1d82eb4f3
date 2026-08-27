@@ -1,0 +1,36 @@
+Changes in v6 (commit message only; the code is identical to v5):
+- correct the v5 note, which called this hunk index-only. It is the
+  [0] retarget plus one style drop, the redundant atomic_dec inner
+  parentheses that checkpatch flags
+- name the first user of each new adapter field: queue_irq[] in P05
+  (IRQ control), queue_handle[] in P07 (register helpers),
+  num_rx_queues in P03 (RX resource allocation), multi_queue in P05,
+  which only starts selecting between code paths once P10 raises
+  IBMVETH_MAX_RX_QUEUES above 1
+- state that adapter->num_rx_queues is the driver's own lockless
+  bound on the live queues, not a duplicate of
+  netdev->real_num_rx_queues; the acquire/release publish that makes
+  it safe to read without a lock lands in P10
+- note that the probe pool-kobject / vio drvdata leak on register
+  fail predates this [0] retarget; inline kobject_put lands in P10,
+  ibmveth_probe_cleanup() in P11
+
+Changes in v5:
+- Drop unrelated style nits that v4 mixed into the index-0 conversion
+  (ibmveth_rxq_get_buffer() prototype reflow, get_desired_dma
+  "Return:" kdoc, blank line after rx_large_packets)
+- Document queue-0 poolN/ sysfs as the shared geometry/template for all
+  RX queues (buff_size/size/active); queues 1..N get no separate pool
+  sysfs in this series
+- Decision: keep full ibmveth_buff_pool per queue for this series
+  (unused embedded kobjects on rows 1..N); a config-vs-runtime layout
+  split is out of scope here
+
+Changes in v4:
+- Keep IBMVETH_MAX_RX_QUEUES at 1 until MQ enablement (same idea as v3,
+  but v3 also planted unused stats types here).
+- Layout-only: queue-indexed adapter fields only. Do not introduce
+  the rx/tx qstats here (first-use); they land with the per-queue
+  statistics patch.
+- Subject: "Prepare MQ RX adapter data structures" (was "...and
+  statistics structures" in earlier drafts).
