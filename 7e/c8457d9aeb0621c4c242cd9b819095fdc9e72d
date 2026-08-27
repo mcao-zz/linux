@@ -7,7 +7,6 @@ Changes in v6:
   they free, so a later free path cannot unmap a stale pointer.
   The reopen hang itself is closed by the opened gate in P05, not
   here; no standalone Fixes: tag
-- debug fmt %u for unsigned num_rx_queues in alloc/cleanup helpers
 - clarified: the NULL buffer_list_addr[0] window is now described for
   both callers of ibmveth_update_rx_no_buffer(). The opened gate
   closes it for close(); the netpoll path through replenish_task()
