@@ -1,0 +1,48 @@
+Changes in v6:
+- this patch now also carries the live ethtool -L rx wiring
+  (set_channels -> resize_rx_channels), the !opened down-path gate,
+  desired_dma_for_rxqs() and drain_rx_queue(); P15 completes the
+  down-path rollback and the mq_fallback max_rx cap
+- gate the resize on growth (goal_rx > old_rx) rather than on
+  goal_rx > 1. get_channels() caps max_rx at the live RX count once
+  mq_fallback is set, and the old gate then rejected every shrink
+  below that cap with -EOPNOTSUPP, so the advertised maximum was not
+  settable
+- harvest no_buffer counters before freeing buffer lists, and under
+  the retiring queue's replenish_lock: netpoll reaches those queues
+  until the surviving count is published and folds the same counters
+  under that lock
+- publish num_rx_queues before synchronize_net() so poll loops exit
+  cleanly during scale-down
+- drop leftover spin_lock_init() from alloc_single_rx_queue(); it runs
+  on a live adapter during scale-up, so re-initialising the lock could
+  race a netpoll replenish holding it. probe owns lock init
+- zero buffer_list_dma[] on the alloc_single_rx_queue() map-failure
+  path rather than leaving DMA_MAPPING_ERROR in it; the bulk
+  allocator already does this and free_single_rx_queue() keys its
+  unmap on that field
+- do not add a !multi_queue gate above the no-op check; the single
+  gate below it already rejects rx > 1, and the duplicate had to be
+  deleted again in P15
+- commit message: state the scale-up order as the code has it
+  (publish, replenish, napi_enable, then PHYP unmask), and note the
+  transient RPS WARN while real_num_rx_queues trails the live count
+Changes in v5:
+- Incremental scale-up and scale-down logic for MQ RX rings
+
+Changes in v4:
+- Copy pool->index when cloning buffer pools for incrementally added
+  queues.
+- Scale-up order: publish -> replenish -> napi_enable -> enable_irq
+  (vs older enable-before-publish drafts); mirror NAPI-before-unmask on
+  set_real_num_rx rollback.
+- Linux-owned subordinate virq disposal; deregister is PHYP-only;
+  dispose bound to MAX_RX_QUEUES; dispose on request_irq failure.
+- Drain-path smp_rmb() before harvest.
+- Mask PHYP before napi_disable/drain on scale-down and scale-up fail
+  cleanup.
+- Replenish before re-enabling IRQ/NAPI on set_real_num_rx scale-down
+  rollback.
+- Keep set_channels wiring as the following patch (same split as v3)
+  but call resize_rx_channels() here when IFF_UP so the helper is not
+  an unused static.
