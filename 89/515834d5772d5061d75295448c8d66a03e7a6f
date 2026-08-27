@@ -7,8 +7,9 @@ Changes in v6:
   IBMVETH_MAX_RX_QUEUES
 - drop WARN_ON(rc) on restart_rx_queue()'s enable_irq; a firmware rc
   the helper already logs. Enabling on prep failure is deliberate
-- move kick_rx_queue_if_pending() to patch 14 with its first caller;
-  it was an uncalled static here, fatal under CONFIG_WERROR
+- drop kick_rx_queue_if_pending(); it was an uncalled static here,
+  fatal under CONFIG_WERROR, and patch 14 ended up wanting
+  restart_rx_queue() at both sites that would have called it
 - register_rx_queues() kdoc: it latches mq_fallback on -EOPNOTSUPP
 - clarified: the ethtool -L sentence now names patches 14 and 15,
   which actually wire it
