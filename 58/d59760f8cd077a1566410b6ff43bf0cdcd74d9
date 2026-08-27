@@ -1,0 +1,40 @@
+Changes in v6:
+- on RX-queue dma_alloc failure, free the buffer-list page before
+  cleanup so cleanup does not dma_unmap_single() an address that was
+  never mapped
+- unmap RX filter/buffer lists by CPU pointer, not dma_addr==0
+- cleanup helpers NULL buffer_list_addr[] and filter_list_addr as
+  they free, so a later free path cannot unmap a stale pointer.
+  The reopen hang itself is closed by the opened gate in P05, not
+  here; no standalone Fixes: tag
+- clarified: the NULL buffer_list_addr[0] window is now described for
+  both callers of ibmveth_update_rx_no_buffer(). The opened gate
+  closes it for close(); the netpoll path through replenish_task()
+  stays open until the per-queue guard
+- clarified: the double-free and stale-unmap fixes are now named in
+  the commit body. Zeroing filter_list_dma on map error is unchanged
+  from v5
+- noted: the shared-i TX LTB leak on pool-fail predates this patch;
+  P04 stops the helper consuming i and P06 gives TX its own unwind
+- noted: pool-fail after register frees pages PHYP is still mapped
+  against; also pre-existing. P06 orders h_free_logical_lan before
+  the pool DMA, P07 moves pools ahead of register_rx_queues
+
+Changes in v5:
+- On filter_list DMA map failure: free_page and zero filter_list_dma so
+  a later free path cannot dma_unmap the DMA_MAPPING_ERROR sentinel
+  (match buffer_list_dma convention). Closes reopen->ifdown WARN path
+  after set_csum/set_tso/change_mtu/pool_store close+open while running
+  - v4 left the sentinel
+- Call out rc = -ENOMEM before the TX LTB loop after RX helper extract
+  (already in v4; still required so allocate_tx_ltb failure returns a
+  useful errno)
+
+Changes in v4:
+- Introduce RX/filter allocation helpers in the same patch that wires
+  their first open/close callers; v3 left unused statics ahead of the
+  old open/close pipeline patch.
+- Preserve correct -ENOMEM return on TX LTB allocation failure after
+  the RX helper extract.
+- Drop reliance on v3's separate "open/close pipeline" patch for this
+  wiring.
