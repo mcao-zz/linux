@@ -22,6 +22,9 @@ Changes in v6:
   P15 close it, is described in the body
 - noted: no code change. Why per-queue poll() and enable_irq(qindex)
   are peeled to P08 and P09 is described in the body
+- commit message: state the mask/unmask contract once rather than
+  across three paragraphs, and group the two bundled pre-existing
+  fixes together instead of interleaving them with the refactor
 
 Changes in v5:
 - Remask+sync after napi_disable in cleanup (in-flight poll can re-arm)
