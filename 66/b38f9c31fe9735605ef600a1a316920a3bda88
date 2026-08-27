@@ -2,22 +2,19 @@ Changes in v6:
 - publish num_rx_queues with smp_store_release() / smp_load_acquire()
   rather than smp_wmb() + WRITE_ONCE(); record the RX queue on the skb
   before GRO
-- drop the IBMVETH_MAX_RX_QUEUE alias: it duplicated
-  IBMVETH_MAX_RX_PER_HCALL, widened to 12 in patch 8, and sat next to
-  the unrelated IBMVETH_MAX_RX_QUEUES
-- make multi_queue a bool, now that it is a flag and not a count
+- drop the IBMVETH_MAX_RX_QUEUE alias v5 added here: it duplicated
+  IBMVETH_MAX_RX_PER_HCALL and sat next to the unrelated
+  IBMVETH_MAX_RX_QUEUES
 - drop WARN_ON(rc) on restart_rx_queue()'s enable_irq — a firmware rc
   the helper already logs. Enabling on prep failure is deliberate
 - move kick_rx_queue_if_pending() to patch 14 with its first caller;
   it was an uncalled static here, fatal under CONFIG_WERROR
 - register_rx_queues() kdoc: it latches mq_fallback on -EOPNOTSUPP
-- %u for the unsigned queue counts in register_rx_queues()
 - clarified: the ethtool -L sentence now names patches 14 and 15,
   which actually wire it
-- clarified: the body now spells out the mq_fallback timing, what this
-  commit leaves broken, and which patch closes it — racy RX counters
-  and adapter-wide rx_no_buffer until patch 11, the remove/reg_state
-  work also in patch 11, and the one-LTB TX CMO term
+- clarified: the body now says which patch closes what this commit
+  leaves open — the racy RX counters and adapter-wide rx_no_buffer,
+  and the remove/reg_state reorder, all in patch 11
 Changes in v5:
 - RTNL/serialized readers use get_num_rx_queues() once the helper exists
   (open/close/register/apply_mq_fallback/alloc/cleanup/IRQ setup)
