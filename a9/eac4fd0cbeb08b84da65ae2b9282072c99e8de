@@ -1,5 +1,5 @@
 Changes in v6:
-- also: live ethtool -L rx wiring (set_channels → resize_rx_channels),
+- also: live ethtool -L rx wiring (set_channels -> resize_rx_channels),
   !opened down-path gate, desired_dma_for_rxqs(), drain_rx_queue();
   P15 completes down-path rollback and the mq_fallback max_rx cap
 - publish num_rx_queues before synchronize_net() so poll loops exit
