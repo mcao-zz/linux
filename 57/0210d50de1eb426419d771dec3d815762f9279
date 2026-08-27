@@ -9,6 +9,9 @@ Changes in v6:
   once open copies the queue-0 template
 - scope the dump RTNL comment to geometry/pool->active; available is
   atomic_read
+- commit message: lead with what is unobservable today (80 pools, none
+  reported per-pool) rather than the column list, and fold the three
+  separate why-debugfs-not-sysfs arguments into one
 
 Changes in v5:
 - debugfs buffer_pools_show walks get_num_rx_queues()
