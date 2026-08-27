@@ -4,7 +4,8 @@ Changes in v6:
   byte length on the same pool object
 - widen the down banner: geometry above queue 0 is only populated
   once open copies the queue-0 template
-- create the debugfs root in module_init() instead of lazily on first probe
+- create the debugfs root in module_init() instead of lazily on
+  first probe
 - scope the dump RTNL comment to geometry/pool->active; available is
   atomic_read
 - commit message: Active column is 0 unless the pool is allocated
