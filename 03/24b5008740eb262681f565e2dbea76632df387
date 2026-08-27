@@ -2,8 +2,8 @@ Changes in v6:
 - drop the eight hypercall counters this series was adding, along with
   struct ibmveth_hcall_stats and the adapter field holding it. Only
   reg_lan and free_lan had writers at this commit and none of the eight
-  had a reader; the ethtool -S keys they were destined for go in patch
-  11. This patch no longer touches ibmveth.h at all
+  had a reader, and the ethtool -S keys v5 gave them in patch 11 are
+  gone with them. This patch no longer touches ibmveth.h at all
 - trace the logical-LAN registration, and the free retry in that same
   path, with netdev_dbg() instead. They fire on open/close and resize,
   not per packet, so a debug line is the right shape where a permanent
