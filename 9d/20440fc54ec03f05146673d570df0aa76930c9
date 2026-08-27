@@ -1,13 +1,17 @@
 Changes in v6:
-- initialise replenish locks once in probe; open() no longer
-  reinitialises them in alloc_rx_queues()
+- initialise the replenish locks once in probe; open() no longer
+  reinitialises them in alloc_rx_queues(), where it could reset a lock
+  another CPU was holding through poll_controller()
+- pass DMA_ATTR_NO_WARN to dma_map_single_attrs() in the replenish
+  loop. The iommu warning could re-enter via netconsole and deadlock
+  on the replenish_lock this CPU already holds
 - static_assert IBMVETH_MAX_RX_REGULAR == 8 and
   IBMVETH_MAX_RX_PER_HCALL == 12 against the hand-written
   legacy descs[0..7] and MQ ioba[0..5] argument lists
 - add clarifying comment on legacy 8-buffer hcall batch bound
-- pass DMA_ATTR_NO_WARN to dma_map_single_attrs() in replenish
-  loop to prevent printk recursion under netconsole
-- fix KUnit test fixtures allocating dummy free_map
+- drop the three buffer-submit hypercall counters along with the rest
+  of hcall_stats; see patch 7
+- fix the KUnit fixtures to allocate a dummy free_map
 - align dma_map_single_attrs() arguments; restore newline at EOF
 
 Changes in v5:
