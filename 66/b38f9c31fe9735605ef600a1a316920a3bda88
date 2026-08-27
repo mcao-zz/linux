@@ -1,34 +1,23 @@
 Changes in v6:
-- publish num_rx_queues with smp_store_release()/smp_load_acquire();
-  record RX queue on the skb before GRO
-- restart_rx_queue enable_irq on prep fail is deliberate (not
-  mask-on-fail); drop WARN_ON(rc) on that enable — firmware rc,
-  helper already logs
-- apply_mq_fallback on next successful open; reset does not retry open
-- register_rx_queues kdoc: this function latches mq_fallback on
-  -EOPNOTSUPP
-- MQ firmware raises the replenish batch from 8 to 12 buffers per
-  hypercall. Drop the IBMVETH_MAX_RX_QUEUE alias this used to go
-  through: it duplicated IBMVETH_MAX_RX_PER_HCALL, which P08 had
-  already widened to 12, and sat one line from the unrelated
-  IBMVETH_MAX_RX_QUEUES
-- core RX packets/bytes and adapter rx_invalid_buffer /
-  rx_large_packets stay racy across NAPI instances until the
-  next patch moves them into per-queue qstats
-- Patch 14 wires live ethtool -L rx (set_channels reads rx_count and
-  calls resize_rx_channels). Patch 15 completes the down-path
-  publish/rollback and caps max_rx at the live RX count once
-  mq_fallback latches. P12 reports counts only.
-- kick_rx_queue_if_pending moved to P14 where its first caller appears
-- rx_no_buffer stays adapter-wide, so with several queues it
-  reports whatever the queue that replenished last saw rather
-  than a sum, and can go backwards; per-queue slot lands in P11
-- remove unregister-then-cancel and reset reg_state gate land in P11;
-  this patch only adds schedule_work producers
-- setup_rx remask-after-napi_disable is P05
-- get_desired_dma TX term still one LTB (cover Improvements)
-- debug fmt %u for the unsigned queue counts in
-  register_rx_queues(), matching the P03/P04 conversion
+- publish num_rx_queues with smp_store_release() / smp_load_acquire()
+  rather than smp_wmb() + WRITE_ONCE(); record the RX queue on the skb
+  before GRO
+- drop the IBMVETH_MAX_RX_QUEUE alias: it duplicated
+  IBMVETH_MAX_RX_PER_HCALL, widened to 12 in patch 8, and sat next to
+  the unrelated IBMVETH_MAX_RX_QUEUES
+- make multi_queue a bool, now that it is a flag and not a count
+- drop WARN_ON(rc) on restart_rx_queue()'s enable_irq — a firmware rc
+  the helper already logs. Enabling on prep failure is deliberate
+- move kick_rx_queue_if_pending() to patch 14 with its first caller;
+  it was an uncalled static here, fatal under CONFIG_WERROR
+- register_rx_queues() kdoc: it latches mq_fallback on -EOPNOTSUPP
+- %u for the unsigned queue counts in register_rx_queues()
+- clarified: the ethtool -L sentence now names patches 14 and 15,
+  which actually wire it
+- clarified: the body now spells out the mq_fallback timing, what this
+  commit leaves broken, and which patch closes it — racy RX counters
+  and adapter-wide rx_no_buffer until patch 11, the remove/reg_state
+  work also in patch 11, and the one-LTB TX CMO term
 Changes in v5:
 - RTNL/serialized readers use get_num_rx_queues() once the helper exists
   (open/close/register/apply_mq_fallback/alloc/cleanup/IRQ setup)
