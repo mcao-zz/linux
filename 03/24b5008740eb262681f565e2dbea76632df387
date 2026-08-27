@@ -1,12 +1,14 @@
 Changes in v6:
-- trace the logical-LAN registration hypercalls, and the free retry in
-  that same path, with netdev_dbg() instead of counting them; they fire
-  on open/close and resize, not per packet, so a permanent ethtool -S
-  counter earned its keep less than a debug line does. The queue
-  teardown paths are left alone: they already report failures with
-  netdev_err()
-- drop struct ibmveth_hcall_stats and its adapter field along with the
-  counters. This patch no longer touches ibmveth.h at all
+- drop the eight hypercall counters this series was adding, along with
+  struct ibmveth_hcall_stats and the adapter field holding it. Only
+  reg_lan and free_lan had writers at this commit and none of the eight
+  had a reader; the ethtool -S keys they were destined for go in patch
+  11. This patch no longer touches ibmveth.h at all
+- trace the logical-LAN registration, and the free retry in that same
+  path, with netdev_dbg() instead. They fire on open/close and resize,
+  not per packet, so a debug line is the right shape where a permanent
+  counter was not. The queue teardown paths are left alone: they
+  already report failures with netdev_err()
 - document ibmveth_free_all_queues() return contract in kdoc:
   log-and-continue, queue_handle[] cleared regardless, and callers
   still run RX pool and DMA teardown afterward
