@@ -1,0 +1,41 @@
+Changes in v6:
+- drop the eight hypercall counters this series was adding, along with
+  struct ibmveth_hcall_stats and the adapter field holding it. Only
+  reg_lan and free_lan had writers at this commit and none of the eight
+  had a reader, and the ethtool -S keys v5 gave them in patch 11 are
+  gone with them. This patch no longer touches ibmveth.h at all
+- trace the logical-LAN registration, and the free retry in that same
+  path, with netdev_dbg() instead. They fire on open/close and resize,
+  not per packet, so a debug line is the right shape where a permanent
+  counter was not. The queue teardown paths are left alone: they
+  already report failures with netdev_err()
+- document ibmveth_free_all_queues()'s log-and-continue contract in its
+  kdoc, including that queue_handle[] is cleared whatever the hypercall
+  returned
+- clarified: the body now states that queue 0's handle is stored only
+  on an H_SUCCESS registration
+- clarified: the body drops the open-fail label walk rather than
+  correcting it. Only the netif_set_real_num_rx_queues() failure enters
+  out_unregister_queues
+- clarified: the body drops the claim that ordering free_all_queues()
+  before free_buffer_pools() stops PHYP retaining a registered LAN while
+  its pools are released. It only held on H_SUCCESS
+- commit message: restore three things the mailed v5 body carried and
+  the rewrite dropped: the mixed register/free lifecycle that motivates
+  extracting these helpers at all, the PAPR/PHYP full-teardown contract
+  that makes one H_FREE_LOGICAL_LAN enough, and the note that runtime
+  is still single-queue here so the with_handle arm cannot yet run
+
+Changes in v5:
+- Rename helpers to ibmveth_register_logical_lan() and
+  ibmveth_free_all_queues()
+- Retain single-queue registration for legacy paths
+
+Changes in v4:
+- Introduce register/free helpers in the same patch that wires their
+  first open/close callers; keep subordinate-only helpers deferred
+  until MQ enablement.
+- Correct open/close unwind so free_all_queues() precedes
+  free_buffer_pools().
+- Drop the orphaned big-bang "open/close pipeline" patch from v3; that
+  wiring is incremental across helper patches 3-7 instead.
