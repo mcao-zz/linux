@@ -1,0 +1,48 @@
+Changes in v6:
+- keep replenish_* as plain per-queue u64 rather than atomics; the
+  adapter-wide keys are summed on read and gain no per-queue key
+- implement struct netdev_stat_ops for the standard per-queue
+  packets/bytes/drops instead of private ethtool strings
+- tag each ethtool -S entry with the struct it indexes (enum
+  ibmveth_stat_src), so a key keeps its name while its counter moves
+  per-queue, and derive the per-queue key counts with ARRAY_SIZE()
+- add no counters for the buffer-submit hypercalls or for
+  H_SEND_LOGICAL_LAN: which hcall a batch picks is an implementation
+  detail, and the send counter only duplicated tx_packets
+- drop the three pool%d_ keys the v5 draft added: two duplicate
+  writable sysfs attributes and patch 13 reports the third for every
+  queue, so they were 15 entries of ABI carrying nothing new
+- drop the sixteen NULL checks on the qstats arrays outside the
+  allocators, five of them in the RX hot path; no reader can observe
+  NULL
+- add a per-queue no_buffer_retired carry; adapter->rx_no_buffer was
+  last-queue-wins and could go backwards across a reopen
+- gate ibmveth_reset() on reg_state == NETREG_REGISTERED so a queued
+  worker cannot re-open an unregistered device
+- get_base_stats() reports the retired-queue remainder so netdev-genl
+  qstats and ndo_get_stats64 agree after an ethtool -L shrink
+- commit message: say that rx%d_no_buffer_drops reports the live page
+  absolute without the carry, so it is the one exported value that is
+  not monotonic, and why probe_cleanup() clears the vio drvdata before
+  free_netdev (CMO reads it on a later rebind)
+
+Changes in v5:
+- Expose per-queue packet/byte counters via ethtool -S (v6 moves the
+  standard packets/bytes/drops to netdev_stat_ops; -S keeps
+  driver-specific counters only)
+- Implement .ndo_get_stats64
+- Fix remove teardown order: unregister_netdev before cancel_work_sync
+- Clear vio drvdata before free_netdev on probe error
+
+Changes in v4:
+- Merge v3's separate RX and TX stats commits into one patch.
+- Introduce rx_queue_stats / tx_qstats / NUM macros here (first use).
+- Allocate/free qstats at probe/remove instead of open/close.
+- Report adapter-level ethtool strings by summing per-queue counters on
+  read; drop aggregate_* helpers.
+- Sum global rx_no_buffer across MQ queues into this statistics patch.
+- Cacheline-align per-queue stats; derive field counts with offsetof so
+  alignment padding is not counted as a statistic.
+- probe_cleanup() cancels reset work, puts pool kobjects via helper from
+  the prior patch, and frees qstats on probe failure paths.
+- Keep plain u64 qstats like existing ibmveth / ibmvnic (PPC_PSERIES).
