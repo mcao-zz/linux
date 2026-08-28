@@ -1,0 +1,69 @@
+Changes in v6:
+- this patch now also carries the live ethtool -L rx wiring
+  (set_channels -> resize_rx_channels), the !opened down-path gate,
+  desired_dma_for_rxqs() and drain_rx_queue(); P15 completes the
+  down-path rollback and the mq_fallback max_rx cap
+- harvest no_buffer counters before freeing buffer lists, and under
+  the retiring queue's replenish_lock: netpoll reaches those queues
+  until the surviving count is published and folds the same counters
+  under that lock
+- publish num_rx_queues before synchronize_net() so poll loops exit
+  cleanly during scale-down
+- use restart_rx_queue() rather than kick_rx_queue_if_pending() after the
+  checked enable_irq() on scale-up and on the scale-down rollback, as
+  suggested: kick cannot retry a queue whose replenish posted nothing,
+  and the explicit rc check above both sites is untouched by the swap.
+  That leaves kick with no callers, so drop it
+- downgrade the range check in schedule_rx_queue() to a quiet return
+  when only the upper bound trips: netpoll walks a snapshot of the
+  queue count, so an ethtool -L rx shrink races it into a WARN that
+  userspace can trigger at will. replenish_task() already skips the
+  same race quietly, and callers read false as "queue is gone"
+- drop leftover spin_lock_init() from alloc_single_rx_queue(); it runs
+  on a live adapter during scale-up, so re-initialising the lock could
+  race a netpoll replenish holding it. probe owns lock init
+- zero buffer_list_dma[] on the alloc_single_rx_queue() map-failure
+  path rather than leaving DMA_MAPPING_ERROR in it; the bulk
+  allocator already does this and free_single_rx_queue() keys its
+  unmap on that field
+- do not add a !multi_queue gate above the no-op check; the single
+  gate below it already rejects rx > 1, and the duplicate had to be
+  deleted again in P15
+- comment why that gate refuses any rx > 1 rather than only growth:
+  under mq_fallback the next open comes up single-queue, so an
+  intermediate count would be clamped there anyway, and max_rx stays
+  at the live count only to keep TX-only ethtool -L working
+- correct the survivor-restart comment: the teardown loops walk
+  new_count..old_count-1, so a shrink never stops a survivor. The
+  restart stays as cheap insurance for a queue left masked by the poll
+  tail's enable_irq() failure exit, not as shrink cleanup
+- commit message: state the scale-up order as the code has it
+  (publish, replenish, napi_enable, then PHYP unmask), and note the
+  transient RPS WARN while real_num_rx_queues trails the live count
+- commit message: say why deregistration precedes the pool unmap, that
+  PHYP has to release buffer ownership while the metadata its
+  correlators index is still valid. This is the ordering rationale
+  only; the v5 text also called it a hang root cause, which stays out
+  since the parent has no resize path to have hung
+- commit message: restore the -EINVAL guard on the RX range, which P15
+  documents for the mirror-image TX case
+
+Changes in v5:
+- Incremental scale-up and scale-down logic for MQ RX rings
+
+Changes in v4:
+- Copy pool->index when cloning buffer pools for incrementally added
+  queues.
+- Scale-up order: publish -> replenish -> napi_enable -> enable_irq
+  (vs older enable-before-publish drafts); mirror NAPI-before-unmask on
+  set_real_num_rx rollback.
+- Linux-owned subordinate virq disposal; deregister is PHYP-only;
+  dispose bound to MAX_RX_QUEUES; dispose on request_irq failure.
+- Drain-path smp_rmb() before harvest.
+- Mask PHYP before napi_disable/drain on scale-down and scale-up fail
+  cleanup.
+- Replenish before re-enabling IRQ/NAPI on set_real_num_rx scale-down
+  rollback.
+- Keep set_channels wiring as the following patch (same split as v3)
+  but call resize_rx_channels() here when IFF_UP so the helper is not
+  an unused static.
