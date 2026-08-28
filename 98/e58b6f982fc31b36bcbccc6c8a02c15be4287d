@@ -1,0 +1,29 @@
+Changes in v6:
+- initialise the replenish locks once in probe; open() no longer
+  reinitialises them in alloc_rx_queues(), where it could reset a lock
+  another CPU was holding through poll_controller()
+- pass DMA_ATTR_NO_WARN to dma_map_single_attrs() in the replenish
+  loop. The iommu warning could re-enter via netconsole and deadlock
+  on the replenish_lock this CPU already holds
+- static_assert IBMVETH_MAX_RX_REGULAR == 8 and
+  IBMVETH_MAX_RX_PER_HCALL == 12 against the hand-written
+  legacy descs[0..7] and MQ ioba[0..5] argument lists
+- add clarifying comment on legacy 8-buffer hcall batch bound
+- drop the three buffer-submit hypercall counters along with the rest
+  of hcall_stats; see patch 7
+- fix the KUnit fixtures to allocate a dummy free_map
+- align dma_map_single_attrs() arguments; restore newline at EOF
+
+Changes in v5:
+- Extract buffer submit switch into ibmveth_add_logical_lan_buffers()
+- Retain single-buffer and 8-buffer fallback paths for single-queue mode
+
+Changes in v4:
+- Introduce queue-aware replenish/poll helpers with their first callers
+  in the same patch; do not leave a 2-arg replenish call ahead of the
+  signature change.
+- Restore the pre-MQ LPM H_FUNCTION break instead of continue; do not
+  loop forever on a stale local batch size.
+- Fold per-queue replenish_lock into this patch.
+- Update kdoc for MQ parameters on remove_buffer_from_pool /
+  rxq_harvest_buffer.
