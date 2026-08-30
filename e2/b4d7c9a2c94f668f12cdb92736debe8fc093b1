@@ -1,0 +1,44 @@
+Changes in v6:
+- setup_rx enable-fail remasks queues 0..i, including the one that
+  failed (the rollback used while (--i) and left queue i unmasked
+  across napi_disable); err_disable_napi remasks after napi_disable
+- drop WARN_ON() on enable/disable_irq() returns (schedule_rx and
+  poll); the helper already logs the hcall rc, and rate-limit that
+  print
+- reword schedule_rx_queue() kdoc: true means NAPI was scheduled and
+  the mask attempted; a failed disable_irq() does not change the
+  return, and an out-of-range qindex returns false
+- noted: pool-fail without h_free predates this; the opened gate
+  also drops the accidental h_free a later ndo_stop used to give.
+  P06/P07 close it
+- noted: set_channels() IFF_UP vs opened TX LTB window closes in P14/P15
+- noted: poll() takes queue_index in P08; range check / skip helpers
+  in P09
+
+Changes in v5:
+- Remask+sync after napi_disable in cleanup (in-flight poll can re-arm)
+- Interrupt: quiet IRQ_NONE on out-of-range qindex (no WARN storm)
+- Opened / rx_irq_setup gate cleanup so close after a failed open
+  cannot napi_disable / free_irq without a prior enable/request; set
+  opened on successful open; rx_irq_setup only on full setup success
+- H_PARAMETER fold disable-only; enable stays error (stuck-masked visible)
+- IRQ helpers return 0 / negative errno only (never raw H_* to ethtool)
+- Decision: keep open IRQ order request_irq -> napi_enable while PHYP
+  stays masked until schedule/enable (coherent with later scale-up)
+- schedule_rx_queue returns bool (napi_schedule_prep success)
+- Keep mask-only-on-prep-success (no else-mask; avoids idle+masked race)
+- Call out free_irq-before-free_lan as intentional once PHYP is masked
+- Poll re-arm during teardown lands with SQ poll-harden (not claimed here)
+- synchronize_net() after RX IRQ/NAPI teardown in close
+- Add subordinate IRQ dispose helpers (per-queue + bulk 1..N; bound to MAX)
+
+Changes in v4:
+- Include irq.h / irqdomain.h with first irq_dispose_mapping() use.
+- Introduce IRQ helpers in the same patch that wires open/close/poll
+  callers, instead of leaving unused statics.
+- Factor process-context RX kicks into ibmveth_schedule_rx_queue();
+  keep ibmveth_interrupt() as the IRQ-only wrapper.
+- On cleanup, mask PHYP and synchronize_irq before napi_disable
+  (storm-safety; not fully behavior-preserving vs classic close).
+- Leave queue_irq[0] set after cleanup (queue 0 uses netdev->irq;
+  next open reuses it). Only subordinate virqs are disposed.
