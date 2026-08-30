@@ -1,0 +1,26 @@
+Changes in v6:
+- create the debugfs root in module_init() instead of lazily on
+  first probe, which raced concurrent probes and could orphan the
+  directory on ERR_PTR(-EEXIST)
+- rename the pool buffer-count column from Size to Count, so the
+  debugfs table stops reusing the word sysfs poolN/size spells as a
+  byte length on the same pool object
+- widen the down banner: geometry above queue 0 is only populated
+  once open copies the queue-0 template
+- scope the dump RTNL comment to geometry/pool->active; available is
+  atomic_read
+
+Changes in v5:
+- debugfs buffer_pools_show walks get_num_rx_queues()
+- Series renumber: mailed v4 11/14 debugfs -> tip P13 (14->15)
+- Path uses stable vio dev_name under a driver-owned root (not netdev
+  name - avoids rename/collide)
+- rtnl_lock around dump (writers are under RTNL)
+- Show Active/Available as 0 when pool !live (debugfs view; free-path
+  available clear already in the buffer-submit patch)
+
+Changes in v4:
+- Move the all-queue buffer_pools diagnostic from sysfs to debugfs;
+  subject updated to match.
+- Keep historical queue-0 poolN/{active,num,size} sysfs as one-value
+  config (template for MQ); do not add per-queue pool sysfs dirs.
