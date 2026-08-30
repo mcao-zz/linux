@@ -1,0 +1,60 @@
+Changes in v6:
+- harvest no_buffer on retiring queues under that queue's
+  replenish_lock before publish: netpoll still reaches them until
+  the surviving count is stored, and update_rx_no_buffer() ignores
+  indexes at or above the live count
+- publish num_rx_queues, then synchronize_net(), then destroy.
+  Scale-down runs set_real_num_rx_queues() between sync and destroy
+  (destroy only if that succeeds); cleanup_new_queues does not harvest
+- napi_disable() before publishing the lowered count on scale-up
+  enable_irq failure, matching scale-down
+- restart_rx_queue() after the checked enable_irq() on scale-up and
+  on scale-down rollback; kick_rx_queue_if_pending() cannot retry a
+  queue whose replenish posted nothing
+- schedule_rx_queue() returns quietly when only the upper bound
+  trips: netpoll walks a snapshot of the old count, so an ethtool -L
+  shrink raced it into a WARN userspace can trigger at will
+- drop leftover spin_lock_init() from alloc_single_rx_queue(); scale-up
+  runs on a live adapter and probe already inits the lock
+- zero buffer_list_dma[] on the alloc_single_rx_queue() map-failure
+  path; free_single_rx_queue() keys its unmap on that field
+- skip PHYP mask and remask on scale-down when queue_irq[i] is 0
+- put the rx > 1 / mq_fallback gate below the no-op check, and refuse
+  any rx > 1 once mq_fallback is set, so a TX-only read-modify-write
+  is not rejected
+- noted: down-path stash/CMO and RX rollback on TX fail are patch 15
+- noted: KUnit free_map fixtures are patch 8
+
+Changes in v5:
+- resize / get_desired_dma read live count via get_num_rx_queues()
+- Scale-down / scale-up-fail: remask+sync after napi_disable (poll may
+  re-arm while disable waits)
+- Series renumber: mailed v4 12/14 resize -> tip P14 (14->15)
+- Absorb kitchen-sink resize ownership: teardown-first scale-down
+  (drain/deregister before unmap) + live-pool correlator_valid /
+  schedule_work (cover has peel map)
+- Ordered num_rx_queues publish + publish-before-destroy
+- After unmask: kick if pending; enable_irq errno + rollback check;
+  raise CMO before scale-up allocs
+- Scale-up enable_irq-fail: publish-down / napi_disable / drain / destroy
+- After scale-down destroy, restart remaining RX queues so Q0 cannot stay
+  masked with NAPI idle
+- resize_rx_channels: reject rx>1 without MQ / validate 1..MAX; call
+  before !opened early return (stash still tip P15)
+
+Changes in v4:
+- Copy pool->index when cloning buffer pools for incrementally added
+  queues.
+- Scale-up order: publish -> replenish -> napi_enable -> enable_irq
+  (vs older enable-before-publish drafts); mirror NAPI-before-unmask on
+  set_real_num_rx rollback.
+- Linux-owned subordinate virq disposal; deregister is PHYP-only;
+  dispose bound to MAX_RX_QUEUES; dispose on request_irq failure.
+- Drain-path smp_rmb() before harvest.
+- Mask PHYP before napi_disable/drain on scale-down and scale-up fail
+  cleanup.
+- Replenish before re-enabling IRQ/NAPI on set_real_num_rx scale-down
+  rollback.
+- Keep set_channels wiring as the following patch (same split as v3)
+  but call resize_rx_channels() here when IFF_UP so the helper is not
+  an unused static.
