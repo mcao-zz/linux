@@ -12,7 +12,7 @@ Changes in v6:
   restart_rx_queue() at both sites
 - register_rx_queues() kdoc: this function latches mq_fallback on
   -EOPNOTSUPP
-- noted: pool kobj vs DEBUG_KOBJECT_RELEASE stays cover Improvements
+- noted: pool kobj vs DEBUG_KOBJECT_RELEASE stays cover leftovers
 
 Changes in v5:
 - RTNL/serialized readers use get_num_rx_queues() once the helper exists
