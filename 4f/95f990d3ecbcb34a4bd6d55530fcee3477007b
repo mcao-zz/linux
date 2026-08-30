@@ -1,0 +1,56 @@
+Changes in v6:
+- ibmveth_get_num_rx_queues / ibmveth_publish_num_rx_queues are
+  static, not static inline
+- wrap the rx_buffers_per_hcall assignment (81 cols)
+- smp_store_release / smp_load_acquire for num_rx_queues, not
+  smp_wmb() + WRITE_ONCE()
+- skb_record_rx_queue() before GRO
+- drop the IBMVETH_MAX_RX_QUEUE alias (duplicated MAX_RX_PER_HCALL)
+- drop WARN_ON on restart enable_irq; the helper already logs.
+  Enabling on prep failure is deliberate
+- drop unused kick_rx_queue_if_pending() (WERROR); patch 14 uses
+  restart_rx_queue() at both sites
+- register_rx_queues() kdoc: this function latches mq_fallback on
+  -EOPNOTSUPP
+- noted: pool kobj vs DEBUG_KOBJECT_RELEASE stays cover Improvements
+
+Changes in v5:
+- RTNL/serialized readers use get_num_rx_queues() once the helper exists
+  (open/close/register/apply_mq_fallback/alloc/cleanup/IRQ setup)
+- Interrupt: quiet IRQ_NONE on out-of-range qindex vs published live
+  count (scale-down residual IRQ; no WARN storm)
+- Series renumber: mailed v4 09/14 MQ enable -> tip P10 (P09 peel; 14->15)
+- Open: replenish all queues before setup; restart_rx_queue after setup
+  for SQ and MQ - replaces mailed MQ-only replenish + kick_if_pending vs
+  SQ schedule_rx_queue(0)
+- update_rx_no_buffer(queue_index): NULL-safe, no all-queue walk under one
+  lock (fixes the resize/race class). Still stores adapter->rx_no_buffer
+  for now; per-queue slot + monotonic sum lands with qstats next
+- H_FUNCTION: subordinate register fails open + stash mq_fallback;
+  buffer-add schedules reset + mq_fallback so next open drops to SQ
+- Introduce get_num_rx_queues / publish_num_rx_queues (READ/WRITE_ONCE)
+  at first use; lockless IRQ/poll/replenish/interrupt bounds use the getter
+- Introduce kick_rx_queue_if_pending() for pending-after-unmask; open uses
+  restart_rx_queue, resize calls the helper later
+- resume() schedules every live RX queue (not only queue 0)
+- Call out enable_irq-fail synchronize_irq and unused mac register-arg
+  cleanup (mailed enable-path review; code already earlier in tip)
+
+Changes in v4:
+- Fold subordinate register helpers and their review fixes into the MQ
+  enablement patch that first uses them.
+- Prefer request_irq -> napi_enable -> PHYP enable on MQ open.
+- Preserve open unwind so set_real_num_rx / IRQ failures free LAN
+  before buffer pools.
+- MQ open replenishes every queue before setup_rx_interrupts() unmasks
+  PHYP (drop avoidance during open; PHYP only interrupts after a
+  successful enqueue). SQ keeps classic setup-then-schedule kick.
+- Dispose subordinate virq mappings on setup_rx_interrupts()
+  request_irq failure (err_free_irqs), matching err_disable_napi.
+- Open unwind: setup/cleanup own subordinate dispose; skip duplicate
+  dispose on those paths.
+- H_FUNCTION on subordinate register is a hard open failure (no blind
+  retry / no fake single-queue fallback).
+- Note: hot-path netdev->stats accounting moves to the next patch (qstats).
+- Put already-created pool kobjects on probe kobject_init_and_add /
+  set_real_num_tx_queues / register_netdev failure (bisect-safe).
