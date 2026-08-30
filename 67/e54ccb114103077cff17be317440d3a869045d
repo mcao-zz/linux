@@ -1,0 +1,52 @@
+Changes in v6:
+- drop inline on the queue-index rxq_* accessors (plain static)
+- initialise the replenish locks once in probe; open() no longer
+  reinitialises them in alloc_rx_queues(), where it could reset a
+  lock another CPU was holding through poll_controller()
+- pass DMA_ATTR_NO_WARN to dma_map_single_attrs() in the replenish
+  loop. The iommu warning could re-enter via netconsole and deadlock
+  on the replenish_lock this CPU already holds
+- static_assert IBMVETH_MAX_RX_REGULAR == 8 and
+  IBMVETH_MAX_RX_PER_HCALL == 12 against the hand-written
+  legacy descs[0..7] and MQ ioba[0..5] argument lists
+- add clarifying comment on the legacy 8-buffer hcall batch bound
+- drop the three buffer-submit hypercall counters along with the rest
+  of hcall_stats; see patch 7
+- fix the KUnit fixtures to allocate a dummy free_map
+- noted: irqsave CS and free_buffer_pool vs replenish stay cover
+- noted: skip_bad_correlator lands in P09
+
+Changes in v5:
+- On MQ buffer-add H_FUNCTION: schedule adapter reset after dropping
+  replenish_lock (v4 logged/broke with no recovery; can permanently dry
+  the pool)
+- Move replenish fail logging / reset scheduling out from under
+  replenish_lock so netconsole cannot deadlock re-entering replenish
+- Serialize harvest/remove with per-queue replenish_lock (netpoll
+  replenish vs NAPI consumer; v4 locked producer only)
+- Fail logs use real wrapper names: h_add_logical_lan_buffers[_queue] /
+  h_add_logical_lan_buffer (v4 interpolated broken lan[_queue] strings)
+- Document replenish_lock + no-printk-under-lock for netconsole (first
+  lock use); outcomes enum + ibmveth_replenish_fail defined here
+- Defer adapter-global counter atomics and irqsave critical-section
+  shorten to cover follow-up
+- Bad queue_index poll path: napi_complete before return lands with
+  poll harden (not claimed fully here)
+- Keep pool active/size/threshold across free_buffer_pool (probe/sysfs
+  geometry); only clear runtime allocations + available (ifdown/up
+  reopen must still see active pools)
+- get_buffer: use correlator_valid (drop WARN_ON; keep schedule_work
+  until poll skip owns reset)
+- Introduce ibmveth_rxq_correlator_valid / ibmveth_rxq_advance at first
+  remove/harvest use; init replenish_lock in remove_buffer KUnit
+- On RESET_MAP/RESET_MQ, stop remaining pool walks (goto unlock)
+
+Changes in v4:
+- Introduce queue-aware replenish/poll helpers with their first callers
+  in the same patch; do not leave a 2-arg replenish call ahead of the
+  signature change.
+- Restore the pre-MQ LPM H_FUNCTION break instead of continue; do not
+  loop forever on a stale local batch size.
+- Fold per-queue replenish_lock into this patch.
+- Update kdoc for MQ parameters on remove_buffer_from_pool /
+  rxq_harvest_buffer.
