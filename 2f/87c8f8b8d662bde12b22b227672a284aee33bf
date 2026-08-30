@@ -1,0 +1,36 @@
+Changes in v6:
+- drop the eight hypercall counters, struct ibmveth_hcall_stats, and
+  the adapter field. Only reg_lan and free_lan had writers here;
+  none of the eight had a reader. The ethtool -S keys v5 added in
+  patch 11 are gone with them. This patch no longer touches ibmveth.h
+- trace LAN registration and the free retry with netdev_dbg() (open/
+  close/resize, not per packet). Teardown already uses netdev_err()
+- document free_all_queues() log-and-continue in its kdoc, including
+  that queue_handle[] is cleared whatever the hypercall returned
+- noted: queue 0 handle is stored only on H_SUCCESS
+- noted: body drops the out_unregister_queues walk and the
+  unconditional PHYP-vs-pools guarantee
+
+Changes in v5:
+- Document H_FREE_LOGICAL_LAN full-teardown contract in kdoc/changelog:
+  one free_lan drops primary + any subordinate queues
+  (H_FREE_LOGICAL_LAN_QUEUE is for incremental scale-down only) - v4
+  helper text did not spell the subordinate semantics
+- Call out close() update_rx_no_buffer() before free_lan as intentional
+  last-glimpse accounting while the LAN is still registered (order
+  already in v4; v4 step list omitted it); NULL-safe per-queue form
+  lands with MQ enablement
+- opened / rx_irq_setup idempotent close is owned by the IRQ-helper
+  patch (same failed-reopen / second napi_disable hang raised here)
+- Poll re-arm during teardown not claimed here (same race as IRQ patch;
+  lands with poll harden)
+
+Changes in v4:
+- Introduce register/free helpers in the same patch that wires their
+  first open/close callers; keep subordinate-only helpers deferred
+  until MQ enablement.
+- Introduce adapter->hcall_stats here (first use); not in patch 2.
+- Correct open/close unwind so free_all_queues() precedes
+  free_buffer_pools().
+- Drop the orphaned big-bang "open/close pipeline" patch from v3; that
+  wiring is incremental across helper patches 3-7 instead.
