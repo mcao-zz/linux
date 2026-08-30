@@ -1,0 +1,32 @@
+Changes in v6:
+- both new registration wrappers use plpar_hcall() instead of
+  plpar_hcall9(). They do not need nine args, and plpar_hcall9() was
+  reading three unwritten stack slots
+- Widen add-buffers-queue and free-queue @queue_handle kdoc: handle may
+  come from h_register_logical_lan_queue() or
+  h_register_logical_lan_with_handle() (queue 0)
+- add-buffers-queue Return: also H_FUNCTION (MQ firmware missing that
+  hcall)
+
+Changes in v5:
+- Cite PAPR 11.20.00 for MQ hcall IDs 0x49C / 0x4A0 / 0x4A8 (v4 named
+  the opcodes only)
+- Call out reserved gaps at 0x498 and 0x4A4 (0x4A4 =
+  H_FREE_LOGICAL_LAN_BUFFER_QUEUE); decision: do not add that hcall -
+  queue teardown uses H_FREE_LOGICAL_LAN_QUEUE
+- Note MAX_HCALL_OPCODE raise also widens KVM enabled_hcalls /
+  KVM_CAP_PPC_ENABLE_HCALL accepted range (cross-subsystem)
+- Rename h_reg_logical_lan_queue() -> h_register_logical_lan_queue() to
+  match h_register_logical_lan() / h_free_logical_lan()
+- Unify queue_handle out-params as unsigned long * on both
+  h_register_logical_lan_queue() and h_register_logical_lan_with_handle()
+  (v4 used u64 * on with_handle)
+- h_free_logical_lan_queue() uses plpar_hcall_norets() like
+  h_free_logical_lan() (v4 used plpar_hcall9 with unused retbuf)
+
+Changes in v4:
+- Document @queue_handle and @irq in h_reg_logical_lan_queue() kdoc.
+- Wrap h_register_logical_lan_with_handle() prototype for readability /
+  checkpatch.
+- Drop unused H_FREE_LOGICAL_LAN_BUFFER_QUEUE wrapper/opcode (no caller;
+  buffer return is local harvest + queue free).
