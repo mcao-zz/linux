@@ -6,7 +6,7 @@ Changes in v6:
   the existing out: label
 - comment on allocate_tx_ltb(): caller must leave tx_ltb_ptr[idx] NULL
 - kdoc alloc/free_tx_resources says real_num_tx_queues
-- noted: ethtool -L TX shrink still stop-then-free; cover Improvements
+- noted: ethtool -L TX shrink still stop-then-free; cover leftovers
 
 Changes in v5:
 - Quiesce TX with netif_tx_disable before free (stop_all_queues does not
