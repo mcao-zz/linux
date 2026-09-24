@@ -67,7 +67,8 @@ ppc64le PowerVM LPAR, MQ-capable firmware:
 Changes in v7:
 
 Same 15 patches as v6. This posting answers the v6
-netdev-bot review. Most comments need no file
+netdev-bot review, plus a few fixes from our own
+re-review (patches 6, 10, 14). Most comments need no file
 change: already later in this 15, by design, or
 keep the tested IRQ/poll path. Those answers are
 in the list replies. Each commit still has a v7
@@ -77,25 +78,32 @@ record that below ---.
 * Patch 3: update_rx_no_buffer() returns if
   buffer_list_addr[0] is NULL (per-queue form
   stays in patch 10)
+* Patch 6: synchronize_net() on the late
+  TX-alloc unwind before RX is freed
 * Patch 8: replenish fail log names the
   wrapper from filled
 * Patch 9: oversize bound is
   min(skb_tailroom, pool->buff_size)
 * Patch 10: wait for pool kobject release
-  before free_netdev()
+  before free_netdev(); probe CMO refresh
+  only on MQ
 * Patch 11: replenish_lock on the close harvest
 * Patch 14: skip unmap if
   H_FREE_LOGICAL_LAN_QUEUE fails, restore
   the surviving count; widen set_real
   before scale-up unmask; scale-up
   register and enable_irq fail keep the
-  queue if that free fails
+  queue if that free fails. close() frees
+  a queue scale-up could not free, and -L
+  to it is -EBUSY until then; remask on
+  enable_irq fail; CMO desired refreshed
+  on the keep paths
 * Patch 15: get_channels max_tx is at least
   the live tx_count; set_channels uses that
   same ceiling so CPU offline cannot block
   an RX-only ethtool -L
-* Commit message / kdoc / comment on 1, 3, 5,
-  8, 10, 14 and 15 (patch 1 also names the new
+* Commit message / kdoc / comment on 1, 3, 4,
+  5, 7, 8, 10, 14 and 15 (patch 1 also names the new
   hcalls in the perf powerpc-hcalls script;
   patch 10 also prints
   the register-queue failure with %ld)
