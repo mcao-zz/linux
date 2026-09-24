@@ -110,7 +110,7 @@ The reopen unwind in patches 3 and 6 is one pre-existing defect. No
 Fixes: tag here; one standalone to net after this series keeps the
 posting at 15:
 
-  Fixes: d43732ce021f ("ibmveth: properly unwind on init errors")
+Fixes: d43732ce021f ("ibmveth: properly unwind on init errors")
 
 Known leftovers (not this series):
 
