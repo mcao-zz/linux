@@ -110,10 +110,11 @@ record that below ---.
   PHYP before napi_disable; get_channels reports the live
   rx_count (do not clamp).
 * Drop two CMO leftovers from the follow-up list. CMO
-  (FW_FEATURE_CMO / get_desired_dma) is P9-era; the MQ
-  firmware bit is P11+. Those partitions do not coexist.
-  get_desired_dma()'s one-LTB TX term is CMO desired-hint
-  math only; P11 already allocates one LTB per TX queue.
+  (FW_FEATURE_CMO / get_desired_dma) is Power9 and earlier;
+  the MQ firmware bit is Power11+. Those partitions do not
+  coexist. get_desired_dma()'s one-LTB TX term is CMO
+  desired-hint math only; patch 11 already allocates one
+  LTB per TX queue.
 
 The reopen unwind in patches 3 and 6 is one pre-existing defect. No
 Fixes: tag here; one standalone to net after this series keeps the
