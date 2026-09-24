@@ -93,8 +93,9 @@ patches with no file change.
   the surviving count; widen real_num_rx_queues before scale-up
   unmask. A scale-up queue whose free fails stays mapped: enable_irq
   failure keeps it live, register failure leaves it for close() to
-  free (-L to that index is -EBUSY until then). Remask on enable_irq
-  failure.
+  free if H_FREE_LOGICAL_LAN succeeds (-L to that index is -EBUSY until
+  then). Remask on enable_irq failure; latch mq_fallback if scale-up
+  register fails with -EOPNOTSUPP.
 * Patch 15: get_channels max_tx is at least the live tx_count, and
   set_channels uses the same ceiling, so CPU offline cannot block an
   RX-only ethtool -L.
