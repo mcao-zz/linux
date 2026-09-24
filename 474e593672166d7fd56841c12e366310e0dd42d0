@@ -78,12 +78,15 @@ patches with no file change.
 * Patch 6: synchronize_net() on the late TX-alloc unwind before RX is
   freed.
 * Patch 8: replenish failure log names the wrapper from the filled
-  count.
+  count; advance ring on NULL buffer so poll does not spin.
 * Patch 9: oversize bound is min(skb_tailroom, pool->buff_size).
-* Patch 10: wait for pool kobject release before free_netdev(). Drop
-  the probe CMO refresh and the two CMO follow-ups: CMO (Power9 and
-  earlier) and MQ firmware (Power11+) do not coexist.
-* Patch 11: replenish_lock on the close harvest.
+* Patch 10: unregister_netdev before cancel_work_sync and gate reset
+  on NETREG_REGISTERED (moved from patch 11); wait for pool kobject
+  release before free_netdev(). Drop the probe CMO refresh and the two
+  CMO follow-ups: CMO (Power9 and earlier) and MQ firmware (Power11+)
+  do not coexist.
+* Patch 11: replenish_lock on the close harvest (remove-path
+  unregister/cancel reorder moved to patch 10 with the reset producer).
 * Patch 14: skip unmap if H_FREE_LOGICAL_LAN_QUEUE fails and restore
   the surviving count; widen real_num_rx_queues before scale-up
   unmask. A scale-up queue whose free fails stays mapped: enable_irq
