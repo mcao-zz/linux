@@ -1,0 +1,13 @@
+Changes in v7:
+- reject rx_count change with -EOPNOTSUPP in
+  set_channels() until patch 14 implements resize
+- noted: set_channels still TX-only here; P14
+  wires rx_count; P15 is the tip ABI (live
+  rx_count, max_rx cap on mq_fallback,
+  max_tx at least the live tx_count)
+
+Changes in v5:
+- get_channels rx_count via get_num_rx_queues() (READ_ONCE consistency)
+- New peel: get_channels from v4 stats -> tip P12 (14->15)
+- get_channels: max_rx = MAX_RX_QUEUES when MQ else 1; rx_count =
+  get_num_rx_queues() (was mirroring real_num_rx_queues for both)
