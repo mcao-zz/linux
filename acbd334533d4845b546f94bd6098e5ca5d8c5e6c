@@ -112,6 +112,12 @@ Known leftovers (not this series):
   irqsave still covers the whole fill, and close skips
   netpoll_poll_disable. That is a lock-protocol rewrite, not this
   series.
+* RX IRQ teardown: teardown masks PHYP, disables NAPI, then masks
+  again, but a poll tail that already passed the shutdown checks can
+  still re-enable PHYP after that second mask and after free_irq, and
+  a mask hcall that failed is never acknowledged. Closing this needs a
+  poll/teardown handshake rather than another remask, so the ordering
+  is unchanged here.
 
 Changes in v6:
 
