@@ -62,7 +62,7 @@ ppc64le PowerVM LPAR, MQ-capable firmware:
 * ethtool -L under iperf3; link down/up during traffic
 * ifdown/ifup under iperf3 RX+TX (MQ and ethtool -L rx 1)
 * Legacy firmware (no MQ bit): open/close/stress on helper path
-* Bisect-friendly restack; W=1 clean at tip
+* Bisect-safe build and boot at every commit; W=1 clean at tip
 
 Changes in v7:
 
