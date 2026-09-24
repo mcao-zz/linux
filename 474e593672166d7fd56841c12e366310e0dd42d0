@@ -87,6 +87,8 @@ patches with no file change.
   do not coexist.
 * Patch 11: replenish_lock on the close harvest (remove-path
   unregister/cancel reorder moved to patch 10 with the reset producer).
+* Patch 12: set_channels() returns -EOPNOTSUPP on rx_count changes until
+  patch 14 implements live resize.
 * Patch 14: skip unmap if H_FREE_LOGICAL_LAN_QUEUE fails and restore
   the surviving count; widen real_num_rx_queues before scale-up
   unmask. A scale-up queue whose free fails stays mapped: enable_irq
@@ -97,7 +99,7 @@ patches with no file change.
   set_channels uses the same ceiling, so CPU offline cannot block an
   RX-only ethtool -L.
 * Commit message / kdoc / comment / debug-log updates on 1, 3, 4, 5,
-  7, 8, 10, 14 and 15 (patch 1 also names the new hcalls in the perf
+  7, 8, 10, 12, 14 and 15 (patch 1 also names the new hcalls in the perf
   powerpc-hcalls script and documents H_BUSY on the register-queue
   wrapper; patch 10 prints the register-queue failure with %ld).
 * Kept: enable_irq on schedule_prep failure; mask PHYP before
