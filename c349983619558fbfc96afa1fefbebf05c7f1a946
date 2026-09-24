@@ -66,55 +66,38 @@ ppc64le PowerVM LPAR, MQ-capable firmware:
 
 Changes in v7:
 
-Same 15 patches as v6. This posting answers the v6
-netdev-bot review, plus a few fixes from our own
-re-review (patches 6, 10, 14). Most comments need no file
-change: already later in this 15, by design, or
-keep the tested IRQ/poll path. Those answers are
-in the list replies. Each commit still has a v7
-changelog note; the patches with no file change
-record that below ---.
+Same 15 patches as v6. This posting answers the v6 netdev-bot review,
+plus a few fixes from our own re-review (patches 6, 10, 14). Most bot
+comments need no file change: already later in this 15, by design, or
+keeping the tested IRQ/poll path; those answers are in the list
+replies. Per-patch detail is below --- on each commit, including the
+patches with no file change.
 
-* Patch 3: update_rx_no_buffer() returns if
-  buffer_list_addr[0] is NULL (per-queue form
-  stays in patch 10)
-* Patch 6: synchronize_net() on the late
-  TX-alloc unwind before RX is freed
-* Patch 8: replenish fail log names the
-  wrapper from filled
-* Patch 9: oversize bound is
-  min(skb_tailroom, pool->buff_size)
-* Patch 10: wait for pool kobject release
-  before free_netdev(); drop the probe CMO
-  refresh (CMO and MQ do not coexist)
-* Patch 11: replenish_lock on the close harvest
-* Patch 14: skip unmap if
-  H_FREE_LOGICAL_LAN_QUEUE fails, restore
-  the surviving count; widen set_real
-  before scale-up unmask; scale-up
-  register and enable_irq fail keep the
-  queue if that free fails. close() frees
-  a queue scale-up could not free, and -L
-  to it is -EBUSY until then; remask on
-  enable_irq fail
-* Patch 15: get_channels max_tx is at least
-  the live tx_count; set_channels uses that
-  same ceiling so CPU offline cannot block
-  an RX-only ethtool -L
-* Commit message / kdoc / comment on 1, 3, 4,
-  5, 7, 8, 10, 14 and 15 (patch 1 also names the new
-  hcalls in the perf powerpc-hcalls script;
-  patch 10 also prints
-  the register-queue failure with %ld)
-* Keep: enable_irq on schedule_prep fail; mask
-  PHYP before napi_disable; get_channels reports the live
-  rx_count (do not clamp).
-* Drop two CMO leftovers from the follow-up list. CMO
-  (FW_FEATURE_CMO / get_desired_dma) is Power9 and earlier;
-  the MQ firmware bit is Power11+. Those partitions do not
-  coexist. get_desired_dma()'s one-LTB TX term is CMO
-  desired-hint math only; patch 11 already allocates one
-  LTB per TX queue.
+* Patch 3: update_rx_no_buffer() returns if buffer_list_addr[0] is
+  NULL (the per-queue form stays in patch 10).
+* Patch 6: synchronize_net() on the late TX-alloc unwind before RX is
+  freed.
+* Patch 8: replenish failure log names the wrapper from the filled
+  count.
+* Patch 9: oversize bound is min(skb_tailroom, pool->buff_size).
+* Patch 10: wait for pool kobject release before free_netdev(). Drop
+  the probe CMO refresh and the two CMO follow-ups: CMO (Power9 and
+  earlier) and MQ firmware (Power11+) do not coexist.
+* Patch 11: replenish_lock on the close harvest.
+* Patch 14: skip unmap if H_FREE_LOGICAL_LAN_QUEUE fails and restore
+  the surviving count; widen real_num_rx_queues before scale-up
+  unmask. A scale-up queue whose free fails stays mapped: enable_irq
+  failure keeps it live, register failure leaves it for close() to
+  free (-L to that index is -EBUSY until then). Remask on enable_irq
+  failure.
+* Patch 15: get_channels max_tx is at least the live tx_count, and
+  set_channels uses the same ceiling, so CPU offline cannot block an
+  RX-only ethtool -L.
+* Commit message / kdoc / comment updates on 1, 3, 4, 5, 7, 8, 10, 14
+  and 15 (patch 1 also names the new hcalls in the perf powerpc-hcalls
+  script; patch 10 prints the register-queue failure with %ld).
+* Kept: enable_irq on schedule_prep failure; mask PHYP before
+  napi_disable; get_channels reports the live rx_count (no clamp).
 
 The reopen unwind in patches 3 and 6 is one pre-existing defect. No
 Fixes: tag here; one standalone to net after this series keeps the
@@ -124,10 +107,10 @@ posting at 15:
 
 Known leftovers (not this series):
 
-* SQ leftover: replenish vs free_buffer_pool is not serialized;
-  irqsave still covers the whole fill; close skips
-  netpoll_poll_disable. That is a lock-protocol
-  rewrite, not two conditions, and not this series.
+* Single-queue: replenish vs free_buffer_pool is not serialized,
+  irqsave still covers the whole fill, and close skips
+  netpoll_poll_disable. That is a lock-protocol rewrite, not this
+  series.
 
 Changes in v6:
 
