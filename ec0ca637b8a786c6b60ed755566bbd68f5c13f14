@@ -85,8 +85,8 @@ record that below ---.
 * Patch 9: oversize bound is
   min(skb_tailroom, pool->buff_size)
 * Patch 10: wait for pool kobject release
-  before free_netdev(); probe CMO refresh
-  only on MQ
+  before free_netdev(); drop the probe CMO
+  refresh (CMO and MQ do not coexist)
 * Patch 11: replenish_lock on the close harvest
 * Patch 14: skip unmap if
   H_FREE_LOGICAL_LAN_QUEUE fails, restore
@@ -96,8 +96,7 @@ record that below ---.
   queue if that free fails. close() frees
   a queue scale-up could not free, and -L
   to it is -EBUSY until then; remask on
-  enable_irq fail; CMO desired refreshed
-  on the keep paths
+  enable_irq fail
 * Patch 15: get_channels max_tx is at least
   the live tx_count; set_channels uses that
   same ceiling so CPU offline cannot block
