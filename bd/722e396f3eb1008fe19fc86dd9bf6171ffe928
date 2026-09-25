@@ -1,7 +1,5 @@
 Changes in v7:
-- No P02 code change. Probe pool kobjects vs
-  free_netdev is pre-existing; patch 10 waits
-  for release before free_netdev
+- no P02 code change
 
 Changes in v5:
 - Drop unrelated style nits that v4 mixed into the index-0 conversion
