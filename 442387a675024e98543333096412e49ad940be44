@@ -96,10 +96,13 @@ patches with no file change.
   free if H_FREE_LOGICAL_LAN succeeds (-L to that index is -EBUSY until
   then). Remask on enable_irq failure; latch mq_fallback if scale-up
   register fails with -EOPNOTSUPP. Key incremental buffer-list unmap on
-  allocation presence because DMA address zero is valid.
-* Patch 15: get_channels max_tx is at least the live tx_count, and
-  set_channels uses the same ceiling, so CPU offline cannot block an
-  RX-only ethtool -L.
+  allocation presence because DMA address zero is valid. Reject an RX
+  count change while down with -EOPNOTSUPP instead of reporting success
+  for a request that is discarded.
+* Patch 15: publish the down-path RX count, which lifts patch 14's
+  temporary rejection. get_channels max_tx is at least the live
+  tx_count, and set_channels uses the same ceiling, so CPU offline
+  cannot block an RX-only ethtool -L.
 * Commit message / kdoc / comment / debug-log updates on 1, 3, 4, 5,
   7, 8, 10, 12, 14 and 15 (patch 1 also names the new hcalls in the perf
   powerpc-hcalls script and documents H_BUSY on the register-queue
