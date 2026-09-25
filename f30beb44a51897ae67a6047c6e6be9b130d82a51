@@ -98,7 +98,9 @@ patches with no file change.
   register fails with -EOPNOTSUPP. Key incremental buffer-list unmap on
   allocation presence because DMA address zero is valid. Reject an RX
   count change while down with -EOPNOTSUPP instead of reporting success
-  for a request that is discarded.
+  for a request that is discarded. Split the incremental resize helper
+  into ibmveth_scale_up_rx_queues() and ibmveth_scale_down_rx_queues()
+  behind a dispatcher; code motion only.
 * Patch 15: publish the down-path RX count, which lifts patch 14's
   temporary rejection. get_channels max_tx is at least the live
   tx_count, and set_channels uses the same ceiling, so CPU offline
