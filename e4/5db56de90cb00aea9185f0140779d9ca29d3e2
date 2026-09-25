@@ -12,6 +12,8 @@ Changes in v7:
 - scale-up register / IRQ-setup failure with a failed
   H_FREE: close() frees that queue after successful
   H_FREE_LOGICAL_LAN; a scale-up to it returns -EBUSY
+- scale-up register site latches mq_fallback
+  on -EOPNOTSUPP
 - scale-up enable_irq failure: remask PHYP after
   napi_disable(), as scale-down does
 - CMO desired sites share ibmveth_refresh_cmo_desired();
@@ -26,10 +28,7 @@ Changes in v7:
   dispatcher; code motion only
 - schedule_rx_queue kdoc: past the live count is quiet
 - noted: mask-then-napi_disable stays;
-  close checks H_FREE_LOGICAL_LAN status
-  and skips stranded sweep if failed; no PHYP mask ack;
-  scale-up register site latches mq_fallback
-  on -EOPNOTSUPP
+  no PHYP mask ack
 
 Changes in v6:
 - harvest no_buffer on retiring queues under that queue's
