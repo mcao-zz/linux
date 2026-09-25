@@ -28,7 +28,10 @@ Changes in v7:
   dispatcher; code motion only
 - schedule_rx_queue kdoc: past the live count is quiet
 - noted: mask-then-napi_disable stays;
-  no PHYP mask ack
+  no PHYP mask ack; no reset on failed
+  H_FREE (skip unmap); shrinks to 2..live-1
+  stay -EOPNOTSUPP once mq_fallback; P15
+  owns TX-fail RX rollback
 
 Changes in v6:
 - harvest no_buffer on retiring queues under that queue's
