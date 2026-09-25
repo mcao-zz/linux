@@ -1,7 +1,7 @@
 Changes in v7:
 - bound oversize against min(skb_tailroom, pool->buff_size)
 - noted: poll_stopping stays mask-first; skip vs budget stays;
-  cancel_work stays in P11
+  cancel_work stays in P10
 
 Changes in v6:
 - read the IPv4 header check through skb->data, as mainline does.
