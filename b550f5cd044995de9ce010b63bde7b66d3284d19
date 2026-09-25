@@ -95,7 +95,8 @@ patches with no file change.
   failure keeps it live, register failure leaves it for close() to
   free if H_FREE_LOGICAL_LAN succeeds (-L to that index is -EBUSY until
   then). Remask on enable_irq failure; latch mq_fallback if scale-up
-  register fails with -EOPNOTSUPP.
+  register fails with -EOPNOTSUPP. Key incremental buffer-list unmap on
+  allocation presence because DMA address zero is valid.
 * Patch 15: get_channels max_tx is at least the live tx_count, and
   set_channels uses the same ceiling, so CPU offline cannot block an
   RX-only ethtool -L.
