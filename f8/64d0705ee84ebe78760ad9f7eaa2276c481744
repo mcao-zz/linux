@@ -1,10 +1,10 @@
 Changes in v7:
 - reject rx_count change with -EOPNOTSUPP in
   set_channels() until patch 14 implements resize
-- noted: set_channels still TX-only here; P14
-  wires rx_count; P15 is the tip ABI (live
-  rx_count, max_rx cap on mq_fallback,
-  max_tx at least the live tx_count)
+- noted: TX-only read-modify-write still passes;
+  P14 wires live rx_count resize; P15 is the
+  tip ABI (live rx_count, max_rx cap on
+  mq_fallback, max_tx at least the live tx_count)
 
 Changes in v5:
 - get_channels rx_count via get_num_rx_queues() (READ_ONCE consistency)
