@@ -89,8 +89,9 @@ from our own re-review.
 * Patch 14: key buffer-list unmap on allocation presence because
   DMA address zero is valid; reject an RX count change while down
   with -EOPNOTSUPP. Failed H_FREE skips unmap and restores the
-  surviving count; widen real_num before scale-up unmask. The
-  scale-up / scale-down helper split is code motion only.
+  surviving count; widen real_num before scale-up unmask. Scale-up
+  register -EOPNOTSUPP latches mq_fallback. The scale-up /
+  scale-down helper split is code motion only.
 * Patch 15: publish the down-path RX count, which lifts patch 14's
   temporary rejection. get_channels max_tx is at least the live
   tx_count, and set_channels uses the same ceiling, so CPU offline
