@@ -66,12 +66,9 @@ ppc64le PowerVM LPAR, MQ-capable firmware:
 
 Changes in v7:
 
-Same 15 patches as v6. This posting answers the v6 netdev-bot review,
-plus a few fixes from our own re-review (patches 6, 10, 14). Most bot
-comments need no file change: already later in this 15, by design, or
-keeping the tested IRQ/poll path; those answers are in the list
-replies. Per-patch detail is below --- on each commit, including the
-patches with no file change.
+Same 15 patches as v6. We followed up the v6 netdev-bot review
+with replies; this v7 is the series after that, plus a few items
+from our own re-review.
 
 * Patch 3: update_rx_no_buffer() returns if buffer_list_addr[0] is
   NULL (the per-queue form stays in patch 10).
