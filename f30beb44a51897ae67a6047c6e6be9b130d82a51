@@ -86,18 +86,11 @@ from our own re-review.
   unregister/cancel reorder moved to patch 10 with the reset producer).
 * Patch 12: set_channels() returns -EOPNOTSUPP on rx_count changes until
   patch 14 implements live resize.
-* Patch 14: skip unmap if H_FREE_LOGICAL_LAN_QUEUE fails and restore
-  the surviving count; widen real_num_rx_queues before scale-up
-  unmask. A scale-up queue whose free fails stays mapped: enable_irq
-  failure keeps it live, register failure leaves it for close() to
-  free if H_FREE_LOGICAL_LAN succeeds (-L to that index is -EBUSY until
-  then). Remask on enable_irq failure; latch mq_fallback if scale-up
-  register fails with -EOPNOTSUPP. Key incremental buffer-list unmap on
-  allocation presence because DMA address zero is valid. Reject an RX
-  count change while down with -EOPNOTSUPP instead of reporting success
-  for a request that is discarded. Split the incremental resize helper
-  into ibmveth_scale_up_rx_queues() and ibmveth_scale_down_rx_queues()
-  behind a dispatcher; code motion only.
+* Patch 14: key buffer-list unmap on allocation presence because
+  DMA address zero is valid; reject an RX count change while down
+  with -EOPNOTSUPP. Failed H_FREE skips unmap and restores the
+  surviving count; widen real_num before scale-up unmask. The
+  scale-up / scale-down helper split is code motion only.
 * Patch 15: publish the down-path RX count, which lifts patch 14's
   temporary rejection. get_channels max_tx is at least the live
   tx_count, and set_channels uses the same ceiling, so CPU offline
