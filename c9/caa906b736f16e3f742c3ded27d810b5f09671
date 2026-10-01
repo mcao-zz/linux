@@ -112,3 +112,5 @@ Changes in v4:
 - Keep set_channels wiring as the following patch (same split as v3)
   but call resize_rx_channels() here when IFF_UP so the helper is not
   an unused static.
+
+- wrap close() TX-LTB free comment to 80 cols (two-step)
