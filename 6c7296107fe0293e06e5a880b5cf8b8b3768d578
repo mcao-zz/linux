@@ -5,9 +5,10 @@ Hi,
 Four fixes for the ibmveth driver. They apply to net-next as is and
 do not depend on the two open() error-path fixes recently applied to
 net (af0524bf4ce1, 84bec0bf0352); patch 2 explains how it relates to
-them. Several of the bugs can take the partition down with no
-recovery short of a reboot; the others are memory corruption or a
-NULL dereference.
+them. The failures are severe: patches 2 and 4 hang the system
+(napi_disable() with RTNL held, or a CPU stuck in poll until RCU
+stalls), and patches 1 and 3 fix a NULL dereference, PHYP writing
+into an unmapped buffer, and a use-after-free.
 
 They target net-next rather than net: the triggers are rare (an
 open() failure during a direct reopen, PHYP returning a bad
@@ -21,6 +22,9 @@ the ibmveth multi-queue RX series, which asked for these fixes to be
 split out of it with Fixes: tags:
 https://lore.kernel.org/netdev/cover.1790319558.git.mmc@linux.ibm.com/
 Patches 1 and 3 came out of the follow-up review of the same code.
+Taking all four ahead of the multi-queue series also makes it
+smaller: the netpoll, reopen and bad-slot handling become existing
+behaviour that it extends per queue.
 
 Patch 1 fixes two ways netpoll reaches RX replenish unsafely.
 ndo_poll_controller ran replenish outside NAPI with no lock, racing
