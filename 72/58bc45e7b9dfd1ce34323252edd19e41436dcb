@@ -1,6 +1,8 @@
 Changes in v8:
 - after napi_disable, synchronize_net() then remask / free_irq
   (cleanup and err_disable_napi)
+- body: napi_disable waits for SCHED; synchronize_net after
+  disable covers the enable_irq tail (not "does not wait")
 - set_channels() keys on opened, not IFF_UP
 - hang stays the opened gate (commit message drops "depends on
   the helpers"); no Fixes: peel
