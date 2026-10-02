@@ -52,12 +52,13 @@ review of the same code. Taking all four ahead of the multi-queue
 series also makes it smaller: the netpoll, reopen and bad-slot
 handling become existing behaviour that it extends per queue.
 
-Tested with the ibmveth KUnit suite on qemu pseries (ppc64le); the
-new cases in patch 4 fail on the unfixed driver. On a POWER10 LPAR:
-netconsole under a printk flood and a ping flood, MTU and buffer
-pool changes under traffic, a forced open() failure on an MTU change
-followed by down and up, and unbind/bind under traffic. Each commit
-message has the details.
+Patch 4 adds a KUnit case for the RX ring advance and extends the
+existing ones to an inactive buffer pool; they fail on the unfixed
+driver and pass with the series on qemu pseries (ppc64le). On a
+POWER10 LPAR: netconsole under a printk flood and a ping flood, MTU
+and buffer pool changes under traffic, a forced open() failure on an
+MTU change followed by down and up, and unbind/bind under traffic.
+Each commit message has the details.
 
 [1] https://lore.kernel.org/netdev/cover.1790319558.git.mmc@linux.ibm.com/
 
