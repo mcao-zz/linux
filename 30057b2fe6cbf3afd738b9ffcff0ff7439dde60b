@@ -1,0 +1,79 @@
+ibmveth 4 fixes — COVER LETTER (draft; do not mail)
+==================================================================
+Subject: [PATCH net 0/4] ibmveth: fix RX poll hang, reopen hang and netpoll replenish race
+
+# Branch: ibmveth-fixes-4 (worktree /Users/ncao1/linux/fix-wt)
+#   net-next 071876fd5048 + af0524bf4ce1/84bec0bf0352 (cherry-picked from
+#   net) + these 4. ibmveth.[ch] are identical to net's, so the patches
+#   apply to net unchanged (checked) and to net-next (3-way, checked).
+# refs/notes/remote-cover on the ibmveth-fixes-4 tip.
+# Target tree: net (Cc stable on 2-4). Decide before mailing; see
+#   veth-review/fixes4/README.txt for the net vs net-next timing.
+# Paste from "Hi,". format-patch fills shortlog / diffstat.
+# Cc: Dave Marquardt <davemarq@linux.ibm.com> (2c91e2319ed9 author,
+#   reviewed the net pair).
+
+Hi,
+
+Four fixes for the single-queue ibmveth driver as it is in net today.
+None depends on the multi-queue RX series; all four apply on net and
+net-next unchanged. Three can take the networking stack down with no
+recovery short of a reboot, so they are worth having in stable.
+
+Patch 1 removes ndo_poll_controller. It ran replenish from netpoll
+outside NAPI with no lock, racing NAPI's replenish on the same pool:
+a free slot could be posted to PHYP twice (memory corruption). The
+trigger is narrow (netconsole plus TX lock contention), but the
+callback is unnecessary since netpoll polls NAPI itself, as was done
+for ibmvnic.
+
+  Fixes: 6b4223748895 ("[PATCH] ibmveth: Add netpoll function")
+
+Patch 2 stops a second close() after a failed direct reopen.
+change_mtu, the pool sysfs store, set_csum and set_tso close and
+reopen the device directly; if that open() fails, IFF_UP stays set
+and the next ndo_stop napi_disable()s an already-disabled NAPI with
+RTNL held. The hang is deterministic once open() has failed (for
+example on an MTU change under memory pressure), and it also blocks
+shutdown.
+
+  Fixes: 860f242eb534 ("[PATCH] ibmveth change buffer pools dynamically")
+
+Patch 3 makes poll step past a bad RX slot. Since 2c91e2319ed9
+turned the correlator BUG_ON()s into WARN_ON() plus a reset, poll
+breaks out without advancing the ring and restarts on the same slot
+forever, and the reset meant to recover deadlocks in napi_disable()
+against that loop. The WARN_ON()s on PHYP-supplied data become a
+ratelimited error.
+
+  Fixes: 2c91e2319ed9 ("net: ibmveth: Reset the adapter when unexpected states are detected")
+
+Patch 4 rejects correlators that name an inactive buffer pool, which
+passed the size check and dereferenced a NULL skbuff array in
+softirq.
+
+  Fixes: 860f242eb534 ("[PATCH] ibmveth change buffer pools dynamically")
+
+Patches 2-4 answer review comments on v7 of the multi-queue RX
+series, which asked for exactly these to be split out with Fixes:
+tags so stable can take them without the MQ refactor
+(https://lore.kernel.org/netdev/cover.1790319558.git.mmc@linux.ibm.com/).
+Patch 1 came out of the follow-up review of the same code.
+
+Taking them first also simplifies that series. With
+ndo_poll_controller gone, napi_disable() alone fences netpoll, so
+queue resize no longer needs netpoll_poll_disable() on its error
+paths or a closed-state guard in the callback. The opened gate and
+the bad-slot handling become existing behaviour that the MQ patches
+extend per queue, instead of fixes buried in feature patches.
+
+Testing:
+* ibmveth KUnit suite on qemu pseries (ppc64le): 3/3 pass. The two
+  new cases fail on the unfixed driver: harvest leaves the ring
+  index unchanged, and the inactive-pool correlator oopses with a
+  NULL dereference.
+* ppc64le W=1 build of each patch, with and without the KUnit code;
+  no warnings. checkpatch --strict clean.
+
+Thanks,
+Mingming
