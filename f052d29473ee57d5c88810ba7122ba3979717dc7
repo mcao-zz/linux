@@ -26,7 +26,9 @@ They target net-next rather than net: the triggers are rare (an
 open() failure during a direct reopen, PHYP returning a bad
 correlator, netconsole under TX contention) and there are no field
 reports. They also go ahead of the multi-queue RX series, which
-builds on them. Each carries a Fixes: tag for stable selection.
+builds on them. Each carries a Fixes: tag; patches 2-4 are suitable
+for stable once merged, and I can repost them against net if you
+prefer.
 
 Patch 1 removes ndo_poll_controller. It ran replenish from netpoll
 outside NAPI with no lock, racing NAPI's replenish on the same pool:
