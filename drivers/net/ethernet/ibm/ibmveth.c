@@ -67,6 +67,10 @@ static unsigned int rx_flush __read_mostly = 0;
 module_param(rx_flush, uint, 0644);
 MODULE_PARM_DESC(rx_flush, "Flush receive buffers before use");
 
+/* DEBUG ONLY, not for upstream: fail the next N ibmveth_open() calls. */
+static int debug_fail_open;
+module_param(debug_fail_open, int, 0644);
+
 static bool old_large_send __read_mostly;
 module_param(old_large_send, bool, 0444);
 MODULE_PARM_DESC(old_large_send,
@@ -662,6 +666,11 @@ static int ibmveth_open(struct net_device *netdev)
 		rxq_entries += adapter->rx_buff_pool[i].size;
 
 	rc = -ENOMEM;
+	if (READ_ONCE(debug_fail_open) > 0) {
+		WRITE_ONCE(debug_fail_open, debug_fail_open - 1);
+		netdev_err(netdev, "debug_fail_open: failing open\n");
+		goto out;
+	}
 	adapter->buffer_list_addr = (void*) get_zeroed_page(GFP_KERNEL);
 	if (!adapter->buffer_list_addr) {
 		netdev_err(netdev, "unable to allocate list pages\n");
