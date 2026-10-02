@@ -32,26 +32,20 @@ git am -3.
      past the slot, reject inactive pools, count the drop.
      Fixes: 2c91e2319ed9, 860f242eb534
 
-They target net-next rather than net: the triggers are rare (an
-open() failure during a direct reopen, PHYP returning a bad
-correlator, netconsole during a reconfiguration or under TX
-contention, a bad RX slot during remove) and there are no field
-reports. All four carry Fixes: tags; I am happy to repost them
+The triggers are rare and there are no field reports, so the series
+targets net-next. All four carry Fixes: tags; I am happy to repost
 against net, or add Cc: stable, if you prefer.
 
 Patches 2 and 4 were requested by the netdev AI review of v7 of the
-ibmveth multi-queue RX series [1]; 1 and 3 came out of the follow-up
-review of the same code. Taking all four ahead of the multi-queue
-series also makes it smaller: the netpoll, reopen and bad-slot
-handling become existing behaviour that it extends per queue.
+multi-queue RX series [1]; 1 and 3 came from follow-up review.
+Landing them first also shrinks that series, which then only extends
+this handling per queue.
 
-Patch 4 adds a KUnit case for the RX ring advance and extends the
-existing ones to an inactive buffer pool; they fail on the unfixed
-driver and pass with the series on qemu pseries (ppc64le). On a
-POWER10 LPAR: netconsole under a printk flood and a ping flood, MTU
-and buffer pool changes under traffic, a forced open() failure on an
-MTU change followed by down and up, and unbind/bind under traffic.
-Each commit message has the details.
+Testing: the new and extended KUnit cases in patch 4 fail on the
+unfixed driver and pass on qemu pseries (ppc64le). On a POWER10
+LPAR: netconsole under printk and ping floods, MTU and buffer pool
+changes under traffic, a forced open() failure followed by down and
+up, and unbind/bind under traffic.
 
 [1] https://lore.kernel.org/netdev/cover.1790319558.git.mmc@linux.ibm.com/
 
