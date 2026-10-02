@@ -1,0 +1,68 @@
+ibmveth 4 fixes — COVER LETTER (draft; do not mail)
+==================================================================
+Subject: [PATCH net-next 0/4] ibmveth: fix RX poll hang, reopen hang and netpoll replenish race
+
+# Posting branch: ibmveth-fixes-4-nn (worktree /Users/ncao1/linux/fixnn-wt)
+#   = plain net-next 071876fd5048 + these 4. Does NOT need the net pair.
+#   Merging net in later is clean for ibmveth and gives exactly the
+#   ibmveth-fixes-4 tree (net-next + net pair + 4), where v8.4 is built.
+# refs/notes/remote-cover on both tips. Mail with --base=071876fd5048
+#   (or a newer net-next tip after re-checking).
+# Target tree: net-next, no Cc: stable, Fixes: kept.
+# This text becomes the merge commit message, so it only describes
+#   the fixes. Review origin, MQ relationship and timing go in
+#   cover-reply.txt, sent as a reply to this 0/4 right after posting.
+# Paste from "Hi,". format-patch fills shortlog / diffstat.
+# Cc: Dave Marquardt <davemarq@linux.ibm.com> (2c91e2319ed9 author).
+
+Hi,
+
+Four fixes for the ibmveth driver. They apply to net-next as is and
+do not depend on the two open() error-path fixes recently applied to
+net (af0524bf4ce1, 84bec0bf0352); patch 2 explains how it relates to
+them. Three of the bugs can take the networking stack down with no
+recovery short of a reboot; the fourth is memory corruption.
+
+They target net-next rather than net: the triggers are rare (an
+open() failure during a direct reopen, PHYP returning a bad
+correlator, netconsole under TX contention) and there are no field
+reports. All four carry Fixes: tags and are suitable for stable once
+merged; I can repost them against net if you prefer.
+
+Patches 2-4 were requested by the netdev AI review of v7 of the
+ibmveth multi-queue RX series, which asked for these fixes to be
+split out of it with Fixes: tags:
+https://lore.kernel.org/netdev/cover.1790319558.git.mmc@linux.ibm.com/
+Patch 1 came out of the follow-up review of the same code.
+
+Patch 1 removes ndo_poll_controller. It ran replenish from netpoll
+outside NAPI with no lock, racing NAPI's replenish on the same pool:
+a free slot could be posted to PHYP twice. The callback is
+unnecessary since netpoll polls NAPI itself, as was done for
+ibmvnic.
+
+Patch 2 stops a second close() after a failed direct reopen.
+change_mtu, the pool sysfs store, set_csum and set_tso close and
+reopen the device directly; if that open() fails, IFF_UP stays set
+and the next ndo_stop napi_disable()s an already-disabled NAPI with
+RTNL held. The hang is deterministic once open() has failed, and it
+also blocks shutdown.
+
+Patch 3 rejects correlators that name an inactive buffer pool, which
+passed the size check and dereferenced a NULL skbuff array in
+softirq.
+
+Patch 4 makes poll step past a bad RX slot. Since 2c91e2319ed9
+turned the correlator BUG_ON()s into WARN_ON() plus a reset, poll
+breaks out without advancing the ring and restarts on the same slot
+forever, and the reset meant to recover deadlocks in napi_disable()
+against that loop. The WARN_ON()s on PHYP-supplied data become a
+ratelimited error.
+
+Each commit message says how the bug was found and how the fix was
+tested. In short: ibmveth KUnit suite on qemu pseries (ppc64le)
+passes, and the new cases in patches 3 and 4 fail on the unfixed
+driver; @@HW-COVER: LPAR model/firmware and what was run@@.
+
+Thanks,
+Mingming
