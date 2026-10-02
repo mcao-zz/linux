@@ -1,0 +1,60 @@
+ibmveth: fix RX poll hang, reopen hang and netpoll races
+
+Hi,
+
+Four fixes for the ibmveth driver. They apply to net-next as is and
+do not depend on the two open() error-path fixes recently applied to
+net (af0524bf4ce1, 84bec0bf0352); patch 2 explains how it relates to
+them. Several of the bugs can take the partition down with no
+recovery short of a reboot; the others are memory corruption or a
+NULL dereference.
+
+They target net-next rather than net: the triggers are rare (an
+open() failure during a direct reopen, PHYP returning a bad
+correlator, netconsole during a reconfiguration or under TX
+contention, a bad RX slot during remove) and there are no field
+reports. All four carry Fixes: tags and are suitable for stable once
+merged; I can repost them against net if you prefer.
+
+Patches 2 and 4 were requested by the netdev AI review of v7 of
+the ibmveth multi-queue RX series, which asked for these fixes to be
+split out of it with Fixes: tags:
+https://lore.kernel.org/netdev/cover.1790319558.git.mmc@linux.ibm.com/
+Patches 1 and 3 came out of the follow-up review of the same code.
+
+Patch 1 fixes two ways netpoll reaches RX replenish unsafely.
+ndo_poll_controller ran replenish outside NAPI with no lock, racing
+NAPI's replenish on the same pool, so a free slot could be posted to
+PHYP twice; it is removed, since netpoll polls NAPI itself, as was
+done for ibmvnic. And open() enabled NAPI before the RX resources
+existed, so netpoll could replenish unallocated pools during the
+driver's direct close()/open() pairs; NAPI is now enabled last.
+
+Patch 2 stops a second close() after a failed direct reopen.
+change_mtu, the pool sysfs store, set_csum and set_tso close and
+reopen the device directly; if that open() fails, IFF_UP stays set
+and the next ndo_stop napi_disable()s an already-disabled NAPI with
+RTNL held. The hang is deterministic once open() has failed, and it
+also blocks shutdown.
+
+Patch 3 disables the reset work before unregister in remove(), so a
+reset queued from NAPI in between, for example on a bad RX
+correlator, cannot run on a freed adapter.
+
+Patch 4 makes poll step past a bad RX correlator. Since
+2c91e2319ed9 turned the correlator BUG_ON()s into WARN_ON() plus a
+reset, poll breaks out without advancing the ring and keeps
+restarting on the same slot. The reset it schedules is queued on
+that CPU and cannot run, and the CPU stalls RCU. A correlator
+naming an inactive buffer pool also passed the check and
+dereferenced a NULL skbuff array in softirq; it is now treated as
+bad too. The WARN_ON()s on PHYP-supplied data become a ratelimited
+error.
+
+Each commit message says how the bug was found and how the fix was
+tested. In short: the ibmveth KUnit suite on qemu pseries (ppc64le)
+passes, and the new cases in patch 4 fail on the unfixed
+driver; @@HW-COVER: LPAR model/firmware and what was run@@.
+
+Thanks,
+Mingming
