@@ -2,11 +2,14 @@ ibmveth 4 fixes — COVER LETTER (draft; do not mail)
 ==================================================================
 Subject: [PATCH net-next 0/4] ibmveth: fix RX poll hang, reopen hang and netpoll replenish race
 
-# Branch: ibmveth-fixes-4 (worktree /Users/ncao1/linux/fix-wt)
-#   net-next 071876fd5048 + af0524bf4ce1/84bec0bf0352 (cherry-picked from
-#   net) + these 4. ibmveth.[ch] are identical to net's, so the patches
-#   apply to net unchanged (checked) and to net-next (3-way, checked).
-# refs/notes/remote-cover on the ibmveth-fixes-4 tip.
+# Posting branch: ibmveth-fixes-4-nn (worktree /Users/ncao1/linux/fixnn-wt)
+#   = plain net-next 071876fd5048 + these 4. Does NOT need the net pair:
+#   git am --no-3way applies, W=1 builds and KUnit 3/3 on this base.
+#   Merging net in later is clean for ibmveth and gives exactly the
+#   ibmveth-fixes-4 tree (net-next + net pair + 4), where v8.4 is built.
+# refs/notes/remote-cover on the ibmveth-fixes-4-nn tip (and on the
+#   ibmveth-fixes-4 tip). Mail with --base=071876fd5048 (or a newer
+#   net-next tip after re-checking).
 # Target tree: net-next (decided 2026-10-02): no Cc: stable, Fixes:
 #   kept. Reason (timing): veth-review/fixes4/README.txt.
 # Paste from "Hi,". format-patch fills shortlog / diffstat.
