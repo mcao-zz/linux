@@ -67,6 +67,24 @@ static unsigned int rx_flush __read_mostly = 0;
 module_param(rx_flush, uint, 0644);
 MODULE_PARM_DESC(rx_flush, "Flush receive buffers before use");
 
+/* DEBUG ONLY, not for upstream: each knob fails its next N calls. */
+static int debug_fail_open;
+module_param(debug_fail_open, int, 0644);
+static int debug_fail_probe;
+module_param(debug_fail_probe, int, 0644);
+static int debug_fail_tx_ltb;
+module_param(debug_fail_tx_ltb, int, 0644);
+
+static bool ibmveth_debug_fail(int *knob)
+{
+	int n = READ_ONCE(*knob);
+
+	if (n <= 0)
+		return false;
+	WRITE_ONCE(*knob, n - 1);
+	return true;
+}
+
 static bool old_large_send __read_mostly;
 module_param(old_large_send, bool, 0444);
 MODULE_PARM_DESC(old_large_send,
@@ -596,6 +614,10 @@ static void ibmveth_free_tx_ltb(struct ibmveth_adapter *adapter, int idx)
 
 static int ibmveth_allocate_tx_ltb(struct ibmveth_adapter *adapter, int idx)
 {
+	if (ibmveth_debug_fail(&debug_fail_tx_ltb)) {
+		netdev_err(adapter->netdev, "debug_fail_tx_ltb: failing allocation\n");
+		return -ENOMEM;
+	}
 	adapter->tx_ltb_ptr[idx] = kzalloc(adapter->tx_ltb_size,
 					   GFP_KERNEL);
 	if (!adapter->tx_ltb_ptr[idx]) {
@@ -662,6 +684,10 @@ static int ibmveth_open(struct net_device *netdev)
 		rxq_entries += adapter->rx_buff_pool[i].size;
 
 	rc = -ENOMEM;
+	if (ibmveth_debug_fail(&debug_fail_open)) {
+		netdev_err(netdev, "debug_fail_open: failing open\n");
+		goto out;
+	}
 	adapter->buffer_list_addr = (void*) get_zeroed_page(GFP_KERNEL);
 	if (!adapter->buffer_list_addr) {
 		netdev_err(netdev, "unable to allocate list pages\n");
@@ -1979,7 +2005,12 @@ static int ibmveth_probe(struct vio_dev *dev, const struct vio_device_id *id)
 
 	ibmveth_set_features(netdev, netdev->features);
 
-	rc = register_netdev(netdev);
+	if (ibmveth_debug_fail(&debug_fail_probe)) {
+		netdev_err(netdev, "debug_fail_probe: failing register_netdev\n");
+		rc = -EINTR;
+	} else {
+		rc = register_netdev(netdev);
+	}
 
 	if (rc) {
 		netdev_dbg(netdev, "failed to register netdev rc=%d\n", rc);
