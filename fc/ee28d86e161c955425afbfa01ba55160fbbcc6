@@ -1,0 +1,66 @@
+ibmveth: fix hangs, use-after-frees and netpoll races
+
+Hi,
+
+Seven fixes for serious bugs in the ibmveth driver: two hang the
+system, three are use-after-frees, one corrupts memory, and one makes
+ethtool -L report success when it failed.
+
+The series is based on net-next 071876fd5048 ("ref_tracker: Don't
+use __GFP_NOFAIL for PF_MEMALLOC thread."). It does not depend on
+the two open() error-path fixes recently applied to net
+(af0524bf4ce1, 84bec0bf0352) and merges cleanly with them; patch 2
+explains how it relates to them. It also applies to net with
+git am -3.
+
+  1. Netpoll races with RX replenish (memory corruption, NULL
+     dereference): remove ndo_poll_controller, as was done for
+     ibmvnic, and enable NAPI only once the RX resources exist.
+     Fixes: 6b4223748895, bea3348eef27
+
+  2. Hang after a failed internal reopen: the next close() waits in
+     napi_disable() forever with RTNL held, and only a reboot
+     recovers. Skip close() when open() did not succeed.
+     Fixes: 860f242eb534
+
+  3. Use-after-free in remove(): a reset queued from NAPI could run
+     on the freed adapter. Disable the reset work first.
+     Fixes: 2c91e2319ed9
+
+  4. RX poll hang on a bad correlator: poll restarts on the same slot
+     until RCU stalls, and an inactive pool dereferences NULL. Step
+     past the slot, reject inactive pools, count the drop.
+     Fixes: 2c91e2319ed9, 860f242eb534
+
+  5. Use-after-free after a failed probe: the pool kobjects stay in
+     sysfs after the adapter is freed. Put them, as remove() does.
+     Fixes: 860f242eb534
+
+  6. ethtool -L returns 0 when it cannot allocate the new TX queues.
+     Return the allocation error.
+     Fixes: 10c2aba89cc0
+
+  7. Use-after-free of TX buffers: close(), called directly for MTU,
+     offload and buffer pool changes, frees them without waiting for
+     a running transmit. Use netif_tx_disable().
+     Fixes: d6832ca48d8a
+
+The triggers are rare and there are no field reports, so the series
+targets net-next. All carry Fixes: tags; I am happy to repost
+against net, or add Cc: stable, if you prefer.
+
+All were found by AI-assisted review of the ibmveth multi-queue
+RX series [1]. Landing them first also shrinks that series, which
+then only extends this handling per queue.
+
+Testing: the new and extended KUnit cases in patch 4 fail on the
+unfixed driver and pass on qemu pseries (ppc64le). On a POWER10
+LPAR: netconsole under printk and ping floods, MTU and buffer pool
+changes under traffic, a forced open() failure followed by down and
+up, unbind/bind under traffic, a forced register_netdev() failure in
+probe, and ethtool -L with a forced TX buffer allocation failure.
+
+[1] https://lore.kernel.org/netdev/cover.1790319558.git.mmc@linux.ibm.com/
+
+Thanks,
+Mingming
