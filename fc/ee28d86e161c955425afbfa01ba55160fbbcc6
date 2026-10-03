@@ -34,6 +34,9 @@ git am -3.
 
   5. Use-after-free after a failed probe: the pool kobjects stay in
      sysfs after the adapter is freed. Put them, as remove() does.
+     The pool kobjects have no release(), so with
+     CONFIG_DEBUG_KOBJECT_RELEASE a short window remains here and in
+     remove(); giving them a release() is left for a follow-up.
      Fixes: 860f242eb534
 
   6. ethtool -L returns 0 when it cannot allocate the new TX queues.
