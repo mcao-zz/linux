@@ -4,16 +4,28 @@ Changes in v8:
   ethtool -S) use READ_ONCE(); single writer per counter, so still
   no atomic or u64_stats_sync. start_xmit takes a local txs
   pointer; replenish counts failures via ibmveth_count_add_fail()
-- qstats key comment: drop the leaked "this 15"
 - ndo_get_stats64 fills rx_missed_errors from the no_buffer pair
+- count driver RX drops (bad correlator, failed harvest,
+  recycle-invalid harvest failure) in per-queue
+  rx_qstats[].dropped, written from that queue's NAPI poll and
+  summed into ndo_get_stats64 rx_dropped: netdev->stats.rx_dropped
+  (fixes series patch 4) is hidden once ndo_get_stats64 exists
 - snapshot no_buffer_drops and no_buffer_retired under
-  replenish_lock on ethtool and qstats reads. pair()
-  takes the lock; the writer holds it for the two-store
-  carry
+  replenish_lock (spin_lock_bh) on ethtool, qstats and
+  get_stats64 reads. pair() takes the lock; the writer
+  holds it for the two-store carry
 - after successful H_FREE, fold the last sample into
   retired and clear drops; live replenish stores the
   page absolute. Skip retire if H_FREE failed (PHYP:
-  fail-before-start, page still live)
+  fail-before-start, page still live). close() no longer
+  samples under an irqsave lock before H_FREE
+- remove(): free the qstats arrays after unregister_netdev();
+  the reset work is disabled at the top of remove() by the
+  fixes series (patch 3, "ibmveth: disable the reset work
+  before unregister in remove"), so the message no longer
+  cites cancel_work_sync()
+- probe failures use the fixes series' err_put_pools label
+  (patch 5); ibmveth_probe_cleanup() replaces its body
 - do not claim large_packets / checksum_offload /
   no_buffer_drops have no standard equivalent
 - do not fill needs_csum / hw_gso_packets /
