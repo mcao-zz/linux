@@ -1,9 +1,23 @@
 Changes in v8:
 - netif_tx_disable() at the start of open() so TX cannot run
-  while LTBs are still being allocated: first-open generic
-  XDP_TX, and a failed reopen that left the queues awake after
-  ethtool -L. netif_tx_start_all_queues() stays after
-  alloc_tx_resources(). Do not move TX alloc before the LAN
+  while TX LTBs are still being allocated (first-open generic
+  XDP_TX; those queues are not DRV_XOFF).
+  netif_tx_start_all_queues() stays after alloc_tx_resources();
+  TX alloc stays after LAN registration
+- start_xmit NULL-LTB comment: TX LTBs are allocated late in
+  open() and freed on shrink, not close / failed reopen (fixes
+  2 and 7 cover those)
+- drop the NULL check and NULL-first in free_tx_ltb(): now in
+  net (84bec0bf0352, "ibmveth: fix TX LTB and filter unwind on
+  open-fail"). This patch only clears tx_ltb_dma[] there
+- drop the pool-fail h_free_logical_lan(): now in net
+  (af0524bf4ce1, "ibmveth: h_free logical LAN on open-fail after
+  register"). out_unregister_lan only regroups it
+- drop close() netif_tx_stop_all_queues() -> netif_tx_disable():
+  now done by the fixes series (patch 7, "ibmveth: wait for
+  in-flight transmits in ibmveth_close()")
+- commit message: drop the claims the net pair and fixes 7 now
+  own, and the set_channels IFF_UP vs opened pointer (fixes 2)
 - noted: H_FREE fail-before-start skip-unmap is later (PHYP);
   isolated close still unmaps
 - noted: the v6 "ethtool -L TX shrink still stop-then-free" leftover
