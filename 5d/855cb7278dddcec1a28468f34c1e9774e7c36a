@@ -1,4 +1,15 @@
 Changes in v8:
+- drop the correlator WARN_ON() -> correlator_valid() conversion
+  and poll's advance on a NULL buffer: now done by the fixes
+  series (patch 4, "ibmveth: step past bad RX correlators
+  instead of spinning or oopsing"). This patch makes fix 4's
+  helpers per-queue: correlator_valid() is a pure check (also
+  needs free_map) run under replenish_lock, and fix 4's log +
+  reset moves to ibmveth_rxq_bad_correlator(), after unlock
+- drop the poll_controller() replenish_task(adapter, 0) change:
+  the fixes series (patch 1, "ibmveth: fix netpoll races with
+  RX replenish") removed ndo_poll_controller. Poll keeps fix 1's
+  if (budget) around the per-queue replenish
 - replenish_task_cycles++ after taking replenish_lock so NAPI and
   process context on the same queue cannot lose a stats increment.
   The later statistics patch still moves the counter per-queue
@@ -13,6 +24,12 @@ Changes in v8:
   (v6/v7 review: IRQ-off latency, netconsole re-entry)
 - DMA_ATTR_NO_WARN comment: a map failure is expected, counted and
   retried; the netconsole re-entry it guarded against is gone
+- probe lock-init comment and remove_buffer_from_pool Context:
+  no longer cite poll_controller / netpoll
+- commit message: drop the ndo_poll_controller and netconsole
+  reasons and the WARN_ON paragraph (fixes 4); describe the
+  INVALID_MAP batch drop, the replenish_task queue bound and
+  poll's IRQ-enable log (code unchanged since v7)
 
 Changes in v7:
 - extend remove_buffer_from_pool Return: -EINVAL also
