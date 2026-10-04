@@ -1,6 +1,6 @@
 Changes in v8:
 - replenish_task_cycles++ after spin_lock_irqsave so NAPI and
-  poll_controller on the same queue cannot lose a stats increment.
+  process context on the same queue cannot lose a stats increment.
   The later statistics patch still moves the counter per-queue
 - snapshot first BATCH_FALLBACK and HCALL_FAIL into fail_fallback
   / fail_hcall; log those copies after unlock
