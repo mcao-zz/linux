@@ -1,19 +1,22 @@
 Changes in v8:
-- keep-path real_num fencing (poll completion, interrupt,
-  resume) and the free_tx_resources walk over
-  IBMVETH_MAX_QUEUES moved to the resize patch, which introduced
-  the bugs they fix
 - drop the poll_controller !opened guard: the fixes series
+  (patch 1, "ibmveth: fix netpoll races with RX replenish")
   removes ndo_poll_controller
-- noted: mq_fallback max_rx cap lives in the get_channels peel
+- mq_fallback max_rx cap moved to the get_channels peel;
+  this patch keeps only the max_tx floor in get_channels
+- TX-fail RX rollback moved to the resize patch
 - resize_rx_channels kdoc: while down return 0;
   set_channels publishes without allocating
 - down-path publish returns -EBUSY if a handle is
   still set in [old, goal); check before TX set_real.
   Do not unmap while down (PHYP: fail-before-start)
+- keep the fixes series' alloc_rc TX-add error return
+  (patch 6) through the old_tx/goal_tx rename
 - subject is the down-path; name the resize commit
   by subject instead of series position
-- noted: TX-fail RX rollback lives in the resize patch
+- noted: TX shrink keeps netif_tx_stop_all_queues():
+  netif_set_real_num_tx_queues() runs synchronize_net()
+  on shrink before the LTBs are freed
 - noted: this peel still publishes the down-path count
   and the max_tx floor
 - noted: do not clamp rx_count; do not advertise max_rx = 1
