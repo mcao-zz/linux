@@ -1,7 +1,11 @@
 Changes in v8:
-- no driver code change. Commit message names that a TX LTB
-  failure now unmaps the filter list before free_page()
-  (baseline skipped that unmap)
+- no code change beyond rebase: open() unwind keeps the net fix's
+  NULL-safe all-queue TX LTB loop (84bec0bf0352, "ibmveth: fix TX
+  LTB and filter unwind on open-fail") under one out_free_tx_ltb
+  label. No napi_enable /
+  napi_disable moves here (fixes series patch 1 placed them)
+- commit message: say ibmveth_update_rx_no_buffer() returns when the
+  buffer list is gone (v7 code, not described before)
 
 Changes in v7:
 - NULL-check buffer_list_addr[0] in update_rx_no_buffer()
