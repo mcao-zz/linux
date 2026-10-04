@@ -21,8 +21,6 @@ Changes in v8:
   grow-fail errno sentence; wrap the skip_unmap paragraph
 - noted: enable_irq on prep-fail stays (PHYP: H_PARAMETER on
   enable is LISN not in range, not already-enabled)
-- noted: poll_controller !opened stays in the down-path patch
-
 Changes in v7:
 - register_single_rx_queue logs lpar_rc with %ld
 - setup_rx_interrupts kdoc: open posts first in both modes
