@@ -1,7 +1,11 @@
 Changes in v8:
-- no P04 code change
-- commit message: the shared-index TX LTB leak is from d926793c1de9
-  and is fixed in net by 84bec0bf0352; v7 said no Fixes: applied
+- pool allocation failure goes to out_free_buffer_pools, keeping the
+  h_free_logical_lan() the net fix af0524bf4ce1 ("ibmveth: h_free
+  logical LAN on open-fail after register") added there (v7 went to
+  out_free_tx_ltb and skipped it)
+- commit message: drop the paragraph on the shared TX loop index (the
+  net fix 84bec0bf0352 unwinds every TX LTB); say the pool failure
+  frees the logical LAN instead
 
 Changes in v7:
 - no P04 code change
