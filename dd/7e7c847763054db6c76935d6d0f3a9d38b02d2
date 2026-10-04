@@ -1,9 +1,10 @@
 Changes in v8:
 - keep-path real_num fencing (poll completion, interrupt,
-  poll_controller, resume) and the free_tx_resources walk over
+  resume) and the free_tx_resources walk over
   IBMVETH_MAX_QUEUES moved to the resize patch, which introduced
-  the bugs they fix; this patch keeps the poll_controller
-  !opened guard
+  the bugs they fix
+- drop the poll_controller !opened guard: the fixes series
+  removes ndo_poll_controller
 - noted: mq_fallback max_rx cap lives in the get_channels peel
 - resize_rx_channels kdoc: while down return 0;
   set_channels publishes without allocating
@@ -13,8 +14,8 @@ Changes in v8:
 - subject is the down-path; name the resize commit
   by subject instead of series position
 - noted: TX-fail RX rollback lives in the resize patch
-- noted: this peel still publishes the down-path count,
-  the max_tx floor, and poll_controller !opened
+- noted: this peel still publishes the down-path count
+  and the max_tx floor
 - noted: do not clamp rx_count; do not advertise max_rx = 1
 
 Changes in v7:
