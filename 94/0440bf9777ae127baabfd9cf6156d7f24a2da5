@@ -1,7 +1,8 @@
 Changes in v8:
 - H_FREE_LOGICAL_LAN_QUEUE H_PARAMETER kdoc matches LAN (already-free)
-- Commit message: mention the tools/perf powerpc-hcalls.py names; fold
-  the trailing H_PARAMETER line into the wrapper paragraph
+- Commit message: name the H_PARAMETER kdoc, the tools/perf
+  powerpc-hcalls.py names, and the hcall_inst debugfs rows that the
+  MAX_HCALL_OPCODE raise adds
 
 Changes in v7:
 - Drop the duplicated "Both new registration wrappers use
