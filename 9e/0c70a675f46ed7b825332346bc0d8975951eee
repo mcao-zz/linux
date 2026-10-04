@@ -7,6 +7,9 @@ Changes in v8:
 - rxq_harvest_buffer schedules a reset on -EINVAL/-EFAULT, so a bad
   correlator on the recycle-invalid path resets as the base driver
   did instead of silently losing the pool slot
+- __GFP_NOWARN on the replenish skb alloc, next to DMA_ATTR_NO_WARN:
+  this patch holds replenish_lock with IRQs off and must not printk
+  under it (v6 review). The failure is counted and retried
 
 Changes in v7:
 - extend remove_buffer_from_pool Return: -EINVAL also
