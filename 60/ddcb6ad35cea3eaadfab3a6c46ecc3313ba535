@@ -1,7 +1,7 @@
 Changes in v8:
-- skip_unmap kdoc sits with the other parameters
-- register-fail honors H_FREE: skip_unmap so open() does not unmap
-  a live LAN when handle 0
+- register-fail honors H_FREE: register_rx_queues() reports a
+  hard-failed H_FREE through @skip_unmap so open() does not
+  unmap a live LAN when handle 0
 - ibmveth_free_all_queues() returns int (-EIO when H_FREE_LOGICAL_LAN
   hard-fails) from this patch on, for the skip_unmap path
 - synchronize_net() after setup_rx fail before the rings
@@ -9,18 +9,38 @@ Changes in v8:
   Mask still comes first
 - reject an ethtool -L that changes rx_count; later patches
   implement live RX set
-- keep the TX grow-fail errno when set_real(old) succeeds
 - apply_mq_fallback publishes 1 and sets real_num to match
+- restart_rx_queue kdoc: napi_schedule_prep() fails only when a
+  poll is already scheduled; the enable_irq fallback costs at
+  most a spurious interrupt
+- drop the pool kobject release(), completion and
+  put_pool_kobjs(): now done by the fixes series (patch 5,
+  "ibmveth: release the pool kobjects when probe fails"). This
+  patch adds pools_ready to that helper and sends the
+  kobject_init_and_add() failure to its err_put_pools label;
+  the per-site put / free_netdev / dev_set_drvdata(NULL) go
+- drop the remove() unregister-before-cancel_work_sync()
+  reorder and the reset NETREG_REGISTERED gate: the fixes
+  series (patch 3, "ibmveth: disable the reset work before
+  unregister in remove") disables the work before unregister
+- drop the poll_controller() per-queue loop: the fixes series
+  (patch 1, "ibmveth: fix netpoll races with RX replenish")
+  removed ndo_poll_controller
 - name replenish_* with the racy adapter-wide RX counters
 - reword: the helper patch adds schedule_work on buffer-add
   H_FUNCTION; this commit makes that path reachable and
   latches mq_fallback
 - commit message: name the RX memory growth (each queue gets its own
   pools, so RX buffer memory scales linearly with the queue count);
-  say a poolN kobject failure now fails probe; separate the TX
-  grow-fail errno sentence; wrap the skip_unmap paragraph
+  say a poolN kobject failure now fails probe; mention the
+  resume() kick and skb_record_rx_queue(); add the skip_unmap
+  paragraph; drop the probe kobject leak and remove()/reset
+  paragraphs (fixes 3, 5); "later patches" for patch numbers
+- noted: set_channels keeps fixes 6's alloc_rc; this patch adds
+  only the rx_count check
 - noted: enable_irq on prep-fail stays (PHYP: H_PARAMETER on
   enable is LISN not in range, not already-enabled)
+
 Changes in v7:
 - register_single_rx_queue logs lpar_rc with %ld
 - setup_rx_interrupts kdoc: open posts first in both modes
