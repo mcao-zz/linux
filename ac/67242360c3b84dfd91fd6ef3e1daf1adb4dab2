@@ -1,3 +1,7 @@
+Changes in v8:
+- no P07 code or commit message change (rebase only; close()
+  context now carries fixes 2's comment)
+
 Changes in v7:
 - no P07 code change
 - commit message: name netif_set_real_num_rx_queues()
