@@ -1,11 +1,10 @@
 Changes in v8:
 - free_stranded also reclaims mapped leftovers with handle 0
   after successful H_FREE
-- live destroy netpoll_poll_disable() (synchronize_net is not a netpoll barrier)
 - poll records RX queue only when index < real_num (keep-path RPS)
 - keep-path fencing moved here from the down-path patch: poll
   completion does not enable_irq, interrupt() does not schedule
-  NAPI, poll_controller() and resume() do not walk queues at or
+  NAPI, and resume() does not walk queues at or
   above real_num_rx_queues
 - free_tx_resources walks every TX LTB slot (IBMVETH_MAX_QUEUES),
   moved here from the down-path patch: a skip-unmap close plus a
