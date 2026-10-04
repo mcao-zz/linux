@@ -2,7 +2,16 @@ Changes in v8:
 - snapshot the RX-ring correlator once in deliver_frame; pass
   that value through get_buffer, the room check, and harvest.
   A second DMA load must not index a pool get_buffer did not
-  validate
+  validate. rxq_harvest_buffer() becomes rxq_harvest_correlator()
+  taking that value; KUnit tests pass it
+- drop the copybreak new_skb leak fix: now done by the fixes
+  series (patch 4, "ibmveth: step past bad RX correlators
+  instead of spinning or oopsing"); deliver_frame keeps fix 4's
+  dev_kfree_skb_any() and rx_dropped
+- skip_bad_correlator, recycle_invalid (any harvest failure) and
+  deliver_frame harvest failures count rx_dropped, as fix 4 does.
+  skip_bad_correlator's own "bad correlator" log is dropped; the
+  harvest logs the correlator once
 - restore the PHYP MSS (skb->data + 8) and 0xffff comments
 - rxq_harvest_correlator keeps the previous patch's reset on a bad
   correlator, so recycle_invalid resets too; commit message no
@@ -10,6 +19,8 @@ Changes in v8:
 - poll re-arm comment cites close(), not a resize path and an
   interrupt WARN that are not in the tree; skip_bad_correlator
   comment no longer blames resize
+- commit message: drop the NULL-skb reset and copybreak leak
+  claims (fix 4 has both); a bad slot no longer ends the loop
 - noted: poll_stopping is not a close barrier; mask stays first
 
 Changes in v7:
