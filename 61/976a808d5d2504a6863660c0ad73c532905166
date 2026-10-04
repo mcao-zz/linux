@@ -6,6 +6,10 @@ Changes in v8:
   alloc_tx_resources(). Do not move TX alloc before the LAN
 - noted: H_FREE fail-before-start skip-unmap is later (PHYP);
   isolated close still unmaps
+- noted: the v6 "ethtool -L TX shrink still stop-then-free" leftover
+  is withdrawn. netif_set_real_num_tx_queues() runs synchronize_net()
+  on shrink before set_channels() frees the LTBs, so no in-flight
+  xmit is left; stop_all_queues stays
 
 Changes in v7:
 - late alloc_tx_resources() failure: synchronize_net()
