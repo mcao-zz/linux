@@ -1,8 +1,8 @@
 Changes in v8:
 - cap max_rx at the live rx_count once mq_fallback;
   do not advertise max_rx = 1. Do not clamp rx_count
-- this peel only reports; the rx_count reject lives
-  in the MQ enable patch
+- this peel only reports: the set_channels rx_count
+  reject moved to the MQ enable patch
 - mq_fallback accesses use READ_ONCE()/WRITE_ONCE(): the replenish
   writer runs without RTNL while get_channels() and
   apply_mq_fallback() read under RTNL
