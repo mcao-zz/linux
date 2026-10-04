@@ -1,3 +1,14 @@
+Changes in v8:
+- index-0 conversion also covers code the fixes series added:
+  ibmveth_rxq_correlator_valid(), ibmveth_rxq_advance() and the
+  KUnit tests (patch 4), napi_enable()/napi_disable() around
+  request_irq() (patch 1), ibmveth_put_pool_kobjs() and the pool
+  released completion (patch 5). remove()'s kobject_put() loop is
+  now that helper
+- commit message: drop the paragraph saying probe kobject cleanup is
+  pre-existing and lands later; fixes series patch 5 ("ibmveth:
+  release the pool kobjects when probe fails") does it
+
 Changes in v7:
 - no P02 code change
 
