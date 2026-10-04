@@ -2,37 +2,54 @@ Changes in v8:
 - free_stranded also reclaims mapped leftovers with handle 0
   after successful H_FREE
 - poll records RX queue only when index < real_num (keep-path RPS)
-- keep-path fencing moved here from the down-path patch: poll
-  completion does not enable_irq, interrupt() does not schedule
-  NAPI, and resume() does not walk queues at or
-  above real_num_rx_queues
-- free_tx_resources walks every TX LTB slot (IBMVETH_MAX_QUEUES),
-  moved here from the down-path patch: a skip-unmap close plus a
-  TX shrink while down leaked the LTBs above the new real_num
-- scale-down takes the final no_buffer sample after H_FREE even
-  though the lower count is already published (retire samples
-  without the live-count bound); the commit message described a
-  pre-publish harvest the code did not do
+- keep-path fencing: poll completion does not enable_irq,
+  interrupt() does not schedule NAPI, and resume() does not
+  walk queues at or above real_num_rx_queues
+- free_tx_resources walks every TX LTB slot (IBMVETH_MAX_QUEUES):
+  a skip-unmap close plus a TX shrink while down leaked the LTBs
+  above the new real_num
+- scale-down takes the final no_buffer sample after successful
+  H_FREE, while the page is still mapped (retire), instead of the
+  pre-publish irqsave harvest; retire samples without the
+  live-count bound since the lower count is already published
 - mq_fallback accesses use READ_ONCE()/WRITE_ONCE()
 - combined ethtool -L rolls RX back if TX does not
-  reach the request
+  reach the request (moved here from the down-path patch)
 - skip unmask if set_real(keep) fails after real_num
   was lowered; still napi_enable so close/reset is
   not a second napi_disable hang. scale-down
   set_real(new_count) fail still re-enables
-- skip unmap of the live set on H_FREE_LOGICAL_LAN
-  fail-before-start (PHYP); do not zero handles;
-  H_PARAMETER is already-free and unmaps. ndo_stop
+- multi-queue only: skip unmap of the live set on
+  H_FREE_LOGICAL_LAN fail-before-start (PHYP); do not
+  zero handles. Single-queue logs and unmaps as before
+  (CMO). H_PARAMETER is already-free and unmaps. ndo_stop
   still returns 0. Retry H_FREE on the next open()
   before apply_mq_fallback, and on remove()
+- open() unwind also skips the unmap when its own H_FREE
+  fails, or when a queue handle is still set after a
+  failed register
 - poolN sysfs store returns -EBUSY while a skip-unmap close
   still holds the pools (after reopening a running device to
   retry H_FREE): the deferred free uses pool->size and
   pool->buff_size, which a store would otherwise change
 - H_FREE_LOGICAL_LAN_QUEUE H_PARAMETER is already-free,
   same as H_FREE_LOGICAL_LAN: clear the handle and unmap
+  (deregister and the IRQ-map-failure free in register)
 - refresh restart / schedule / cleanup comments vs
   the scale-up callers
+- no ndo_poll_controller (fixes series patch 1, "ibmveth: fix
+  netpoll races with RX replenish"): napi_disable() on retiring
+  queues keeps netpoll's poll_napi() off them; comments no
+  longer cite ndo_poll_controller. schedule_rx_queue stays
+  quiet past the live count for resume()'s walk
+- drop the set_channels IFF_UP -> adapter->opened switch: now
+  done by the fixes series (patch 2, "ibmveth: do not close
+  twice after a failed reopen")
+- ibmveth_free_all_queues() already returns int (-EIO) from the
+  MQ enable patch; this patch only adds the skip-unmap rules
+- add the ibmveth_rxq_harvest_buffer() wrapper here with its
+  first caller (drain), not in an earlier patch with no caller
+- commit message: scale-up brings up one new queue at a time
 - noted: enable_irq on prep-fail stays (PHYP: H_PARAMETER
   on enable is LISN not in range, not already-enabled)
 - noted: down-path publish and max_tx floor stay later
