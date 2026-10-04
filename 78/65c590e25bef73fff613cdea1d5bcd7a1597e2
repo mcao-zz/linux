@@ -3,11 +3,24 @@ Changes in v8:
   (cleanup and err_disable_napi)
 - body: napi_disable waits for SCHED; synchronize_net after
   disable covers the enable_irq tail (not "does not wait")
-- set_channels() keys on opened, not IFF_UP
-- hang stays the opened gate (commit message drops "depends on
-  the helpers"); no Fixes: peel
 - H_PARAMETER on enable is LISN not in range, not already-enabled
   (PHYP); fold only on disable
+- drop the opened field, the close() gate and the set_channels()
+  opened check: now done by the fixes series (patch 2, "ibmveth: do
+  not close twice after a failed reopen"); body drops the
+  opened-gate hang paragraph
+- drop the poll_controller rewrite and the netpoll kick: the fixes
+  series removes ndo_poll_controller (patch 1, "ibmveth: fix
+  netpoll races with RX replenish")
+- drop the inline h_free_logical_lan() on setup_rx_interrupts()
+  failure: out_free_buffer_pools does it since af0524bf4ce1
+  ("ibmveth: h_free logical LAN on open-fail after register")
+- noted: setup_rx_interrupts() keeps request_irq -> napi_enable;
+  the base now enables NAPI just before request_irq. PHYP stays
+  masked until the first poll; body says so
+- body: name the rate-limited dev_err() that replaced WARN_ON() on
+  h_vio_signal() failure (v6 code); drop the enable-fail rollback
+  paragraph (code unchanged)
 
 Changes in v7:
 - reword schedule_rx_queue() kdoc: out-of-range is
