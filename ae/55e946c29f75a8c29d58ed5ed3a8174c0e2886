@@ -1,0 +1,9 @@
+Changes in v3:
+- on a bad slot, stay in the poll loop and count it in
+  frames_processed, instead of breaking out
+- after napi_schedule() has queued this NAPI, return budget - 1
+  when the budget is used up
+- drop a frame whose offset + length does not fit the pool
+
+Changes in v2:
+- count rx_dropped when recycling an invalid buffer fails
