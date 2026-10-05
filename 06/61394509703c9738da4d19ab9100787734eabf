@@ -1,3 +1,2 @@
 Changes in v2:
 - count rx_dropped when recycling an invalid buffer fails
-- commit message: say how the bugs were found
