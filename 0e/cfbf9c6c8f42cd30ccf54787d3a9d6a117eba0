@@ -5,5 +5,3 @@ Changes in v2:
   could run after the free (Sashiko review of v1)
 - put the kobjects through one helper, ibmveth_put_pool_kobjs(),
   and an err_put_pools label for both probe failure paths
-- commit message: say how the bug was found, and that the
-  register_netdev() failure was forced by a test-only module parameter
