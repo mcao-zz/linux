@@ -1,0 +1,9 @@
+Changes in v2:
+- give the pool kobjects a release() that signals a per-pool
+  completion, and wait for it before free_netdev() in probe and
+  remove(); with CONFIG_DEBUG_KOBJECT_RELEASE the deferred cleanup
+  could run after the free (Sashiko review of v1)
+- put the kobjects through one helper, ibmveth_put_pool_kobjs(),
+  and an err_put_pools label for both probe failure paths
+- commit message: say how the bug was found, and that the
+  register_netdev() failure was forced by a test-only module parameter
