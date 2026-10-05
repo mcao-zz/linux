@@ -1,0 +1,365 @@
+ibmveth MQ — v8 COVER LETTER (v8.5r3 draft; do not mail)
+==================================================================
+Subject: [PATCH net-next v8 00/15] ibmveth: Add multi-queue RX support
+
+# Branch: veth-mq-v8.5r3 @ 4cea7b116dfb, 15 patches on mailed fixes
+#   v3 tip b1b18f2d36cd (8) on net-next/main d8674294aefe (net
+#   merge; pair af0524bf4ce1 / 84bec0bf0352 already in).
+# Do not remint cover Message-ID
+#   <cover.1790888471.git.mmc@linux.ibm.com>.
+# Jakub (2026-10-01): hold off reposting until the fixes are in
+#   net-next. Pair is in; fixes v3 is mailed (branch
+#   ibmveth-fixes-7-v3-nn). Hold MQ until v3 is in net-next; then
+#   --base=<net-next> and drop any "not yet in net-next" wording.
+# Before mailing: LPAR run of R1 and the replenish_lock _bh switch
+#   (O5); Dave / Shaik re-confirm P08 tags (O4). W=1+KUnit on lab.
+# Do not mention D-NB / harvest-before-H_FREE.
+# D-IRQ: keep enable_irq() in restart_rx_queue() when prep
+#   fails, for this send. A later pass may drop that fallback.
+#   The "Kept: enable_irq on schedule_prep failure" line below
+#   is the decision for this mail.
+# Per-patch detail stays below --- on each commit (git notes).
+# This file is refs/notes/cover on the r3 tip. Generate from
+# that note, not from a second blurb.
+# Paste from "Hi,". format-patch fills shortlog / diffstat.
+
+Hi,
+
+Power11 PHYP adds Virtual Ethernet multi-queue (MQ) RX: multiple
+logical-LAN RX queues, per-queue buffer posting, and completion
+delivery. Guest Linux did not use that; ibmveth still registered one
+RX queue even when PHYP was MQ-capable.
+
+This series adds the ibmveth MQ client for net-next. When PHYP
+advertises IBMVETH_ILLAN_RX_MULTI_QUEUE_SUPPORT via H_ILLAN_ATTRIBUTES,
+probe enables MQ with a default RX count of min(num_online_cpus(), 8)
+(same cap as TX today); ethtool -L can raise RX up to 16. Packets are
+received on per-queue NAPI. Older firmware without the bit is unchanged.
+Queue selection remains firmware-defined (PHYP hash). Ethtool RSS hash
+get/set for that algorithm is deferred to a follow-up series so this
+one stays MQ datapath only.
+
+User-visible bits: ethtool -l/-L (channels); standard per-queue
+packets/bytes and RX drops via netdev_stat_ops (ethtool -S keeps only
+driver-specific counters; ndo_get_stats64 is the aggregate, including
+retired-queue history); and a read-only debugfs buffer_pools dump
+(v3's multi-line sysfs dump moved to debugfs; the historical queue-0
+poolN/ sysfs ABI is unchanged).
+
+This version is based on net-next, which already includes the two
+open() error-path fixes (af0524bf4ce1, 84bec0bf0352), with the
+eight ibmveth fixes ("ibmveth: fix hangs, use-after-frees and
+netpoll races", mailed v3; v2 was [1]) applied. Those fixes came
+out of the review of v7; the MQ patches now extend that handling
+per queue instead of carrying their own copy, so this series no
+longer fixes single-queue bugs.
+
+The eighth fix waits for the RX poll before freeing the RX queue.
+Patch 2 keeps that wait on napi[0] until patch 5.
+
+Background:
+
+ibmveth today uses one logical LAN, one set of buffer pools, and one
+NAPI context. PHYP MQ mode gives each RX queue its own handle (post via
+H_ADD_LOGICAL_LAN_BUFFERS_QUEUE, subordinate register via
+H_REG_LOGICAL_LAN_QUEUE); traffic can land on any active queue. The
+driver needs per-queue pools, IRQs, and NAPI to match. Legacy firmware
+keeps the original hcall path.
+
+Series layout (15 patches):
+
+  1-2   Hypercall wrappers; MQ adapter layout (MAX_RX_QUEUES stays 1)
+  3-9   Queue-aware helpers (still SQ runtime): RX, per-queue pools,
+        IRQ, TX, PHYP, buffer submit (open/close 3-8); poll harden (9)
+  10    Enable MQ datapath at probe/open (subordinate register helpers
+        land here with first use)
+  11-13 Per-queue RX/TX stats; get_channels MQ counts; debugfs buffer_pools
+  14    Incremental RX resize; live ethtool -L rx
+  15    Down-path publish
+
+- Helper patches (3-8) reshape ibmveth_open()/close() into
+  queue-aware helpers. Patch 9 hardens the SQ poll path with the same
+  queue-index helpers; it does not change open/close. MQ stays off
+  through 3-9: num_rx_queues stays 1 and multi_queue is false until
+  patch 10. The live single-queue path still changes where the review
+  required it (IRQ teardown wait and remask, replenish lock, poll
+  harden).
+- Patch 10 is the switch: probe sets multi_queue from firmware, raises
+  num_rx_queues, registers subordinates, and replenishes every active
+  queue.
+- Patch 11 moves counters per-queue and exports packets/bytes
+  and RX drops through netdev_stat_ops. TX hw_drops is left
+  unset. The thirteen existing -S keys stay; no
+  hcall_* or pool%d_ keys.
+
+Testing:
+
+ppc64le PowerVM LPAR, MQ-capable firmware:
+* ethtool -L cycling (16/1/8/11/1/3/16/8/1) with ping - no hangs
+* ethtool -L under iperf3; link down/up during traffic
+* ifdown/ifup under iperf3 RX+TX (MQ and ethtool -L rx 1)
+* Legacy firmware (no MQ bit): open/close/stress on helper path
+* Bisect-safe build and boot at every commit; W=1 clean at every
+  commit
+* KUnit (ibmveth-kunit-test) on qemu pseries (ppc64le)
+
+Changes in v8:
+
+Same 15 patches as v7, rebased onto the fixes above, plus the v7
+netdev-bot review (Openwall 2026-09-29) and our own re-review.
+Per-patch detail is below --- on each commit.
+
+Dropped because the fixes now do it (the MQ patches extend the
+fixes' code per queue instead):
+* ndo_poll_controller and its per-queue rewrite, the netpoll kick and
+  the closed-device guard (fix 1 removes ndo_poll_controller).
+* The opened field and its close() / set_channels() gates (fix 2).
+* The remove() unregister/cancel reorder and the reset
+  NETREG_REGISTERED gate (fix 3 disables the work first).
+* The correlator WARN_ON() conversion, the NULL-buffer advance and
+  the copybreak skb leak (fix 4). Patches 8 and 9 make fix 4's
+  helpers per-queue.
+* The pool kobject release() and wait (fix 5). Patch 10 adds the
+  per-queue pools to its helper.
+* close()'s netif_tx_disable() (fix 7).
+* The close()/open-fail wait for the RX poll tail (fix 8).
+* The open() failure h_free_logical_lan() and the NULL-safe TX LTB
+  free (the net pair).
+
+Code changes:
+* Patch 1: H_FREE_LOGICAL_LAN_QUEUE H_PARAMETER kdoc is
+  already-free, same as H_FREE_LOGICAL_LAN. hcall_inst can count
+  the new opcodes; a debugfs row appears only after a call.
+* Patch 2: fix 8's synchronize_net() after napi_disable() stays
+  on napi[0] until patch 5. Index 0 also covers the fixes-series
+  helpers and their KUnit.
+* Patch 4: a pool-alloc failure still calls h_free_logical_lan(),
+  as the net fix does. v7 took the TX unwind and skipped it.
+* Patch 5: cleanup_rx_interrupts() and the setup unwind wait for the
+  poll tail after napi_disable(), then remask and free_irq; close()
+  and open()'s unwinds need no wait of their own.
+* Patch 6: netif_tx_disable() at the start of open(); start stays
+  after TX LTB alloc. TX alloc stays after LAN registration.
+* Patch 7: queue_registered[] is the slot-is-live flag. Handle 0 is
+  a live PHYP cookie; do not treat it as unregistered.
+* Patch 8: replenish_lock is spin_lock_bh(), so IRQs stay on
+  during the fill. replenish_task_cycles++ under the lock; first
+  BATCH_FALLBACK and HCALL_FAIL are logged after unlock. Harvest
+  resets on a bad correlator.
+* Patch 9: snapshot the correlator once in deliver_frame().
+  Bad-correlator and oversize skips count rx_dropped and consume
+  NAPI budget. rx_invalid_buffer stays the slots PHYP marks
+  invalid. The stopping check only narrows the re-arm window;
+  cleanup's synchronize_net() is the barrier.
+* Patch 9: keep fix 1's rescheduled / budget-1 return on the
+  napi_schedule restart path after rebase onto fixes v3.
+
+* Patch 10: set_channels() returns -EOPNOTSUPP on an rx_count
+  change until patch 14. apply_mq_fallback() sets real_num to 1.
+  A hard-failed H_FREE skips unmap. Subordinate IRQs are named
+  ibmveth-<unit>-rxN; queue 0 keeps netdev->name.
+* Patch 11: snapshot no_buffer_drops and retired under
+  replenish_lock; fold the last sample after successful H_FREE.
+  Driver RX drops are per-queue and summed into rx_dropped.
+  rx_missed_errors is the PHYP no-buffer pair. TX hw_drops left
+  unset; dropped_packets stays ndo_get_stats64 tx_dropped only.
+  Per-queue counters use WRITE_ONCE()/READ_ONCE() (single writer,
+  lockless readers); rx%d_polls is not counted for netpoll's
+  budget-0 call, so it keeps one writer. Per-queue -S keys that
+  duplicate standard stats are gone: the no-buffer pair is qstats
+  rx-hw-drop-overruns (and part of rx-hw-drops); tx%d_large_packets
+  and tx%d_checksum_offload are dropped, and TX large sends stay in
+  the existing tx_large_packets key. The no-buffer values no longer
+  reset on close.
+* Patch 12: cap max_rx at the live rx_count once mq_fallback.
+  Do not advertise max_rx = 1. mq_fallback uses
+  READ_ONCE()/WRITE_ONCE().
+* Patch 14: scale-down, the scale-up unwind and the keep path wait
+  for the poll tail with synchronize_net() after napi_disable(),
+  then remask. Combined -L rolls RX back if TX misses. Skip unmask
+  if set_real(keep) fails; still napi_enable so close/reset
+  is not a second napi_disable hang. Close skips unmap on
+  H_FREE fail-before-start and retries on the next open and
+  remove (remove logs if it still fails and leaks the LAN
+  buffers); until then a poolN sysfs write returns -EBUSY
+  so the deferred free keeps the old pool geometry.
+  H_FREE_LOGICAL_LAN_QUEUE H_PARAMETER is already-free, same as
+  H_FREE_LOGICAL_LAN: clear the registered flag and unmap.
+  napi_disable() on retiring queues keeps netpoll off them; poll
+  records an RX index only below real_num. free_stranded keys off
+  queue_registered[], not a zero handle, after successful H_FREE.
+  Scale-down takes the final
+  no_buffer sample after H_FREE. Moved here from patch 15, next to
+  the code they fix: poll completion, interrupt and resume honor
+  real_num; free_tx_resources() walks every LTB slot.
+* Patch 15: down-path publish returns -EBUSY if a queue in the new
+  range is still registered. resize_rx_channels kdoc matches the
+  down-path publish. mq_fallback max_rx cap lives in patch 12.
+* Commit message / kdoc / comment updates on every patch,
+  mostly to drop what the fixes now own.
+* Kept: enable_irq on schedule_prep failure; mask PHYP before
+  napi_disable; get_channels reports the live rx_count (no clamp);
+  ethtool -L TX shrink stops the queues and relies on
+  netif_set_real_num_tx_queues()'s synchronize_net() before the LTBs
+  are freed.
+
+Known leftovers (not this series):
+
+* ip_fast_csum() on IHL=0. Preexisting RX. Not this series.
+* A PHYP mask hcall that failed is still never acknowledged.
+* The v7 single-queue replenish leftover (irqsave over the whole
+  fill, netpoll vs close) is gone: fix 1 takes netpoll out of
+  replenish and patch 8 uses spin_lock_bh().
+
+Changes in v7:
+
+Same 15 patches as v6. We followed up the v6 netdev-bot review
+with replies; this v7 is the series after that, plus a few items
+from our own re-review.
+
+* Patch 3: update_rx_no_buffer() returns if buffer_list_addr[0] is
+  NULL (the per-queue form stays in patch 10).
+* Patch 6: synchronize_net() on the late TX-alloc unwind before RX is
+  freed.
+* Patch 8: replenish failure log names the wrapper from the filled
+  count; advance ring on NULL buffer so poll does not spin.
+* Patch 9: oversize bound is min(skb_tailroom, pool->buff_size).
+* Patch 10: unregister_netdev before cancel_work_sync and gate reset
+  on NETREG_REGISTERED (moved from patch 11); wait for pool kobject
+  release before free_netdev(). Drop the probe CMO refresh and the two
+  CMO follow-ups: CMO (Power9 and earlier) and MQ firmware (Power11+)
+  do not coexist.
+* Patch 11: replenish_lock on the close harvest (remove-path
+  unregister/cancel reorder moved to patch 10 with the reset producer).
+* Patch 12: set_channels() returns -EOPNOTSUPP on rx_count changes until
+  patch 14 implements live resize.
+* Patch 14: key buffer-list unmap on allocation presence because
+  DMA address zero is valid; reject an RX count change while down
+  with -EOPNOTSUPP. Failed H_FREE skips unmap and restores the
+  surviving count; widen real_num before scale-up unmask. Scale-up
+  register -EOPNOTSUPP latches mq_fallback. The scale-up /
+  scale-down helper split is code motion only.
+* Patch 15: publish the down-path RX count, which lifts patch 14's
+  temporary rejection. get_channels max_tx is at least the live
+  tx_count, and set_channels uses the same ceiling, so CPU offline
+  cannot block an RX-only ethtool -L.
+* Commit message / kdoc / comment / debug-log updates on 1, 3, 4, 5,
+  7, 8, 9, 10, 11, 12, 14 and 15 (patch 1 also names the new hcalls in the perf
+  powerpc-hcalls script and documents H_BUSY on the register-queue
+  wrapper; patch 10 prints the register-queue failure with %ld).
+* Kept: enable_irq on schedule_prep failure; mask PHYP before
+  napi_disable; get_channels reports the live rx_count (no clamp).
+* Reopen unwind in patches 3 and 6 is pre-existing. No Fixes: tag
+  here. The SQ open-fail path is already on the list as
+  [PATCH net 0/2] (Message-ID:
+  <cover.1790357373.git.mmc@linux.ibm.com>). This series does
+  not depend on it. If both land, keep the helper versions in
+  patches 3/4/6; the net pair is the current single-queue path
+  only.
+
+Changes in v6:
+
+Same 15 patches as v5. Jakub v5 review folded in; per-patch detail is
+below --- on each commit.
+
+* Both new registration wrappers use plpar_hcall(), not plpar_hcall9().
+* Poll: IPv4 check through skb->data; budget 0 does not complete NAPI.
+* Scale-down: publish the surviving count, then synchronize_net(),
+  then destroy. num_rx_queues uses smp_store_release / smp_load_acquire.
+* packets/bytes/drops through netdev_stat_ops, not private -S strings.
+  Thirteen existing -S keys kept. No hcall_* or pool%d_ keys.
+  replenish_* are per-queue u64; no atomics. get_base_stats() is the
+  retired-queue remainder.
+* Reset worker gated on NETREG_REGISTERED (cannot reopen after
+  unregister).
+* get_channels() keeps the live rx_count; mq_fallback caps max_rx so
+  a TX-only ethtool -L is not a silent RX shrink.
+
+Changes in v5:
+
+* Restack mailed v4 (14 patches) to v5 (15):
+
+    v4 1-8  helpers                -> v5 1-8
+    (new)   SQ poll harden         -> v5 9   (before MQ enable)
+    v4 9    MQ enable              -> v5 10
+    v4 10   stats                  -> v5 11
+    (new)   get_channels           -> v5 12  (peeled from stats)
+    v4 11   debugfs                -> v5 13
+    v4 12   resize                 -> v5 14
+    v4 13   set_channels           -> v5 15
+    v4 14   trailing poll/shutdown -> folded into v5 5/9/10/14
+            (mailed "P14" was that trailer, not v5 14)
+* Teardown-first resize after aggressive ethtool -L; thin defensive
+  poll skip remains; no correlator generation field this series
+* opened / rx_irq_setup; set_channels keys on opened (not IFF_UP)
+* filter_list_dma=0 on map error; restore default-active 64 KiB pool;
+  unwind pools by allocation presence; probe_cleanup clears vio
+  drvdata; remove: unregister then cancel_work
+* TX quiesce before freeing bounce buffers; guard start_xmit if LTB gone
+* MQ H_FUNCTION recovery (reset + SQ fallback); no printk under
+  replenish_lock; lock harvest with replenish; resume kicks all queues
+* Per-queue update_rx_no_buffer; publish-before-free on resize;
+  CMO refresh; IRQ helpers return errno
+* Harvest abort (no fake GRO / UAF); poll refuses PHYP re-arm on close;
+  wrap-safe skb_put; atomic set_channels; monotonic stats across shrink
+* Keep mask -> sync -> napi_disable on teardown; open stays
+  request_irq -> napi_enable while PHYP masked; scale-up/recovery keep
+  napi_enable before enable_irq
+* Pool geometry kept on free; restart_rx_queue after open/scale-down;
+  remask after napi_disable; schedule_rx_queue masks only when
+  napi_schedule_prep succeeds (STOP + poll no-rearm for storms)
+
+Changes in v4:
+
+Addresses Simon's v3 review and related fixes:
+* First-use helpers/includes (irqdomain.h with first dispose); no
+  unused statics; dropped orphan open/close pipeline patch
+* Open/close unwind (free LAN before RX pools); no double TX teardown
+* MQ open: replenish all queues before PHYP unmask; H_FUNCTION on
+  subordinate register is a hard open failure
+* Resize/set_channels hardenings; stats probe-lifetime + sum-on-read;
+  buffer_pools diagnostic on debugfs
+* Patch 9: put already-created pool kobjects on probe failure paths
+* Patch 14: correlator skip, skb tailroom check, napi_complete_done
+  shutdown return < budget
+* Bisect-friendly restack (helpers with first use)
+
+Changes in v3:
+
+* Dropped RFC; addressed style / DMA feedback from earlier revisions
+* Early MQ enablement iterations (see lore links below)
+
+Comments welcome.
+
+[1] https://lore.kernel.org/netdev/cover.1791178212.git.mmc@linux.ibm.com/
+
+---
+v7 lore:
+  https://lore.kernel.org/r/cover.1790319558.git.mmc@linux.ibm.com
+Sashiko NIPA (v7):
+  https://netdev-ai.bots.linux.dev/sashiko/#/patchset/cover.1790319558.git.mmc@linux.ibm.com
+v6 lore:
+  https://lore.kernel.org/r/cover.1788102125.git.mmc@linux.ibm.com
+Sashiko NIPA (v6):
+  https://netdev-ai.bots.linux.dev/sashiko/#/patchset/cover.1788102125.git.mmc@linux.ibm.com
+v5 lore:
+  https://lore.kernel.org/r/20260814073642.24630-1-mmc@linux.ibm.com
+v5 review (Jakub Kicinski):
+  https://lore.kernel.org/r/20260818014710.3853684-1-kuba@kernel.org
+Sashiko Gemini (sashiko.dev):
+  https://sashiko.dev/#/patchset/20260814073642.24630-1-mmc@linux.ibm.com
+Sashiko NIPA (v5):
+  https://netdev-ai.bots.linux.dev/sashiko/#/patchset/20260814073642.24630-1-mmc@linux.ibm.com
+
+Previous versions
+v7: https://lore.kernel.org/r/cover.1790319558.git.mmc@linux.ibm.com
+v6: https://lore.kernel.org/r/cover.1788102125.git.mmc@linux.ibm.com
+v5: https://lore.kernel.org/r/20260814073642.24630-1-mmc@linux.ibm.com
+v4: https://lore.kernel.org/r/cover.1785457143.git.mmc@linux.ibm.com
+v3: https://lore.kernel.org/r/20260706193603.8039-1-mmc@linux.ibm.com
+v2: https://lore.kernel.org/r/20260701222327.61325-1-mmc@linux.ibm.com
+v1: https://lore.kernel.org/r/cover.1782758799.git.mmc@linux.ibm.com
+v4 review (Jakub Kicinski):
+  https://lore.kernel.org/r/20260806183614.3171785-1-kuba@kernel.org
+v3 review (Simon Horman):
+  https://lore.kernel.org/r/20260714124327.GJ1364329@horms.kernel.org
