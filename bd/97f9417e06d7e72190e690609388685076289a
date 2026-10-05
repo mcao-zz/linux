@@ -1,0 +1,99 @@
+ibmveth: fix hangs, use-after-frees and netpoll races
+
+Hi,
+
+Eight fixes for serious bugs in the ibmveth driver: two hang the
+system, four are use-after-frees, one corrupts memory, and one makes
+ethtool -L report success when it failed.
+
+The series is based on net-next cfb7793d1bc0 ("Merge branch
+'net-lan966x-add-support-for-pcie-fdma'"). It does not depend on
+the two open() error-path fixes recently applied to net
+(af0524bf4ce1, 84bec0bf0352) and merges cleanly with them; patch 2
+explains how it relates to them. It also applies to net with
+git am -3.
+
+  1. Netpoll races with RX replenish (memory corruption, NULL
+     dereference): remove ndo_poll_controller, as was done for
+     ibmvnic, skip RX replenish in netpoll's budget-0 poll, and
+     enable NAPI only once the RX resources exist.
+     Fixes: 6b4223748895, bea3348eef27
+
+  2. Hang after a failed internal reopen: the next close() waits in
+     napi_disable() forever with RTNL held, and only a reboot
+     recovers. Skip close() when open() did not succeed.
+     Fixes: 860f242eb534
+
+  3. Use-after-free in remove(): a reset queued from NAPI could run
+     on the freed adapter. Disable the reset work first.
+     Fixes: 2c91e2319ed9
+
+  4. RX poll hang on a bad correlator: poll restarts on the same slot
+     until RCU stalls, and an inactive pool dereferences NULL. Step
+     past the slot, reject inactive pools, count the drop.
+     Fixes: 2c91e2319ed9, 860f242eb534
+
+  5. Use-after-free after a failed probe: the pool kobjects stay in
+     sysfs after the adapter is freed. Put them, as remove() does,
+     and give them a release() that probe and remove() wait for, so
+     CONFIG_DEBUG_KOBJECT_RELEASE cannot free them early either.
+     Fixes: 860f242eb534
+
+  6. ethtool -L returns 0 when it cannot allocate the new TX queues.
+     Return the allocation error.
+     Fixes: 10c2aba89cc0
+
+  7. Use-after-free of TX buffers: close() frees them without
+     waiting for a running transmit. It is called directly for MTU,
+     offload and buffer pool changes, and through dev_close(), which
+     does not wait either with a noqueue qdisc. Use
+     netif_tx_disable().
+     Fixes: d6832ca48d8a
+
+  8. Use-after-free of the RX queue: napi_disable() returns before
+     the poll has finished, and the rest of the poll re-enables the
+     interrupt and reads the RX queue that close() then frees. Wait
+     with synchronize_net().
+     Fixes: bea3348eef27
+
+The triggers are rare and there are no field reports, so the series
+targets net-next. All carry Fixes: tags; I am happy to repost
+against net, or add Cc: stable, if you prefer.
+
+All were found by AI-assisted review of the ibmveth multi-queue
+RX series [1]. Landing them first also shrinks that series, which
+then only extends this handling per queue.
+
+Testing: the new and extended KUnit cases in patch 4 fail on the
+unfixed driver and pass on qemu pseries (ppc64le). On a POWER10
+LPAR: netconsole under printk and ping floods, MTU and buffer pool
+changes under traffic, a forced open() failure followed by down and
+up, unbind/bind under traffic, a forced register_netdev() failure in
+probe, ethtool -L with a forced TX buffer allocation failure, and
+rapid link down/up and MTU cycles under a ping flood for patch 8.
+The forced failures used test-only module parameters that are not
+part of this series.
+
+Changes in v2:
+
+From the Sashiko review of v1:
+- Patch 5: give the pool kobjects a release() and wait for it before
+  free_netdev() in probe and remove(), which closes the
+  CONFIG_DEBUG_KOBJECT_RELEASE window.
+- New patch 8: wait for the poll to return before close() frees the
+  RX queue (raised on patch 1 as a pre-existing bug).
+
+Other small changes:
+- Patch 1: also skip RX replenish in netpoll's budget-0 poll.
+- Patch 4: count rx_dropped when recycling an invalid buffer fails.
+- Commit messages: say how each bug was found and tested, with small
+  clarifications in patches 2 and 7.
+
+Rebased on current net-next.
+
+v1: https://lore.kernel.org/netdev/cover.1790991039.git.mmc@linux.ibm.com/
+
+[1] https://lore.kernel.org/netdev/cover.1790319558.git.mmc@linux.ibm.com/
+
+Thanks,
+Mingming
