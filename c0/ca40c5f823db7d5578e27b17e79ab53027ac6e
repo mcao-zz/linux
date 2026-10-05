@@ -2,4 +2,3 @@ Changes in v2:
 - commit message: dev_close() waits for running transmits only when
   the qdisc has an enqueue function, so ifdown and the reset work race
   the same way with noqueue
-- commit message: say how the race was found
