@@ -2,4 +2,3 @@ Changes in v2:
 - skip RX replenish when ibmveth_poll() runs with budget 0:
   napi->poll_owner does not serialize netpoll with a NAPI poll
   that was already running when netpoll was set up
-- commit message: say how the races were found and tested
