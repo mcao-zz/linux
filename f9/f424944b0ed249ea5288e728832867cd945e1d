@@ -1,0 +1,6 @@
+Changes in v2:
+- commit message: without the two net fixes, the TX buffers and the
+  logical LAN registration that a failed open() leaves behind stay in
+  place after the early return, as before this patch
+- commit message: say how the bug was found, and that the open()
+  failure was forced by a test-only module parameter
