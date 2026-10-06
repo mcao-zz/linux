@@ -1,0 +1,33 @@
+Changes in v8:
+- index-0 conversion also covers code the fixes series added:
+  ibmveth_rxq_correlator_valid(), ibmveth_rxq_advance() and the
+  KUnit tests (patch 4), napi_enable()/napi_disable() around
+  request_irq() (patch 1), ibmveth_put_pool_kobjs() and the pool
+  released completion (patch 5). remove()'s kobject_put() loop is
+  now that helper
+- commit message: drop the paragraph saying probe kobject cleanup is
+  pre-existing and lands later; fixes series patch 5 ("ibmveth:
+  release the pool kobjects when probe fails") does it
+
+Changes in v7:
+- no P02 code change
+
+Changes in v5:
+- Drop unrelated style nits that v4 mixed into the index-0 conversion
+  (ibmveth_rxq_get_buffer() prototype reflow, get_desired_dma
+  "Return:" kdoc, blank line after rx_large_packets)
+- Document queue-0 poolN/ sysfs as the shared geometry/template for all
+  RX queues (buff_size/size/active); queues 1..N get no separate pool
+  sysfs in this series
+- Decision: keep full ibmveth_buff_pool per queue for this series
+  (unused embedded kobjects on rows 1..N); a config-vs-runtime layout
+  split is out of scope here
+
+Changes in v4:
+- Keep IBMVETH_MAX_RX_QUEUES at 1 until MQ enablement (same idea as v3,
+  but v3 also planted unused stats types here).
+- Layout-only: queue-indexed adapter fields only. Do not introduce
+  the rx/tx qstats here (first-use); they land with the per-queue
+  statistics patch.
+- Subject: "Prepare MQ RX adapter data structures" (was "...and
+  statistics structures" in earlier drafts).
