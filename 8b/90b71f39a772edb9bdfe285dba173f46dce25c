@@ -64,8 +64,7 @@ up, unbind/bind under traffic, a forced register_netdev() failure in
 probe, ethtool -L with a forced TX buffer allocation failure, and
 rapid link down/up and MTU cycles under a ping flood for patch 8.
 The forced failures used test-only module parameters that are not
-part of this series. The LPAR runs were on v2; the v3 changes to
-patch 4 were tested with KUnit and W=1 builds of every patch.
+part of this series.
 
 The triggers are rare and there are no field reports, so the series
 targets net-next. It is based on net-next d8674294aefe ("Merge
