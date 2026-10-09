@@ -1,0 +1,6 @@
+Changes in v3:
+- commit message: the two open() fixes are now in net-next
+
+Changes in v2:
+- commit message: say what a failed open() leaves behind without the
+  two net fixes
