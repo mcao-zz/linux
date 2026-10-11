@@ -1,0 +1,22 @@
+Changes in v4:
+- return after the final napi_schedule() instead of going back to
+  restart_poll, and drop the budget - 1 return (Sashiko review of v3:
+  threaded NAPI with busy polling)
+- harvest takes the correlator poll read, instead of reading the ring
+  entry again (Sashiko review of v3)
+- check IP/TCP header lengths and IPv4 ihl >= 5 in the large send and
+  checksum helpers (Sashiko review of v3; ihl is pre-existing)
+
+Changes in v3:
+- after a bad slot, keep polling and count the slot against the NAPI
+  budget instead of breaking out with budget left; once poll has
+  rescheduled itself, return budget - 1 so busy_poll_stop() cannot
+  queue the NAPI a second time (Sashiko review of v2)
+- drop a frame whose offset + length does not fit its pool buffer
+  (Sashiko review of v2, pre-existing) or that is shorter than an
+  Ethernet header
+- read the correlator once and pass it to ibmveth_rxq_get_buffer(),
+  so the buffer bound uses the validated pool
+
+Changes in v2:
+- count rx_dropped when recycling an invalid buffer fails
