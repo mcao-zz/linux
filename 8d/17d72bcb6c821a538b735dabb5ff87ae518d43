@@ -5,6 +5,7 @@ Changes in v5:
   egress path produces (Sashiko review of v4)
 - KUnit: a large send with payload and bytes past the IP length is
   refused, its GSO fields and TCP checksum field left alone
+- wrap three lines over 80 columns
 
 New in v4: the helper header checks from v3 patch 4, split out with
 their own Fixes: tags.
