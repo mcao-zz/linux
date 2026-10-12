@@ -2,14 +2,15 @@ Changes in v4:
 - after the final check finds more work, mask, queue the NAPI and
   return, instead of going back to restart_poll; drop the budget - 1
   return (Sashiko review of v3: threaded NAPI with busy polling)
-- mask the interrupt before queueing the NAPI, as the interrupt
-  handler does, so a threaded NAPI cannot unmask first
 - harvest takes the correlator poll read, instead of reading the ring
   entry again (Sashiko review of v3)
 - check IP/TCP header lengths against skb_headlen() and IPv4 ihl >= 5
   in the large send and checksum helpers (Sashiko review of v3; ihl is
-  pre-existing); the large send helper also requires TCP doff >= 5
-  and a payload, so gso_segs is never 0
+  pre-existing)
+- mask the interrupt before queueing the NAPI, as the interrupt
+  handler does, so a threaded NAPI cannot unmask first
+- the large send helper also requires TCP doff >= 5 and a payload,
+  so gso_segs is never 0
 - floor the sender's segment size at TCP_MIN_GSO_SIZE, as
   virtio_net_hdr_to_skb() does
 
