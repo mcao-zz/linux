@@ -1,6 +1,6 @@
 Changes in v4:
-- after the final check finds more work, mask, queue the NAPI and
-  return, instead of going back to restart_poll; drop the budget - 1
+- after the final check finds more work, queue the NAPI and return,
+  instead of going back to restart_poll; drop the budget - 1
   return (Sashiko review of v3: threaded NAPI with busy polling)
 - harvest takes the correlator poll read, instead of reading the ring
   entry again (Sashiko review of v3)
