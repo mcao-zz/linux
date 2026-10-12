@@ -1,0 +1,12 @@
+New in v4. The v3 version of patch 4 claimed its frame bound kept the
+checksum helpers from writing past a short frame; the Sashiko review
+of v3 showed an Ethernet header minimum does not do that, and that
+ihl 0 reaches ip_fast_csum(). The helper checks are a separate bug
+from the correlator handling, so they are their own patch with their
+own Fixes: tags. Beyond what the review asked:
+- the large send helper also requires TCP doff >= 5 and TCP payload
+  within the IP length, and computes gso_segs from the IP length
+- a frame that fails either helper's checks loses
+  CHECKSUM_UNNECESSARY
+- keep the sender's segment size between TCP_MIN_GSO_SIZE and
+  GSO_BY_FRAGS - 1, as virtio_net_hdr_to_skb() does
