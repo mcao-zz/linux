@@ -41,7 +41,8 @@
 static irqreturn_t ibmveth_interrupt(int irq, void *dev_instance);
 static unsigned long ibmveth_get_desired_dma(struct vio_dev *vdev);
 
-static struct kobj_type ktype_veth_pool;
+static const struct attribute_group *
+veth_pool_groups[IBMVETH_NUM_BUFF_POOLS + 1];
 
 
 static const char ibmveth_driver_name[] = "ibmveth";
@@ -1994,17 +1995,15 @@ static int ibmveth_probe(struct vio_dev *dev, const struct vio_device_id *id)
 	if (firmware_has_feature(FW_FEATURE_CMO))
 		memcpy(pool_count, pool_count_cmo, sizeof(pool_count));
 
-	for (i = 0; i < IBMVETH_NUM_BUFF_POOLS; i++) {
-		struct kobject *kobj = &adapter->rx_buff_pool[i].kobj;
-		int error;
-
+	for (i = 0; i < IBMVETH_NUM_BUFF_POOLS; i++)
 		ibmveth_init_buffer_pool(&adapter->rx_buff_pool[i], i,
 					 pool_count[i], pool_size[i],
 					 pool_active[i]);
-		error = kobject_init_and_add(kobj, &ktype_veth_pool,
-					     &dev->dev.kobj, "pool%d", i);
-		if (!error)
-			kobject_uevent(kobj, KOBJ_ADD);
+
+	rc = device_add_groups(&dev->dev, veth_pool_groups);
+	if (rc) {
+		free_netdev(netdev);
+		return rc;
 	}
 
 	rc = netif_set_real_num_tx_queues(netdev, min(num_online_cpus(),
@@ -2012,8 +2011,7 @@ static int ibmveth_probe(struct vio_dev *dev, const struct vio_device_id *id)
 	if (rc) {
 		netdev_dbg(netdev, "failed to set number of tx queues rc=%d\n",
 			   rc);
-		free_netdev(netdev);
-		return rc;
+		goto err_remove_pools;
 	}
 	adapter->tx_ltb_size = PAGE_ALIGN(IBMVETH_MAX_TX_BUF_SIZE);
 	for (i = 0; i < IBMVETH_MAX_QUEUES; i++)
@@ -2028,25 +2026,27 @@ static int ibmveth_probe(struct vio_dev *dev, const struct vio_device_id *id)
 
 	if (rc) {
 		netdev_dbg(netdev, "failed to register netdev rc=%d\n", rc);
-		free_netdev(netdev);
-		return rc;
+		goto err_remove_pools;
 	}
 
 	netdev_dbg(netdev, "registered\n");
 
 	return 0;
+
+err_remove_pools:
+	device_remove_groups(&dev->dev, veth_pool_groups);
+	free_netdev(netdev);
+	return rc;
 }
 
 static void ibmveth_remove(struct vio_dev *dev)
 {
 	struct net_device *netdev = dev_get_drvdata(&dev->dev);
 	struct ibmveth_adapter *adapter = netdev_priv(netdev);
-	int i;
 
 	disable_work_sync(&adapter->work);
 
-	for (i = 0; i < IBMVETH_NUM_BUFF_POOLS; i++)
-		kobject_put(&adapter->rx_buff_pool[i].kobj);
+	device_remove_groups(&dev->dev, veth_pool_groups);
 
 	unregister_netdev(netdev);
 
@@ -2054,30 +2054,49 @@ static void ibmveth_remove(struct vio_dev *dev)
 	dev_set_drvdata(&dev->dev, NULL);
 }
 
-static struct attribute veth_active_attr;
-static struct attribute veth_num_attr;
-static struct attribute veth_size_attr;
+enum ibmveth_pool_field {
+	IBMVETH_POOL_ACTIVE,
+	IBMVETH_POOL_NUM,
+	IBMVETH_POOL_SIZE,
+};
 
-static ssize_t veth_pool_show(struct kobject *kobj,
-			      struct attribute *attr, char *buf)
+struct ibmveth_pool_attr {
+	struct device_attribute attr;
+	unsigned int pool;
+	enum ibmveth_pool_field field;
+};
+
+static struct ibmveth_buff_pool *veth_pool_get(struct device *dev,
+					       struct ibmveth_pool_attr *pa)
 {
-	struct ibmveth_buff_pool *pool = container_of(kobj,
-						      struct ibmveth_buff_pool,
-						      kobj);
+	struct ibmveth_adapter *adapter = netdev_priv(dev_get_drvdata(dev));
 
-	if (attr == &veth_active_attr)
-		return sprintf(buf, "%d\n", pool->active);
-	else if (attr == &veth_num_attr)
-		return sprintf(buf, "%d\n", pool->size);
-	else if (attr == &veth_size_attr)
-		return sprintf(buf, "%d\n", pool->buff_size);
+	return &adapter->rx_buff_pool[pa->pool];
+}
+
+static ssize_t veth_pool_show(struct device *dev,
+			      struct device_attribute *attr, char *buf)
+{
+	struct ibmveth_pool_attr *pa = container_of(attr,
+						    struct ibmveth_pool_attr,
+						    attr);
+	struct ibmveth_buff_pool *pool = veth_pool_get(dev, pa);
+
+	switch (pa->field) {
+	case IBMVETH_POOL_ACTIVE:
+		return sysfs_emit(buf, "%d\n", pool->active);
+	case IBMVETH_POOL_NUM:
+		return sysfs_emit(buf, "%d\n", pool->size);
+	case IBMVETH_POOL_SIZE:
+		return sysfs_emit(buf, "%d\n", pool->buff_size);
+	}
 	return 0;
 }
 
 /**
  * veth_pool_store - sysfs store handler for pool attributes
- * @kobj: kobject embedded in pool
- * @attr: attribute being changed
+ * @dev: vio device the pool directory is under
+ * @attr: attribute being changed, embedded in a struct ibmveth_pool_attr
  * @buf: value being stored
  * @count: length of @buf in bytes
  *
@@ -2094,13 +2113,15 @@ static ssize_t veth_pool_show(struct kobject *kobj,
  * * count    - Return count for success
  * * other    - Return value from a failed ibmveth_open call
  */
-static ssize_t veth_pool_store(struct kobject *kobj, struct attribute *attr,
+static ssize_t veth_pool_store(struct device *dev,
+			       struct device_attribute *attr,
 			       const char *buf, size_t count)
 {
-	struct ibmveth_buff_pool *pool = container_of(kobj,
-						      struct ibmveth_buff_pool,
-						      kobj);
-	struct net_device *netdev = dev_get_drvdata(kobj_to_dev(kobj->parent));
+	struct ibmveth_pool_attr *pa = container_of(attr,
+						    struct ibmveth_pool_attr,
+						    attr);
+	struct ibmveth_buff_pool *pool = veth_pool_get(dev, pa);
+	struct net_device *netdev = dev_get_drvdata(dev);
 	struct ibmveth_adapter *adapter = netdev_priv(netdev);
 	long value = simple_strtol(buf, NULL, 10);
 	bool change = false;
@@ -2122,7 +2143,7 @@ static ssize_t veth_pool_store(struct kobject *kobj, struct attribute *attr,
 	newactive = oldactive;
 	newsize = oldsize;
 
-	if (attr == &veth_active_attr) {
+	if (pa->field == IBMVETH_POOL_ACTIVE) {
 		if (value && !oldactive) {
 			newactive = 1;
 			change = true;
@@ -2149,7 +2170,7 @@ static ssize_t veth_pool_store(struct kobject *kobj, struct attribute *attr,
 			newactive = 0;
 			change = true;
 		}
-	} else if (attr == &veth_num_attr) {
+	} else if (pa->field == IBMVETH_POOL_NUM) {
 		if (value <= 0 || value > IBMVETH_MAX_POOL_COUNT) {
 			rc = -EINVAL;
 			goto unlock_err;
@@ -2158,7 +2179,7 @@ static ssize_t veth_pool_store(struct kobject *kobj, struct attribute *attr,
 			newsize = value;
 			change = true;
 		}
-	} else if (attr == &veth_size_attr) {
+	} else if (pa->field == IBMVETH_POOL_SIZE) {
 		if (value <= IBMVETH_BUFF_OH || value > IBMVETH_MAX_BUF_SIZE) {
 			rc = -EINVAL;
 			goto unlock_err;
@@ -2199,33 +2220,48 @@ unlock_err:
 }
 
 
-#define ATTR(_name, _mode)				\
-	struct attribute veth_##_name##_attr = {	\
-	.name = __stringify(_name), .mode = _mode,	\
-	};
+#define VETH_POOL_ATTR(_pool, _name, _field)				\
+	static struct ibmveth_pool_attr veth_pool##_pool##_##_name = {	\
+		.attr = __ATTR(_name, 0644, veth_pool_show,		\
+			       veth_pool_store),			\
+		.pool = _pool,						\
+		.field = _field,					\
+	}
 
-static ATTR(active, 0644);
-static ATTR(num, 0644);
-static ATTR(size, 0644);
+#define VETH_POOL_GROUP(_pool)						\
+	VETH_POOL_ATTR(_pool, active, IBMVETH_POOL_ACTIVE);		\
+	VETH_POOL_ATTR(_pool, num, IBMVETH_POOL_NUM);			\
+	VETH_POOL_ATTR(_pool, size, IBMVETH_POOL_SIZE);			\
+	static struct attribute *veth_pool##_pool##_attrs[] = {		\
+		&veth_pool##_pool##_active.attr.attr,			\
+		&veth_pool##_pool##_num.attr.attr,			\
+		&veth_pool##_pool##_size.attr.attr,			\
+		NULL,							\
+	};								\
+	static const struct attribute_group veth_pool##_pool##_group = { \
+		.name = "pool" #_pool,					\
+		.attrs = veth_pool##_pool##_attrs,			\
+	}
 
-static struct attribute *veth_pool_attrs[] = {
-	&veth_active_attr,
-	&veth_num_attr,
-	&veth_size_attr,
+VETH_POOL_GROUP(0);
+VETH_POOL_GROUP(1);
+VETH_POOL_GROUP(2);
+VETH_POOL_GROUP(3);
+VETH_POOL_GROUP(4);
+
+/* Removing a group waits for a show() or store() in progress, so once
+ * device_remove_groups() returns no pool file can reach the netdev.
+ */
+static const struct attribute_group *veth_pool_groups[] = {
+	&veth_pool0_group,
+	&veth_pool1_group,
+	&veth_pool2_group,
+	&veth_pool3_group,
+	&veth_pool4_group,
 	NULL,
 };
-ATTRIBUTE_GROUPS(veth_pool);
 
-static const struct sysfs_ops veth_pool_ops = {
-	.show   = veth_pool_show,
-	.store  = veth_pool_store,
-};
-
-static struct kobj_type ktype_veth_pool = {
-	.release        = NULL,
-	.sysfs_ops      = &veth_pool_ops,
-	.default_groups = veth_pool_groups,
-};
+static_assert(ARRAY_SIZE(veth_pool_groups) == IBMVETH_NUM_BUFF_POOLS + 1);
 
 static int ibmveth_resume(struct device *dev)
 {

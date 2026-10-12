@@ -142,7 +142,6 @@ struct ibmveth_buff_pool {
     dma_addr_t *dma_addr;
     struct sk_buff **skbuff;
     int active;
-    struct kobject kobj;
 };
 
 struct ibmveth_rx_q {
