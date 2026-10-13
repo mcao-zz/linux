@@ -3,14 +3,10 @@ Changes in v5:
   bytes past the IP length stay in a bridged or switched frame, so
   gso_segs computed from the IP length undercounted the segments the
   egress path produces (Sashiko review of v4)
-- KUnit: a large send with payload and bytes past the IP length is
-  refused, its GSO fields and TCP checksum field left alone
-- KUnit: header-only IPv4 and IPv6 frames with a matching IP length
-  are refused, so a case still fails without the TCP payload check
-- message and helper comment: a refused frame is left unchanged and not
-  trusted, rather than "checked by the stack", which bridged or
-  switched frames are not
-- wrap three lines over 80 columns
+- KUnit: cover that case, and header-only IPv4 and IPv6 frames so the
+  TCP payload check is still tested
+- message and comment no longer say a refused frame is checked by the
+  stack; bridged or switched frames are not
 
 New in v4: the helper header checks from v3 patch 4, split out with
 their own Fixes: tags.
