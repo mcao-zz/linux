@@ -4531,6 +4531,7 @@ static void send_request_cap(struct ibmvnic_adapter *adapter, int retry)
 	if (!retry) {
 		/* Sub-CRQ entries are 32 byte long */
 		int entries_page = 4 * PAGE_SIZE / (sizeof(u64) * 4);
+		u64 tx_entries, rx_entries;
 
 		atomic_set(&adapter->running_cap_crqs, cap_reqs);
 
@@ -4545,39 +4546,26 @@ static void send_request_cap(struct ibmvnic_adapter *adapter, int retry)
 		else
 			adapter->req_mtu = adapter->netdev->mtu + ETH_HLEN;
 
-		if (!adapter->desired.tx_entries)
-			adapter->desired.tx_entries =
-					adapter->max_tx_entries_per_subcrq;
-		if (!adapter->desired.rx_entries)
-			adapter->desired.rx_entries =
-					adapter->max_rx_add_entries_per_subcrq;
+		tx_entries = adapter->desired.tx_entries ?
+			     adapter->desired.tx_entries :
+			     adapter->max_tx_entries_per_subcrq;
+		rx_entries = adapter->desired.rx_entries ?
+			     adapter->desired.rx_entries :
+			     adapter->max_rx_add_entries_per_subcrq;
 
 		max_entries = IBMVNIC_LTB_SET_SIZE /
 			      (adapter->req_mtu + IBMVNIC_BUFFER_HLEN);
 
 		if ((adapter->req_mtu + IBMVNIC_BUFFER_HLEN) *
-			adapter->desired.tx_entries > IBMVNIC_LTB_SET_SIZE) {
-			adapter->desired.tx_entries = max_entries;
-		}
+			tx_entries > IBMVNIC_LTB_SET_SIZE)
+			tx_entries = max_entries;
 
 		if ((adapter->req_mtu + IBMVNIC_BUFFER_HLEN) *
-			adapter->desired.rx_entries > IBMVNIC_LTB_SET_SIZE) {
-			adapter->desired.rx_entries = max_entries;
-		}
+			rx_entries > IBMVNIC_LTB_SET_SIZE)
+			rx_entries = max_entries;
 
-		if (adapter->desired.tx_entries)
-			adapter->req_tx_entries_per_subcrq =
-					adapter->desired.tx_entries;
-		else
-			adapter->req_tx_entries_per_subcrq =
-					adapter->max_tx_entries_per_subcrq;
-
-		if (adapter->desired.rx_entries)
-			adapter->req_rx_add_entries_per_subcrq =
-					adapter->desired.rx_entries;
-		else
-			adapter->req_rx_add_entries_per_subcrq =
-					adapter->max_rx_add_entries_per_subcrq;
+		adapter->req_tx_entries_per_subcrq = tx_entries;
+		adapter->req_rx_add_entries_per_subcrq = rx_entries;
 
 		if (adapter->desired.tx_queues)
 			adapter->req_tx_queues =
