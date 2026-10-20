@@ -1602,6 +1602,13 @@ partial_reset:
 				    "Freeing and re-registering CRQs before attempting to login again\n");
 			retry = true;
 			adapter->init_done_rc = 0;
+			/* Guard against a stale LOGIN_RSP that VIOS may have
+			 * queued for the previous attempt: after CRQ
+			 * re-registration the interrupt fires immediately, and
+			 * handle_login_rsp() will skip processing if
+			 * login_pending is false.
+			 */
+			adapter->login_pending = false;
 			release_sub_crqs(adapter, true);
 			/* Much of this is similar logic as ibmvnic_probe(),
 			 * we are essentially re-initializing communication
