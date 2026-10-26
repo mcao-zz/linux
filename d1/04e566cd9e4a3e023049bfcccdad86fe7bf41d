@@ -1,8 +1,11 @@
 Changes in v8:
 - bad-correlator and oversize slots advance the ring, count rx_dropped
   and consume budget
+- a failed invalid-slot recycle consumes budget, as in net-next
 - a poll that stops with its budget used returns budget without
   completing NAPI
+- get_buffer() is a plain lookup; rxq_harvest_buffer() is renamed
+  rxq_harvest_correlator()
 - deliver_frame() keeps net-next's per-queue frame bound and header
   checks; the poll tail matches net-next (mask then schedule)
 
