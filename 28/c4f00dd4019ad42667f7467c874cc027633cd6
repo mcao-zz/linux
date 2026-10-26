@@ -1,21 +1,10 @@
 Changes in v8:
-- max_tx floor in get_channels / set_channels (live count or online-CPU
-  cap); mq_fallback max_rx cap stays in the get_channels patch
-- resize_rx_channels kdoc: while down return 0; set_channels publishes
-  without allocating
-- down-path: -EBUSY if queue_registered[] in [old, goal); check before
-  TX set_real; do not unmap (fail-before-start)
-- skip TX LTB path when goal_tx == old_tx; keep alloc_rc error return
-  through the old_tx/goal_tx rename
-- subject is the down-path; name the resize commit by subject
-- noted: TX shrink keeps netif_tx_stop_all_queues() (set_real
-  synchronize_net before LTB free); do not clamp rx_count; do not
-  advertise max_rx = 1
-- down-path CMO refresh uses ibmveth_refresh_cmo_desired()
-- TX alloc loop keeps net-next's for-initializer and comments; the
-  early goal_tx == old_tx return sits above them
-- down-path comment names close() keeping the LAN memory after a
-  failed H_FREE_LOGICAL_LAN
+- max_tx floor in get_channels/set_channels (live count or online-CPU
+  cap)
+- down-path: -EBUSY if a queue in the new range is still registered,
+  checked before the TX change; no unmap
+- skip the TX LTB path when the TX count does not change
+- subject names the down-path
 
 Dropped from this series (merged fixes own them):
 - commit 8d9ecac6b96e: the poll_controller !opened guard.
