@@ -2,7 +2,7 @@ Changes in v8:
 - MQ hard H_FREE_LOGICAL_LAN failure (not H_PARAMETER) keeps the LAN
   memory mapped: register failure, the open() unwind and close() skip
   the unmap; the next open() and remove() retry and then free it
-  (remove() leaks it if the retry fails); poolN writes return -EBUSY
+  (remove() leaves it mapped if that fails); poolN writes return -EBUSY
   meanwhile. Single queue keeps the base log-and-unmap
 - free_tx_resources() walks every TX LTB slot
 - apply_mq_fallback() sets real_num to 1; set_channels rejects an
@@ -11,8 +11,8 @@ Changes in v8:
   fails
 - subordinate IRQs are named ibmveth-<unit>-rxN; probe fails on a
   kobject_init_and_add() error
-- commit message: the adapter-wide counters race until the next patch;
-  remove()'s leak relies on CMO and MQ firmware not coexisting
+- commit message: RX counters stay adapter-wide until the next patch;
+  remove() relies on CMO and MQ firmware not coexisting
 
 Dropped from this series (merged fixes own them):
 - commit 8d9ecac6b96e: poll_controller per-queue loop (ndo removed)
