@@ -1,12 +1,8 @@
 Changes in v8:
-- queue_registered[] is the slot-is-live flag; handle 0 can be valid
-  (set/clear helpers)
-- close() samples update_rx_no_buffer() after free_all_queues(), not
-  before (the v5 note below is the old order)
-- pool-alloc failure in open() calls H_FREE_LOGICAL_LAN once (result
-  ignored) so a LAN left registered by a kexec'd kernel does not keep
-  its buffers live in PHYP
-- free_all_queues() kdoc: callers and the [0, num_rx_queues) range
+- queue_registered[] marks a live slot; handle 0 can be a valid cookie
+- close() samples the no_buffer counter after free_all_queues()
+- a buffer pool allocation failure in open() still calls
+  H_FREE_LOGICAL_LAN once, for a LAN a kexec'd kernel left registered
 
 Changes in v7:
 - no P07 code change
