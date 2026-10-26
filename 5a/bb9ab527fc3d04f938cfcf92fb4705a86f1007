@@ -3,6 +3,8 @@ Changes in v8:
   open-fail pair and nine fixes in base
 - DMA error comment shortened; commit message names the dropped dead
   rc after request_irq, the open() order change and log strings
+- commit message: a filter-list map error clears both fields; no
+  claim that zeroing the DMA handle prevents an unmap
 
 Dropped from this series (merged fixes own them):
 - commit af0524bf4ce1: post-register pool-fail h_free hunks v7 MQ
