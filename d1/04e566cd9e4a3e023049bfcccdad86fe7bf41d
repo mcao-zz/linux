@@ -16,6 +16,8 @@ Changes in v8:
 - commit message: a failed harvest ends the loop; the stopping check
   narrows the re-arm; frames pending at close are not delivered.
   Harvest KUnit kdoc fixed
+- commit message: a failed deliver harvest is defensive at this
+  commit (the lookup has just found the buffer)
 
 Dropped from this series (merged fixes own them):
 - commit c9b95adc755f: duplicate copybreak/NULL-skb hunks and message
