@@ -1,17 +1,10 @@
 Changes in v8:
-- Teardown: synchronize_net() after napi_disable(), then remask and
-  free_irq in cleanup_rx_interrupts and err_disable_napi. Poll tail masks
-  PHYP then schedules NAPI (same as schedule_rx_queue(); no restart_poll)
-- ibmveth_schedule_rx_queue() returns void; no caller used the result
-- Commit message: SCHED wait vs synchronize_net tail; H_PARAMETER
-  disable-fold is subordinate H_VIOCTL only (queue 0 h_vio_signal
-  still -EIO); on enable, H_PARAMETER means LISN out of range; cite
-  commit 95811c873d1b for adapter->opened; drop enable-fail rollback
-  paragraph
-- restore the open() and poll-tail ordering reasons in comments;
-  schedule_rx_queue() kdoc: prep also fails while NAPI is disabled
-- commit message: close() now runs netif_tx_disable() first; failure
-  message shortened
+- teardown: synchronize_net() after napi_disable(), then remask and
+  free_irq(); the poll tail masks then schedules NAPI, like
+  schedule_rx_queue(), with no restart_poll
+- ibmveth_schedule_rx_queue() returns void
+- commit message: the H_PARAMETER fold applies to the subordinate
+  H_VIOCTL disable only
 
 Dropped from this series (merged fixes own them):
 - commit 8d9ecac6b96e: poll_controller() netpoll kick (ndo removed)
