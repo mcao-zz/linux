@@ -1,6 +1,5 @@
 Changes in v8:
-- netif_tx_disable() at the start of open(); TX LTBs are allocated after
-  LAN registration and the queues start after them, under
+- netif_tx_disable() at the start of open(); the TX queues start under
   netif_tx_lock_bh(), since NAPI (and generic XDP_TX) is already live
 - a late TX allocation failure unwinds through cleanup_rx_interrupts()
   (patch 5), which already waits for the poll
@@ -14,8 +13,6 @@ Dropped from this series (merged fixes own them):
   netif_tx_disable() (in base; this patch adds open()-start disable)
 - commit 84bec0bf0352: free_tx_ltb() NULL check and NULL-first clear
   (in base; MQ refactor keeps the v6 behavior, not a duplicate fix hunk)
-- commit 3f872b34368c: v7 synchronize_net() after cleanup_rx_interrupts()
-  on late TX-alloc failure (patch 5 helper already waits)
 - commit 95811c873d1b: set_channels IFF_UP vs opened commit-message claim
   (base gates set_channels() on opened)
 
