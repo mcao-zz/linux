@@ -1,12 +1,9 @@
 Changes in v8:
-- ibmveth_poll() oversize check uses rx_buff_pool[0][pool].buff_size
-  (2D conversion left rx_buff_pool[pool].buff_size; broke build through
-  P07)
-- Index-0 pass on net-next: synchronize_net() after napi_disable() in
-  close() stays on napi[0] until patch 5; keep commit c9b95adc755f's
-  ibmveth_rxq_get_buffer(adapter, correlator) /
-  harvest_buffer(adapter, correlator, …) and read the correlator from
-  rx_queue[0] (P08 adds queue index to the accessors)
+- poll oversize check uses rx_buff_pool[0][pool] (v7 broke the build
+  through patch 7)
+- rebased onto net-next: the merged synchronize_net() after
+  napi_disable() and correlator accessors stay on queue 0 until the
+  queue-aware patches
 
 Dropped from this series (merged fixes own them):
 - commit c9b95adc755f: duplicate poll/deliver hardening hunks; base owns
