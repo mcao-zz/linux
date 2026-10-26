@@ -1,7 +1,8 @@
 Changes in v8:
 - H_FREE_LOGICAL_LAN_QUEUE kdoc: subordinate handles only (queue 0 goes
   with H_FREE_LOGICAL_LAN); H_PARAMETER means no logical LAN or no such
-  registered queue
+  registered queue; the with_handle wrapper's R4 handle exists only on
+  firmware that reports MQ RX support
 - commit message: out-params are stored only on H_SUCCESS; hcall_inst
   counts the new opcodes
 
