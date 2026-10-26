@@ -3,7 +3,8 @@ Changes in v8:
   memory mapped: register failure, the open() unwind and close() skip
   the unmap; the next open() and remove() retry and then free it
   (remove() leaves it mapped if that fails); poolN writes return -EBUSY
-  meanwhile. Single queue keeps the base log-and-unmap
+  meanwhile, and a write whose reopen fails keeps the new geometry
+  if its pools stay mapped. Single queue keeps the base log-and-unmap
 - free_tx_resources() walks every TX LTB slot
 - apply_mq_fallback() sets real_num to 1; set_channels rejects an
   rx_count change until the resize patch
