@@ -1,7 +1,10 @@
 Changes in v8:
 - teardown: synchronize_net() after napi_disable(), then remask and
-  free_irq(); the poll tail masks then schedules NAPI, like
-  schedule_rx_queue(), with no restart_poll
+  free_irq()
+- rebased onto net-next's poll tail (mask then schedule, no
+  restart_poll)
+- close() keeps net-next's order and samples the no_buffer counter
+  after h_free_logical_lan()
 - ibmveth_schedule_rx_queue() returns void
 - commit message: the H_PARAMETER fold applies to the subordinate
   H_VIOCTL disable only
