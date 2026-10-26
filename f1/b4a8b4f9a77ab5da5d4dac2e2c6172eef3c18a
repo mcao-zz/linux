@@ -1,13 +1,8 @@
 Changes in v8:
-- cap max_rx at the live rx_count once mq_fallback; do not advertise
-  max_rx = 1. Do not clamp rx_count
-- this peel only reports: the set_channels rx_count reject lives in the
-  MQ enable patch (message names it)
-- mq_fallback accesses use READ_ONCE()/WRITE_ONCE(): the replenish
-  writer runs without RTNL while get_channels() and apply_mq_fallback()
-  read under RTNL
-- noted: live RX set, down-path, and max_tx floor stay later
-- commit message: corrected rationale for reporting the live rx_count
+- once mq_fallback is set, max_rx is the live rx_count (never 1);
+  rx_count is not clamped
+- mq_fallback uses READ_ONCE()/WRITE_ONCE(): replenish writes it
+  without RTNL
 
 Changes in v7:
 - reject rx_count change with -EOPNOTSUPP in
