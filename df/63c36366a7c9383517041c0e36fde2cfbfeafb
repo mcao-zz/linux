@@ -4,7 +4,6 @@ Changes in v8:
 - ndo_get_stats64() fills rx_missed_errors
 - rx_qstats[].dropped for a bad correlator, a failed harvest,
   recycle-invalid, and oversize
-- wrap deliver_frame STAT_INC(...dropped) (checkpatch 80-col)
 - ibmveth_rx_no_buffer_pair() under replenish_lock
 - ibmveth_retire_rx_no_buffer() in free_all_queues() after a successful
   H_FREE; close() itself no longer samples
@@ -22,6 +21,14 @@ Changes in v8:
 - on rebase onto net-next with the fixes merged: keep deliver_frame's
   mss helper bool (clear csum_good) when moving large_packets to
   per-queue qstats; no restart_poll when adding the polls counter
+- deliver_frame() takes a local rxs for its qstats so the dropped
+  increments fit 80 columns (v8.5r4 left them at 82)
+- rx_no_buffer ethtool entry carries no offset; it is summed from
+  ibmveth_rx_no_buffer_pair()
+- free_all_queues() retires no_buffer whenever the caller will unmap
+  (SQ failure and H_PARAMETER included), skipped only on -EIO
+- commit message names rx-alloc-fail and why invalid_buffers stays
+  in ethtool -S
 
 Changes in v7:
 - close() harvests no_buffer under replenish_lock
