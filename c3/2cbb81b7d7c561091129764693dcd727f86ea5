@@ -122,9 +122,11 @@ Code changes:
 * Patch 9: poll deliver_frame and recycle_invalid use that helper;
   bad/oversize slots count
   rx_dropped and consume budget. deliver_frame keeps the merged
-  frame bound (per queue) and header checks.
-* Patch 10: hard H_FREE skips unmap on register-fail, post-register
-  open unwind, and close(); apply_mq_fallback sets
+  frame bound (per queue) and header checks. Stopping at full
+  budget returns budget without completing NAPI.
+* Patch 10: in MQ mode a hard H_FREE skips unmap on register-fail,
+  post-register open unwind, and close() (single-queue still
+  unmaps; H_PARAMETER is already free); apply_mq_fallback sets
   real_num to 1; set_channels rejects rx_count change until
   patch 14. restart_rx_queue() no longer unmasks PHYP when
   napi_schedule_prep() fails: the poll already scheduled unmasks
@@ -138,7 +140,8 @@ Code changes:
   remask; roll RX back if TX misses; skip unmask if
   set_real(keep) fails (still napi_enable); skip unmap on
   H_FREE fail-before-start. Keep-path fences honor real_num;
-  free_tx walks every LTB slot.
+  free_tx walks every LTB slot. Stranded queues retire no_buffer
+  before they are freed.
 * Patch 15: down-path publish; -EBUSY if a queue in the new
   range is still registered. max_tx floor.
 
