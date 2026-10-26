@@ -16,6 +16,11 @@ Changes in v8:
   error to bad_correlator()
 - on rebase onto net-next with the fixes merged: poll completion masks
   then queues and returns (no restart_poll), same as patch 5
+- comments: restore the skb_reserve() note; "Do not log" (a failed
+  GFP_ATOMIC skb allocation can still warn); a map failure is retried
+  by the next poll's replenish
+- commit message: a drained queue waits for a reopen, as before;
+  names the log device and message changes
 
 Dropped from this series (merged fixes own them):
 - commit 8d9ecac6b96e: the poll_controller() replenish_task(adapter, 0)
