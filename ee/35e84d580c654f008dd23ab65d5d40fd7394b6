@@ -10,8 +10,10 @@ Changes in v8:
   rx_count change until the resize patch
 - restart_rx_queue() does not unmask PHYP when napi_schedule_prep()
   fails
-- subordinate IRQs are named ibmveth-<unit>-rxN; probe fails on a
-  kobject_init_and_add() error
+- subordinate IRQs are named ibmveth-<unit>-rxN; queue 0 keeps
+  netdev->name
+- a probe kobject_init_and_add() failure puts only the pool kobjects
+  already added (pools_ready)
 - commit message: RX counters stay adapter-wide until the next patch;
   remove() relies on CMO and MQ firmware not coexisting
 
