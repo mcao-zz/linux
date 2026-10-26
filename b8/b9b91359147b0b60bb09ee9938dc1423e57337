@@ -4,8 +4,8 @@ Changes in v8:
 - correlator_valid() takes the queue index and requires an active pool;
   logging and reset move to the callers; harvest resets on a bad
   correlator
-- replenish_lock is spin_lock_bh(); replenish failures are logged after
-  the unlock
+- replenish_lock is spin_lock_bh(); replenish_task_cycles is counted
+  under it; replenish failures are logged after the unlock
 - poll completion masks then schedules, as in patch 5
 
 Dropped from this series (merged fixes own them):
