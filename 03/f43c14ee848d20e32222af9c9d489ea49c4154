@@ -2,6 +2,8 @@ Changes in v8:
 - commit message: the per-queue drop signal is qstats
   rx-hw-drop-overruns (the rx%d_no_buffer_drops key is gone)
 - no code change beyond rebase
+- commit message: Active column is the config flag, shown only for
+  allocated pools
 
 Changes in v7:
 - no P13 code change
