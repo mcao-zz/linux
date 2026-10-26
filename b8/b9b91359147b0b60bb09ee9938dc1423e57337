@@ -1,6 +1,6 @@
 Changes in v8:
 - poll reads each RX-ring correlator once (READ_ONCE) and passes it to
-  lookup and harvest; v7 re-read the ring with an unchecked pool index
+  lookup and harvest, as net-next does
 - correlator_valid() takes the queue index and requires an active pool;
   logging and reset move to the callers; harvest resets on a bad
   correlator
