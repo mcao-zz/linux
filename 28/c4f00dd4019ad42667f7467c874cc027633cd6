@@ -3,6 +3,7 @@ Changes in v8:
   cap)
 - down-path: -EBUSY if a queue in the new range is still registered,
   checked before the TX change; no unmap
+- while down, set_channels publishes the counts without allocating
 - skip the TX LTB path when the TX count does not change
 - subject names the down-path
 
