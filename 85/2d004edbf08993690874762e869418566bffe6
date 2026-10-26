@@ -29,6 +29,10 @@ Changes in v8:
   (SQ failure and H_PARAMETER included), skipped only on -EIO
 - commit message names rx-alloc-fail and why invalid_buffers stays
   in ethtool -S
+- retire kdoc: call whenever the caller is about to unmap; the retire
+  loop is unconditional; remove() retries before the qstats frees
+- commit message: rx_no_buffer is the cumulative-value exception;
+  probe_cleanup drvdata rationale corrected
 
 Changes in v7:
 - close() harvests no_buffer under replenish_lock
