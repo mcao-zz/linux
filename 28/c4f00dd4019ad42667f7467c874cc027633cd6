@@ -88,7 +88,7 @@ Same 15 patches as v7, rebased onto net-next, which now carries the
 open-fail pair and the nine ibmveth fixes. v7's in-tree copies of
 those single-queue fixes are gone; the per-patch --- notes list what
 each commit dropped and which merged commit owns it. The rest comes
-from the v7 netdev-bot review and our own re-review.
+from the v7 review and our own re-review.
 
 Code changes:
 * Patch 4: pool-alloc failure still calls h_free_logical_lan(),
