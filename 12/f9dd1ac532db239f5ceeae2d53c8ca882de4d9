@@ -1,38 +1,16 @@
 Changes in v8:
-- IBMVETH_STAT_INC/ADD; start_xmit uses a local txs;
-  ibmveth_count_add_fail()
-- ndo_get_stats64() fills rx_missed_errors
-- rx_qstats[].dropped for a bad correlator, a failed harvest,
-  recycle-invalid, and oversize
-- ibmveth_rx_no_buffer_pair() under replenish_lock
-- ibmveth_retire_rx_no_buffer() in free_all_queues() after a successful
-  H_FREE; close() itself no longer samples
-- remove() frees the qstats arrays after unregister_netdev()
-- err_put_pools calls ibmveth_probe_cleanup()
-- commit message drops the "no standard equivalent" claim
-- drop tx%d_checksum_offload and its counter (nothing else read it;
-  standard field would be tx-needs-csum), rx%d_no_buffer_drops (the pair
-  is rx-hw-drop-overruns; standard stats stay out of ethtool -S), and
-  tx%d_large_packets (adapter-wide tx_large_packets only;
-  tx-hw-gso-packets depends on where the frame goes)
-- rx-hw-drops is the no-buffer pair plus invalid buffers; fill
-  rx-hw-drop-overruns; TX hw_drops left unset
-- rx%d_polls skips budget 0
-- on rebase onto net-next with the fixes merged: keep deliver_frame's
-  mss helper bool (clear csum_good) when moving large_packets to
-  per-queue qstats; no restart_poll when adding the polls counter
-- deliver_frame() takes a local rxs for its qstats so the dropped
-  increments fit 80 columns (v8.5r4 left them at 82)
-- rx_no_buffer ethtool entry carries no offset; it is summed from
-  ibmveth_rx_no_buffer_pair()
-- free_all_queues() retires no_buffer whenever the caller will unmap
-  (SQ failure and H_PARAMETER included), skipped only on -EIO
-- commit message names rx-alloc-fail and why invalid_buffers stays
-  in ethtool -S
-- retire kdoc: call whenever the caller is about to unmap; the retire
-  loop is unconditional; remove() retries before the qstats frees
-- commit message: rx_no_buffer is the cumulative-value exception;
-  probe_cleanup drvdata rationale corrected
+- no_buffer keeps a retired carry per queue, read under replenish_lock
+  and folded in by free_all_queues() before every unmap, so no exported
+  value goes backwards across a close
+- ndo_get_stats64() fills rx_missed_errors; rx_qstats dropped counts
+  bad-correlator, failed-harvest, recycle-invalid and oversize slots
+- qstats: rx-hw-drops is no-buffer plus invalid buffers;
+  rx-hw-drop-overruns filled; TX hw_drops unset; rx%d_polls skips
+  budget 0
+- ethtool -S drops tx%d_checksum_offload, rx%d_no_buffer_drops and
+  tx%d_large_packets (unread, or covered by qstats)
+- remove() frees the qstats arrays after unregister_netdev() and its
+  H_FREE retry; err_put_pools uses ibmveth_probe_cleanup()
 
 Changes in v7:
 - close() harvests no_buffer under replenish_lock
