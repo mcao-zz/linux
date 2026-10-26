@@ -13,6 +13,9 @@ Changes in v8:
 - a failed invalid-slot recycle consumes budget, as in net-next;
   skip_bad_correlator / drop_oversize return void (their bool was
   always true); harvest_slot folded into them
+- commit message: a failed harvest ends the loop; the stopping check
+  narrows the re-arm; frames pending at close are not delivered.
+  Harvest KUnit kdoc fixed
 
 Dropped from this series (merged fixes own them):
 - commit c9b95adc755f: duplicate copybreak/NULL-skb hunks and message
