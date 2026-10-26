@@ -18,6 +18,9 @@ Changes in v8:
   put_pool_kobjs(pools_ready)
 - Adapter-wide RX counters until P11 (per-queue stats next patch;
   no_buffer retire on close path lands in P11 free_all_queues())
+- free_all_queues() returns -EIO only for MQ and not for H_PARAMETER;
+  single-queue close keeps unmapping as before (v8.5r4 skipped the
+  SQ unmap from this patch until patch 14)
 
 Dropped from this series (merged fixes own them):
 - commit 8d9ecac6b96e: poll_controller per-queue loop (ndo removed)
