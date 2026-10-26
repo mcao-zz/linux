@@ -3,7 +3,7 @@ Changes in v8:
   LAN registration and the queues start after them, under
   netif_tx_lock_bh(), since NAPI (and generic XDP_TX) is already live
 - a late TX allocation failure unwinds through cleanup_rx_interrupts()
-  (patch 5) instead of v7's extra synchronize_net()
+  (patch 5), which already waits for the poll
 - start_xmit LTB guard comment is about a sender that picked its queue
   before a shrink
 
