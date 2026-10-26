@@ -1,12 +1,10 @@
 Changes in v8:
 - poll reads each RX-ring correlator once (READ_ONCE) and passes it to
   lookup and harvest, as net-next does
-- correlator_valid() takes the queue index and requires an active pool;
-  logging and reset move to the callers; harvest resets on a bad
-  correlator
+- harvest logs and resets on a bad correlator or a missing skb
 - replenish_lock is spin_lock_bh(); replenish_task_cycles is counted
-  under it; replenish failures are logged after the unlock
-- poll completion masks then schedules, as in patch 5
+  under it; the first batch-fallback and hcall failures are both kept
+  for the log
 
 Dropped from this series (merged fixes own them):
 - commit 8d9ecac6b96e: the poll_controller() replenish_task(adapter, 0)
