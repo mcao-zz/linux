@@ -11,6 +11,9 @@ Changes in v8:
 - noted: TX shrink keeps netif_tx_stop_all_queues() (set_real
   synchronize_net before LTB free); do not clamp rx_count; do not
   advertise max_rx = 1
+- down-path CMO refresh uses ibmveth_refresh_cmo_desired()
+- TX alloc loop keeps net-next's for-initializer and comments; the
+  early goal_tx == old_tx return sits above them
 
 Dropped from this series (merged fixes own them):
 - commit 8d9ecac6b96e: the poll_controller !opened guard.
