@@ -1,0 +1,50 @@
+Changes in v8:
+- Poll helpers: one correlator read per slot (P08); deliver and recycle
+  pass it through; harvest_buffer renamed harvest_correlator; get_buffer
+  is lookup-only
+- Bad correlator and oversize slots advance the ring, count rx_dropped,
+  and consume budget (invalid PHYP slots unchanged)
+- Poll tail matches net-next: mask then schedule; no restart_poll;
+  complete with frames_processed, return frames_processed
+- deliver_frame() per queue: merged frame bound and RX header checks
+  from net-next; mss scoped inside deliver_frame
+- poll_stopping after the loop with the budget used up: return budget
+  without napi_complete_done() (the NAPI core owns it then)
+- a failed invalid-slot recycle consumes budget, as in net-next;
+  skip_bad_correlator / drop_oversize return void (their bool was
+  always true); harvest_slot folded into them
+- commit message: a failed harvest ends the loop; the stopping check
+  narrows the re-arm; frames pending at close are not delivered.
+  Harvest KUnit kdoc fixed
+
+Dropped from this series (merged fixes own them):
+- commit c9b95adc755f: duplicate copybreak/NULL-skb hunks and message
+  paragraphs (in base; deliver_frame keeps the frame bound)
+- commit 9486c89a8e15: duplicate header-check hunks and message text
+  (in base; this patch uses them through deliver_frame, KUnit unchanged)
+
+Changes in v7:
+- bound oversize against min(skb_tailroom, pool->buff_size);
+  name that bound in the commit message
+- noted: poll_stopping stays mask-first; skip vs budget stays;
+  cancel_work stays in P10
+
+Changes in v6:
+- read the IPv4 header check through skb->data, as mainline does.
+  v5 used ip_hdr(), which reads the network header offset that
+  eth_type_trans() does not set on this path
+- do not complete NAPI or consume budget when budget is 0. That is
+  the netpoll case, where v5 completed and returned budget - 1,
+  underflowing to -1
+- noted: the split is not pure motion; the body lists what changed
+
+Changes in v5:
+- Wrap poll_stopping return after complete so it stays under 80 cols
+- On poll_stopping after the budget loop: return < budget after
+  napi_complete_done (was frames_processed-1 even when under budget)
+- New in v5: peel SQ poll harden + helpers before MQ enable so tip P10
+  stays bring-up focused (mailed v4 09/14 MQ enable -> tip P10; also
+  14->15). Kitchen-sink / enable-path poll fixes land here on the live
+  single-queue path first.
+- After napi_complete_done, check poll_stopping again before enable_irq
+  (avoid re-arm while resize/close waits on napi_disable)
