@@ -3,8 +3,6 @@ Changes in v8:
   h_free_logical_lan(), as the merged open-fail fix does
 
 Dropped from this series (merged fixes own them):
-- commit af0524bf4ce1: v7 in-tree h_free on pool-fail (net-next and the
-  out_free_buffer_pools label above; not duplicated here)
 - commit 84bec0bf0352: commit-message shared-TX-index unwind paragraph
   (base owns the unwind)
 
