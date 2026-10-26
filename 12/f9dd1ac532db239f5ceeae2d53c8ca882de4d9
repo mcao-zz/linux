@@ -1,17 +1,17 @@
 Changes in v8:
-- no_buffer keeps a retired carry per queue, read under replenish_lock
-  and folded in by free_all_queues() before every unmap, so no exported
-  value goes backwards across a close; the ethtool rx_no_buffer key
-  is now cumulative across reopen instead of the last page's count
-- ndo_get_stats64() fills rx_missed_errors; rx_qstats dropped counts
-  bad-correlator, failed-harvest, recycle-invalid and oversize slots
-- qstats: rx-hw-drops is no-buffer plus invalid buffers;
-  rx-hw-drop-overruns filled; TX hw_drops unset; rx%d_polls skips
-  budget 0
-- ethtool -S drops tx%d_checksum_offload, rx%d_no_buffer_drops and
-  tx%d_large_packets (unread, or covered by qstats)
-- remove() frees the qstats arrays after unregister_netdev() and its
-  H_FREE retry; err_put_pools uses ibmveth_probe_cleanup()
+- the per-queue no_buffer carry is folded by free_all_queues() before
+  every unmap, not when a lower sample is seen, and read under
+  replenish_lock, so no exported value goes backwards across a close
+- counters use WRITE_ONCE()/READ_ONCE() (IBMVETH_STAT_INC/ADD)
+- ndo_get_stats64() fills rx_dropped and rx_missed_errors; rx_qstats
+  dropped counts bad-correlator, failed-harvest, recycle-invalid and
+  oversize slots
+- qstats: rx-hw-drop-overruns filled; TX hw_drops unset; rx%d_polls
+  skips budget 0
+- ethtool -S drops tx%d_checksum_offload (counter removed),
+  rx%d_no_buffer_drops (in qstats) and tx%d_large_packets (the
+  summed tx_large_packets stays)
+- remove() frees the qstats arrays after its H_FREE retry
 
 Changes in v7:
 - close() harvests no_buffer under replenish_lock
