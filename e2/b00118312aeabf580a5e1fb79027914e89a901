@@ -1,6 +1,5 @@
 Changes in v8:
 - queue_registered[] marks a live slot; handle 0 can be a valid cookie
-- close() samples the no_buffer counter after free_all_queues()
 - a buffer pool allocation failure in open() still calls
   H_FREE_LOGICAL_LAN once, for a LAN a kexec'd kernel left registered
 
