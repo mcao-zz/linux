@@ -1,39 +1,18 @@
 Changes in v8:
-- Enable MQ RX: MAX_RX_QUEUES 16, multi_queue flag, default
-  min(cpus,8); per-queue buffer pools; rx_buffers_per_hcall 12 on MQ;
-  subordinate H_REG_LOGICAL_LAN_QUEUE, IRQ and PHYP enable; skb_record_rx_queue;
-  resume restarts every live queue; H_FUNCTION latches mq_fallback
-  (register fails open, buffer-add schedules reset); set_channels rejects
-  rx_count change; apply_mq_fallback sets real_num to 1
-- Open: replenish every live queue, setup_rx_interrupts, then
-  restart_rx_queue each (replaces schedule_rx_queue(0) kick); same for SQ
-  and MQ
-- Subordinate IRQ names ibmveth-<unit>-rxN; queue 0 keeps netdev->name
-- Register fail: H_FREE -EIO sets skip_unmap (handle 0 valid).
-  Post-register open unwind and close() also skip unmap when
-  free_all_queues() returns -EIO
-- queue_registered[] on subordinate register (cookie 0 allowed)
-- restart_rx_queue(): no PHYP unmask when napi_schedule_prep() fails
-- Probe: kobject_init_and_add failure fails probe;
-  put_pool_kobjs(pools_ready)
-- Adapter-wide RX counters until P11 (per-queue stats next patch;
-  no_buffer retire on close path lands in P11 free_all_queues())
-- free_all_queues() returns -EIO only for MQ and not for H_PARAMETER;
-  single-queue close keeps unmapping as before
-- moved from patch 14: free_all_queues() returns -EIO before clearing
-  queue_registered[]; open() and remove() retry H_FREE_LOGICAL_LAN
-  and release the kept memory (remove() leaks it if the retry
-  fails); poolN store -EBUSY while the old pools stay mapped;
-  free_tx_resources() walks IBMVETH_MAX_QUEUES; helpers
-  ibmveth_lan_resources_live() / ibmveth_release_lan_resources()
-- free_all_queues() kdoc and message: SQ keeps the base log-and-unmap;
-  the CMO BUG() is one reason it cannot simply skip
-- commit message: adapter-wide counter races until the next patch
-  (lost increments, rx_no_buffer reads the last page)
-- veth_pool_store(): a failed reopen that leaves the new pools
-  mapped keeps their geometry for the deferred free
-- commit message: the remove() leak relies on CMO and MQ firmware
-  not coexisting
+- MQ hard H_FREE_LOGICAL_LAN failure (not H_PARAMETER) keeps the LAN
+  memory mapped: register failure, the open() unwind and close() skip
+  the unmap; the next open() and remove() retry and then free it
+  (remove() leaks it if the retry fails); poolN writes return -EBUSY
+  meanwhile. Single queue keeps the base log-and-unmap
+- free_tx_resources() walks every TX LTB slot
+- apply_mq_fallback() sets real_num to 1; set_channels rejects an
+  rx_count change until the resize patch
+- restart_rx_queue() does not unmask PHYP when napi_schedule_prep()
+  fails
+- subordinate IRQs are named ibmveth-<unit>-rxN; probe fails on a
+  kobject_init_and_add() error
+- commit message: the adapter-wide counters race until the next patch;
+  remove()'s leak relies on CMO and MQ firmware not coexisting
 
 Dropped from this series (merged fixes own them):
 - commit 8d9ecac6b96e: poll_controller per-queue loop (ndo removed)
