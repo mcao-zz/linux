@@ -1,52 +1,16 @@
 Changes in v8:
-- scale-down / scale-up unwind / keep: synchronize_net() after
-  napi_disable(), then remask (same as cleanup_rx_interrupts)
-- skip unmask if set_real(keep) fails after real_num was lowered; still
-  napi_enable. scale-down set_real(new) fail still re-enables
-- combined ethtool -L rolls RX back if TX misses (moved here from the
-  down-path peel)
-- MQ fail-before-start: the H_FREE retry on open/remove, the poolN
-  store -EBUSY and lan_resources_live now start in patch 10; this
-  patch adds stranded slots (a failed scale-up whose
-  H_FREE_LOGICAL_LAN_QUEUE also failed), freed in close() and in
-  that retry
-- commit message: wrap remove-leak sentence (checkpatch 75-col); pack
-  notes say napi_disable/poll_napi, not netpoll_poll_disable
-- H_FREE_LOGICAL_LAN_QUEUE H_PARAMETER already-free: clear
-  queue_registered[] and unmap
-- scale-down retires no_buffer after a successful H_FREE; destroy /
-  stranded teardown key queue_registered[], not a zero handle
-- keep-path fencing: poll / completion / interrupt / resume honor
-  real_num (free_tx_resources walking IBMVETH_MAX_QUEUES moved to
-  patch 10)
-- mq_fallback READ_ONCE()/WRITE_ONCE()
-- message: drop IFF_UP/opened ownership claim and ndo_poll_controller
-  cite (fixes own those); keep the not-opened -EOPNOTSUPP and poll_napi
-  fencing lines
-- restart_rx_queue() no longer unmasks on prep failure (patch 10), so
-  scale-up's explicit enable_irq() is the only unmask
-- schedule_rx_queue() comment no longer describes a false return
-- restart_rx_queue() kdoc lists every caller (open, scale-up bring-up
-  and keep, scale-down rollback); free_single_rx_queue() kdoc names
-  scale-down, the scale-up unwind and stranded cleanup; the
-  stranded-queue -EBUSY comment says the reset (or the next open) frees
-  it
-- commit message: schedule_rx_queue() skips an index past the live count
-  (it returns void)
-- noted: down-path publish and max_tx floor stay later
-- free_stranded_rx_queues() retires each stranded queue's no_buffer
-  sample before freeing it (called only after a successful
-  H_FREE_LOGICAL_LAN)
-- scale-up keep path refreshes CMO desired before returning -EIO
-- the RX rollback after a TX failure is best effort; comment and
-  message say so
-- duplicate lan_resources_live / release_lan_resources dropped (patch
-  10 has them); free_stranded, desired_dma_for_rxqs (CMO rebalances
-  asynchronously), retire and schedule_rx_queue kdocs fixed
-- commit message: H_PARAMETER meaning per the PHYP interface; SQ/CMO
-  reason; scale-up unwinds take no final no_buffer sample
-- drop ibmveth_lan_still_registered(): after the open() retry, a
-  register failure leaves skip_unmap set or every slot cleared
+- scale-down, the scale-up unwind and the keep path: synchronize_net()
+  after napi_disable(), then remask; if set_real(keep) fails after
+  real_num was lowered, skip the unmask but still napi_enable()
+- a combined ethtool -L rolls RX back, best effort, if TX fails
+- H_FREE_LOGICAL_LAN_QUEUE: H_PARAMETER (already free) clears the slot
+  and unmaps; a hard failure leaves a stranded slot, freed (no_buffer
+  retired first) after the next successful H_FREE_LOGICAL_LAN
+- teardown keys on queue_registered[], not a zero handle
+- keep path: poll, completion, interrupt and resume honour real_num;
+  CMO desired is refreshed before -EIO
+- scale-up's enable_irq() is the only unmask (restart_rx_queue() no
+  longer unmasks on prep failure)
 
 Dropped from this series (merged fixes own them):
 - commit 8d9ecac6b96e: ndo_poll_controller, and comments that cited it
