@@ -8,6 +8,11 @@ Changes in v8:
   complete with frames_processed, return frames_processed
 - deliver_frame() per queue: merged frame bound and RX header checks
   from net-next; mss scoped inside deliver_frame
+- poll_stopping after the loop with the budget used up: return budget
+  without napi_complete_done() (the NAPI core owns it then)
+- a failed invalid-slot recycle consumes budget, as in net-next;
+  skip_bad_correlator / drop_oversize return void (their bool was
+  always true); harvest_slot folded into them
 
 Dropped from this series (merged fixes own them):
 - commit c9b95adc755f: duplicate copybreak/NULL-skb hunks and message
