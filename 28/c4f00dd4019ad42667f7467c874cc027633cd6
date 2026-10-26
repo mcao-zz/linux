@@ -1,20 +1,4 @@
-ibmveth MQ — v8 COVER LETTER (v8.5r6 draft; do not mail)
-==================================================================
 Subject: [PATCH net-next v8 00/15] ibmveth: Add multi-queue RX support
-
-# Branch: veth-mq-v8.5r6 @ 28c4f00dd401, 15 patches on net-next/main 279d5c8afcd3
-#   (fixes merged in d53a5309cc4a; net pair af0524bf4ce1 /
-#   84bec0bf0352 already in). Generate with --base=279d5c8afcd3.
-# Hold lifted: Jakub asked to wait for the fixes; they are in net-next.
-#   To: Jakub only (his ask).
-# Before mailing: O5 LPAR run on this tip (matrix A, optional R1 A/B,
-#   plus restart_rx_queue without the enable_irq fallback); O4 Dave /
-#   Shaik re-confirm P08 tags; full sashiko review on the final tree.
-#   The Testing list below is from v7 and needs the O5 re-run.
-# Per-patch detail stays below --- on each commit
-#   (refs/notes/remote-commits).
-# This file is refs/notes/remote-cover on the tip. Paste from "Hi,".
-#   format-patch fills shortlog / diffstat. Strip these # lines.
 
 Hi,
 
