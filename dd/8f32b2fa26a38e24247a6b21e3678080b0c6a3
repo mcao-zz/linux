@@ -4,12 +4,6 @@ Changes in v8:
   napi_disable() and correlator accessors stay on queue 0 until the
   queue-aware patches
 
-Dropped from this series (merged fixes own them):
-- commit c9b95adc755f: duplicate poll/deliver hardening hunks; base owns
-  the behavior, this patch only reindexes and keeps the signatures
-- commit 3f872b34368c: duplicate synchronize_net() in close(); base has
-  it on napi[0] here, per-queue from patch 5
-
 Changes in v7:
 - no P02 code change
 
