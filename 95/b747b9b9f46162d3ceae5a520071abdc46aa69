@@ -14,6 +14,8 @@ Changes in v8:
 - down-path CMO refresh uses ibmveth_refresh_cmo_desired()
 - TX alloc loop keeps net-next's for-initializer and comments; the
   early goal_tx == old_tx return sits above them
+- down-path comment names close() keeping the LAN memory after a
+  failed H_FREE_LOGICAL_LAN
 
 Dropped from this series (merged fixes own them):
 - commit 8d9ecac6b96e: the poll_controller !opened guard.
