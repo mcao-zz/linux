@@ -1,7 +1,8 @@
 Changes in v8:
 - no_buffer keeps a retired carry per queue, read under replenish_lock
   and folded in by free_all_queues() before every unmap, so no exported
-  value goes backwards across a close
+  value goes backwards across a close; the ethtool rx_no_buffer key
+  is now cumulative across reopen instead of the last page's count
 - ndo_get_stats64() fills rx_missed_errors; rx_qstats dropped counts
   bad-correlator, failed-harvest, recycle-invalid and oversize slots
 - qstats: rx-hw-drops is no-buffer plus invalid buffers;
