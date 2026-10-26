@@ -1,13 +1,8 @@
 Changes in v8:
 - rebased onto net-next, which carries the open-fail pair and the nine
-  merged fixes
-- drop a dead rc after request_irq(); the commit message lists the
-  open() order and log string changes
-
-Dropped from this series (merged fixes own them):
-- commit af0524bf4ce1: post-register pool-fail h_free hunks v7 MQ
-  carried; base and patch 4 unwind labels own h_free_logical_lan()
-- commit 84bec0bf0352: shared TX-index unwind (in base)
+  merged fixes; the TX unwind keeps net-next's real_num_tx_queues loop
+- commit message lists the open() order and log string changes, and
+  the dead rc after request_irq() this patch drops
 
 This patch adds the filter-list DMA sentinel (filter_list_dma = 0
 on map error) and the update_rx_no_buffer() NULL guard on
