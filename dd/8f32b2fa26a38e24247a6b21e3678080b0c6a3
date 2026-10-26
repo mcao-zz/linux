@@ -1,6 +1,5 @@
 Changes in v8:
-- poll oversize check uses rx_buff_pool[0][pool] (v7 broke the build
-  through patch 7)
+- poll oversize check uses rx_buff_pool[0][pool], so patches 2-7 build
 - rebased onto net-next: the merged synchronize_net() after
   napi_disable() and correlator accessors stay on queue 0 until the
   queue-aware patches
