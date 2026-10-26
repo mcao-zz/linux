@@ -1,21 +1,24 @@
 Changes in v8:
-- scale-down, the scale-up unwind and the keep path: synchronize_net()
-  after napi_disable(), then remask; if set_real(keep) fails after
-  real_num was lowered, skip the unmask but still napi_enable(); a
-  failed scale-down set_real() re-enables the queues
-- a combined ethtool -L rolls RX back, best effort, if TX fails
-- H_FREE_LOGICAL_LAN_QUEUE: H_PARAMETER (already free) clears the slot
-  and unmaps; a hard failure leaves a stranded slot, freed (no_buffer
-  retired first) after the next successful H_FREE_LOGICAL_LAN
-- teardown keys on queue_registered[], not a zero handle; scale-down
-  retires no_buffer after a successful H_FREE_LOGICAL_LAN_QUEUE
+- scale-down and the scale-up unwinds: synchronize_net() after
+  napi_disable(), then remask; if set_real(keep) fails after real_num
+  was lowered, skip the unmask but still napi_enable()
+- a combined ethtool -L rolls RX back, best effort, if TX fails (moved
+  here from patch 15)
+- H_FREE_LOGICAL_LAN_QUEUE H_PARAMETER (already free) clears the slot
+  and unmaps
+- a slot stranded by a scale-up failure is freed (no_buffer retired
+  first) after the next successful H_FREE_LOGICAL_LAN in close(),
+  open() or remove()
+- deregister and the scale-up -EBUSY check key on queue_registered[],
+  not a zero handle; scale-down retires no_buffer after a successful
+  H_FREE_LOGICAL_LAN_QUEUE
 - keep path: poll, completion, interrupt and resume honour real_num;
   CMO desired is refreshed before -EIO
-- scale-up's enable_irq() is the only unmask (restart_rx_queue() no
-  longer unmasks on prep failure)
+- scale-up unmasks only through enable_irq(), as restart_rx_queue() no
+  longer unmasks (patch 10)
 
 Dropped from this series (merged fixes own them):
-- commit 8d9ecac6b96e: ndo_poll_controller, and comments that cited it
+- commit 8d9ecac6b96e: comments that cited ndo_poll_controller
 - commit 95811c873d1b: set_channels IFF_UP -> adapter->opened. It
   already gates set_channels() on opened
 
