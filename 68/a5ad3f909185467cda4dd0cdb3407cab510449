@@ -6,6 +6,8 @@ Changes in v8:
   (patch 5), which already waits for the poll
 - start_xmit LTB guard comment is about a sender that picked its queue
   before a shrink
+- commit message: the late TX failure unwind frees posted RX after an
+  unchecked H_FREE, as close() does (MQ keeps it mapped from patch 10)
 
 Dropped from this series (merged fixes own them):
 - commit c807573ea58e: close() netif_tx_stop_all_queues() ->
