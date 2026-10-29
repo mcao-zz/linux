@@ -107,6 +107,7 @@ static void send_query_cap(struct ibmvnic_adapter *adapter);
 static int init_sub_crqs(struct ibmvnic_adapter *);
 static int init_sub_crq_irqs(struct ibmvnic_adapter *adapter);
 static int ibmvnic_reset_init(struct ibmvnic_adapter *, bool reset);
+static void ibmvnic_free_crq_irq(struct ibmvnic_adapter *);
 static void release_crq_queue(struct ibmvnic_adapter *);
 static int __ibmvnic_set_mac(struct net_device *, u8 *);
 static int init_crq_queue(struct ibmvnic_adapter *adapter);
@@ -1543,7 +1544,6 @@ static int ibmvnic_login(struct net_device *netdev)
 		if (!wait_for_completion_timeout(&adapter->init_done,
 						 timeout)) {
 			netdev_warn(netdev, "Login timed out\n");
-			adapter->login_pending = false;
 			goto partial_reset;
 		}
 
@@ -1602,6 +1602,17 @@ partial_reset:
 				    "Freeing and re-registering CRQs before attempting to login again\n");
 			retry = true;
 			adapter->init_done_rc = 0;
+			/* A LOGIN_RSP may already be queued behind the
+			 * transport event that woke us. complete() runs in
+			 * the CRQ tasklet, which dereferences tx_scrq, so
+			 * stop that tasklet before dropping the sub-CRQs.
+			 * Clear login_pending only once the tasklet is gone:
+			 * init_crq_queue() arms the IRQ again before
+			 * init_sub_crqs() rebuilds the arrays, and a stale
+			 * response in that window must be ignored.
+			 */
+			ibmvnic_free_crq_irq(adapter);
+			adapter->login_pending = false;
 			release_sub_crqs(adapter, true);
 			/* Much of this is similar logic as ibmvnic_probe(),
 			 * we are essentially re-initializing communication
@@ -5574,7 +5585,10 @@ static int handle_login_rsp(union ibmvnic_crq *login_rsp_crq,
 	int i;
 
 	/* CHECK: Test/set of login_pending does not need to be atomic
-	 * because only ibmvnic_tasklet tests/clears this.
+	 * because only ibmvnic_tasklet tests/clears this. send_login()
+	 * sets it before the LOGIN is sent, and clears it only if the
+	 * send fails. ibmvnic_login() clears it after
+	 * ibmvnic_free_crq_irq() has stopped this tasklet.
 	 */
 	if (!adapter->login_pending) {
 		netdev_warn(netdev, "Ignoring unexpected login response\n");
@@ -6234,6 +6248,18 @@ static int ibmvnic_reset_crq(struct ibmvnic_adapter *adapter)
 	return rc;
 }
 
+static void ibmvnic_free_crq_irq(struct ibmvnic_adapter *adapter)
+{
+	struct ibmvnic_crq_queue *crq = &adapter->crq;
+
+	if (!crq->irq_requested)
+		return;
+
+	free_irq(adapter->vdev->irq, adapter);
+	tasklet_kill(&adapter->tasklet);
+	crq->irq_requested = false;
+}
+
 static void release_crq_queue(struct ibmvnic_adapter *adapter)
 {
 	struct ibmvnic_crq_queue *crq = &adapter->crq;
@@ -6244,8 +6270,7 @@ static void release_crq_queue(struct ibmvnic_adapter *adapter)
 		return;
 
 	netdev_dbg(adapter->netdev, "Releasing CRQ\n");
-	free_irq(vdev->irq, adapter);
-	tasklet_kill(&adapter->tasklet);
+	ibmvnic_free_crq_irq(adapter);
 	do {
 		rc = plpar_hcall_norets(H_FREE_CRQ, vdev->unit_address);
 	} while (rc == H_BUSY || H_IS_LONG_BUSY(rc));
@@ -6307,6 +6332,7 @@ static int init_crq_queue(struct ibmvnic_adapter *adapter)
 			vdev->irq, rc);
 		goto req_irq_failed;
 	}
+	crq->irq_requested = true;
 
 	rc = vio_enable_interrupts(vdev);
 	if (rc) {
@@ -6323,7 +6349,10 @@ static int init_crq_queue(struct ibmvnic_adapter *adapter)
 	return retrc;
 
 req_irq_failed:
-	tasklet_kill(&adapter->tasklet);
+	if (crq->irq_requested)
+		ibmvnic_free_crq_irq(adapter);
+	else
+		tasklet_kill(&adapter->tasklet);
 	do {
 		rc = plpar_hcall_norets(H_FREE_CRQ, vdev->unit_address);
 	} while (rc == H_BUSY || H_IS_LONG_BUSY(rc));
