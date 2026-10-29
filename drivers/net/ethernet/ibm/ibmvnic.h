@@ -794,6 +794,8 @@ struct ibmvnic_crq_queue {
 	/* Used for serialization of msgs, cur */
 	spinlock_t lock;
 	bool active;
+	/* request_irq() succeeded; cleared by ibmvnic_free_crq_irq() */
+	bool irq_requested;
 	char name[32];
 };
 
