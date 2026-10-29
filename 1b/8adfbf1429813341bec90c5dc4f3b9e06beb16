@@ -1,0 +1,43 @@
+Changes in v8:
+- bad-correlator and oversize slots count rx_dropped (not
+  rx_invalid_buffer) and consume budget
+- a failed invalid-slot recycle consumes budget, as in net-next
+- a poll that stops with its budget used returns budget without
+  completing NAPI
+- rxq_harvest_buffer() is renamed rxq_harvest_correlator() and takes
+  the correlator poll read
+- deliver_frame() adopts net-next's frame bound and header checks
+  (ETH_HLEN, skb_headlen(), mss helper result)
+- ibmveth_poll_deliver_frame() kdoc: Return 0 covers all non-delivered
+  slots (recycled, dropped, or skipped); drop dead flush_work in
+  ibmveth_rxq_get_buffer_test
+
+Dropped from this series (merged fixes own them):
+- commit c9b95adc755f: duplicate copybreak/NULL-skb hunks and message
+  paragraphs (in base; deliver_frame keeps the frame bound)
+
+Changes in v7:
+- bound oversize against min(skb_tailroom, pool->buff_size);
+  name that bound in the commit message
+- noted: poll_stopping stays mask-first; skip vs budget stays;
+  cancel_work stays in P10
+
+Changes in v6:
+- read the IPv4 header check through skb->data, as mainline does.
+  v5 used ip_hdr(), which reads the network header offset that
+  eth_type_trans() does not set on this path
+- do not complete NAPI or consume budget when budget is 0. That is
+  the netpoll case, where v5 completed and returned budget - 1,
+  underflowing to -1
+- noted: the split is not pure motion; the body lists what changed
+
+Changes in v5:
+- Wrap poll_stopping return after complete so it stays under 80 cols
+- On poll_stopping after the budget loop: return < budget after
+  napi_complete_done (was frames_processed-1 even when under budget)
+- New in v5: peel SQ poll harden + helpers before MQ enable so tip P10
+  stays bring-up focused (mailed v4 09/14 MQ enable -> tip P10; also
+  14->15). Kitchen-sink / enable-path poll fixes land here on the live
+  single-queue path first.
+- After napi_complete_done, check poll_stopping again before enable_irq
+  (avoid re-arm while resize/close waits on napi_disable)
