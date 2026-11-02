@@ -98,49 +98,36 @@ each commit dropped and which merged commit owns it. The rest comes
 from the v7 review and our own re-review.
 
 Code changes:
-* Patch 4: pool-alloc failure still calls h_free_logical_lan(),
-  as the net fix does (v7 skipped it on the TX unwind).
-* Patch 5: after napi_disable, synchronize_net then remask /
-  free_irq; close/open unwinds need no wait of their own. Poll
-  completion masks then queues, as schedule_rx_queue does.
-  schedule_rx_queue() returns void.
-* Patch 6: netif_tx_disable at the start of open(); start stays
-  after TX LTB alloc, under netif_tx_lock_bh() since NAPI (and
-  generic XDP_TX) is already live.
-* Patch 7: queue_registered[] is the slot-is-live flag; handle 0
-  is a live cookie. Pool-alloc failure in open() still calls
-  h_free_logical_lan() once, for a LAN a kexec left registered.
-  ibmveth_register_logical_lan() return type is long.
-* Patch 8: replenish_lock is spin_lock_bh(); harvest resets on
-  a bad correlator; one READ_ONCE correlator helper per slot
-  (v7 re-read the ring until patch 9).
-* Patch 9: poll deliver_frame and recycle_invalid use that helper;
-  bad/oversize slots count rx_dropped and consume budget. deliver_frame
-  keeps the merged frame bound (per queue) and header checks. Stopping
-  at full budget returns budget without completing NAPI. Return 0
-  covers all non-delivered slots.
-* Patch 10: in MQ mode a hard H_FREE skips unmap on register-fail,
-  post-register open unwind, and close() (single-queue still
-  unmaps; H_PARAMETER is already free); apply_mq_fallback sets
-  real_num to 1; set_channels rejects rx_count change until
-  patch 14. restart_rx_queue() no longer unmasks PHYP when
-  napi_schedule_prep() fails: the poll already scheduled unmasks
-  on completion. The kept memory is retried by the next open()
-  and by remove(); poolN changes return -EBUSY while it stays
-  mapped, and the TX free walks every LTB slot.
-* Patch 11: no_buffer snapshot/retire under replenish_lock
-  (close() does not sample; free_all_queues() retires after
-  H_FREE); drop duplicate per-queue -S keys.
-* Patch 12: cap max_rx at the live rx_count once mq_fallback;
-  do not advertise max_rx = 1.
-* Patch 14: live -L. synchronize_net after napi_disable then
-  remask; roll RX back if TX misses; skip unmask if
-  set_real(keep) fails (still napi_enable). Keep-path fences
-  honor real_num. A failed scale-up whose queue free also fails
-  leaves a stranded queue, freed (no_buffer retired first) after
-  the next successful H_FREE_LOGICAL_LAN.
-* Patch 15: down-path publish; -EBUSY if a queue in the new
-  range is still registered. max_tx floor.
+* Patch 4: a pool-alloc failure in open() unwinds through
+  h_free_logical_lan(), as the merged open-fail fix does.
+* Patch 5: teardown runs synchronize_net() after napi_disable(), then
+  remasks and frees the IRQ; close() keeps net-next's no_buffer order.
+* Patch 6: open() starts with netif_tx_disable() and starts the TX
+  queues under netif_tx_lock_bh(), since NAPI and generic XDP_TX are
+  already live.
+* Patch 7: queue_registered[] marks a live slot (handle 0 is valid);
+  ibmveth_register_logical_lan() returns long.
+* Patch 8: replenish_lock is spin_lock_bh(); poll reads each
+  correlator once and harvest resets on a bad one.
+* Patch 9: bad and oversize slots count rx_dropped and consume budget;
+  a poll that uses its whole budget returns without completing NAPI.
+* Patch 10: in MQ mode a hard H_FREE_LOGICAL_LAN failure keeps the LAN
+  memory mapped until the next open() or remove() frees it; poolN
+  writes return -EBUSY meanwhile. Single queue still unmaps.
+  restart_rx_queue() no longer unmasks PHYP; apply_mq_fallback() sets
+  real_num to 1; set_channels rejects an RX change until patch 14.
+* Patch 11: counters use WRITE_ONCE()/READ_ONCE(); no_buffer is
+  retired at every unmap, so no counter goes backwards; three
+  per-queue -S keys are dropped.
+* Patch 12: max_rx is the live rx_count, not a fixed 1, on single
+  queue or once mq_fallback is set.
+* Patch 14: live -L waits after napi_disable() before remasking and
+  rolls RX back if TX fails; a rollback whose set_real() fails skips
+  the unmask, and scale-up unmasks only through enable_irq(). A queue
+  stranded by a failed scale-up is freed after the next successful
+  H_FREE_LOGICAL_LAN.
+* Patch 15: the down-path returns -EBUSY if a queue in the new range
+  is still registered.
 
 Changes in v7:
 
