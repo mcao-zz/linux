@@ -49,27 +49,28 @@ Series layout (15 patches):
 
   1-2   Hypercall wrappers; MQ adapter layout (MAX_RX_QUEUES stays 1)
   3-9   Queue-aware helpers (still SQ runtime): RX, per-queue pools,
-        IRQ, TX, PHYP, buffer submit (open/close 3-8); poll harden (9)
+        IRQ, TX, PHYP register (open/close 3-7); buffer submit (8);
+        poll harden (9)
   10    Enable MQ datapath at probe/open (subordinate register helpers
         land here with first use)
   11-13 Per-queue RX/TX stats; get_channels MQ counts; debugfs buffer_pools
   14    Incremental RX resize; live ethtool -L rx
   15    Down-path publish
 
-- Helper patches (3-8) reshape ibmveth_open()/close() into
-  queue-aware helpers. Patch 9 hardens the SQ poll path with the same
+- Helper patches (3-7) reshape ibmveth_open()/close() into
+  queue-aware helpers; patch 8 adds the queue-aware buffer submit used
+  by replenish. Patch 9 hardens the SQ poll path with the same
   queue-index helpers; it does not change open/close. MQ stays off
   through 3-9: num_rx_queues stays 1 and multi_queue is false until
   patch 10. The live single-queue path still changes where the review
   required it (IRQ teardown wait and remask, replenish lock, poll
   harden).
-- Patch 10 is the switch: probe sets multi_queue from firmware, raises
-  num_rx_queues, registers subordinates, and replenishes every active
-  queue.
-- Patch 11 moves counters per-queue and exports packets/bytes
-  and RX drops through netdev_stat_ops. TX hw_drops is left
-  unset. The thirteen existing -S keys stay; no
-  hcall_* or pool%d_ keys.
+- Patch 10 is the switch: probe sets multi_queue from firmware and
+  raises num_rx_queues; open() registers the subordinate queues and
+  replenishes every active queue.
+- Patch 11 moves counters per queue and exports packets/bytes and RX
+  drops through netdev_stat_ops. The existing -S keys stay, and
+  per-queue driver keys are added.
 
 Testing:
 
