@@ -77,21 +77,17 @@ Testing:
 W=1 ibmveth.o at every commit (plain and KUnit), KUnit 5/5 at tip
 (qemu pseries).
 
-ppc64le PowerVM LPARs on POWER11, scripted suite, all passing on this
-version:
-* channels: ethtool -l/-L up and down (apply on open, no live
-  subordinate IRQs while down), mq_fallback cap, probe real_num_rx,
-  module reload restores MQ
-* stats: qstats netlink vs ethtool -S vs ip -s link coherence,
-  per-queue counters across ifdown/up and queue removal, debugfs
-  buffer_pools geometry following -L
-* under iperf3 RX+TX: RX spread across queues, resize cycles 1..16
-  with new queues taking traffic, close/open under load (MQ and
-  rx 1), 300 s parallel -L cycling plus ifdown/up with ping recovery
-* MQ firmware forced to rx 1: ifdown/up churn, soak, 1 <-> 8 <-> 16
-  bounce under flood
-* Legacy firmware (no MQ bit): open/close, stats and debugfs on the
-  single-queue path
+ppc64le PowerVM LPARs on POWER11, MQ and legacy firmware, all passing
+on this version:
+* channels: ethtool -l/-L with the interface up and down,
+  mq_fallback, module reload
+* stats: qstats vs ethtool -S vs ip -s link; counters across
+  ifdown/up and queue removal
+* resize under iperf3 RX+TX: ethtool -L 1..16 with RX spread checked
+  at each step, and -L cycling in parallel with ifdown/up
+* close/open under iperf3 load (MQ and rx 1)
+* rx 1 on MQ firmware and legacy firmware: ifdown/up churn, soak,
+  stats
 
 Changes in v8:
 
