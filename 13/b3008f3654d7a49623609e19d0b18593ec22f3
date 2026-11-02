@@ -31,8 +31,10 @@ error-path fixes (af0524bf4ce1, 84bec0bf0352) and the nine ibmveth
 fixes that came out of the v7 review (merge d53a5309cc4a, [1]). The
 MQ patches extend that handling per queue instead of carrying their
 own copy, so this series no longer fixes single-queue bugs. Patch 5
-makes the RX poll wait from 3f872b34368c per queue, and patch 9 keeps
-the header checks from 9486c89a8e15.
+makes the wait from commit 3f872b34368c ("ibmveth: wait for the RX
+poll to return before freeing the RX queue") per queue, and patch 9
+keeps the header checks from commit 9486c89a8e15 ("ibmveth: check
+headers in the RX large send and checksum helpers").
 
 Background:
 
