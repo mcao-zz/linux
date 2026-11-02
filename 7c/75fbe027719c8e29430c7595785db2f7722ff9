@@ -50,7 +50,7 @@ Series layout (15 patches):
   1-2   Hypercall wrappers; MQ adapter layout (MAX_RX_QUEUES stays 1)
   3-9   Queue-aware helpers (still SQ runtime): RX, per-queue pools,
         IRQ, TX, PHYP register (open/close 3-7); buffer submit (8);
-        poll harden (9)
+        split RX poll helpers for MQ (9)
   10    Enable MQ datapath at probe/open (subordinate register helpers
         land here with first use)
   11-13 Per-queue RX/TX stats; get_channels MQ counts; debugfs buffer_pools
@@ -59,8 +59,8 @@ Series layout (15 patches):
 
 - Helper patches (3-7) reshape ibmveth_open()/close() into
   queue-aware helpers; patch 8 adds the queue-aware buffer submit used
-  by replenish. Patch 9 hardens the SQ poll path with the same
-  queue-index helpers; it does not change open/close. MQ stays off
+  by replenish. Patch 9 splits the SQ poll path into per-slot helpers
+  for MQ; it does not change open/close. MQ stays off
   through 3-9: num_rx_queues stays 1 and multi_queue is false until
   patch 10. The live single-queue path still changes where the review
   required it (IRQ teardown wait and remask, replenish lock, poll
