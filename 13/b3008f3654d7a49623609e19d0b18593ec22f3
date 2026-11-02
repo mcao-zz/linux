@@ -17,24 +17,22 @@ get/set for that algorithm is deferred to a follow-up series so this
 one stays MQ datapath only.
 
 User-visible bits: ethtool -l/-L (channels); standard per-queue
-packets/bytes and RX drops via netdev_stat_ops (ethtool -S keeps only
-driver-specific counters; ndo_get_stats64 is the aggregate, including
-retired-queue history); and a read-only debugfs buffer_pools dump
-(v3's multi-line sysfs dump moved to debugfs; the historical queue-0
-poolN/ sysfs ABI is unchanged).
+packets/bytes and RX drops via netdev_stat_ops, with ndo_get_stats64
+as the aggregate (including queues since removed); and a read-only
+debugfs buffer_pools dump. ethtool -S keeps its existing keys and adds
+per-queue driver counters (rx%d_interrupts, rx%d_polls,
+rx%d_large_packets, rx%d_invalid_buffers, tx%d_send_failures).
+rx_no_buffer is now cumulative across close/open instead of the
+current buffer-list page's count, and no-buffer drops show up as
+rx_missed_errors. poolN/ sysfs is unchanged.
 
 This version is based on net-next, which now has the two open()
 error-path fixes (af0524bf4ce1, 84bec0bf0352) and the nine ibmveth
 fixes that came out of the v7 review (merge d53a5309cc4a, [1]). The
 MQ patches extend that handling per queue instead of carrying their
-own copy, so this series no longer fixes single-queue bugs.
-
-Two of those fixes shape this series directly. Commit 3f872b34368c
-("ibmveth: wait for the RX poll to return before freeing the RX queue")
-adds the wait; patch 2 keeps it on napi[0] until patch 5 makes it per
-queue. Commit 9486c89a8e15 ("ibmveth: check headers in the RX large
-send and checksum helpers") adds the header checks; patch 9's deliver
-path keeps them.
+own copy, so this series no longer fixes single-queue bugs. Patch 5
+makes the RX poll wait from 3f872b34368c per queue, and patch 9 keeps
+the header checks from 9486c89a8e15.
 
 Background:
 
