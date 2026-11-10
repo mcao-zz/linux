@@ -3476,6 +3476,7 @@ static void ibmvnic_get_stats64(struct net_device *netdev,
 	for (i = 0; i < adapter->req_rx_queues; i++) {
 		stats->rx_packets += adapter->rx_stats_buffers[i].packets;
 		stats->rx_bytes   += adapter->rx_stats_buffers[i].bytes;
+		stats->rx_dropped += adapter->rx_stats_buffers[i].dropped_packets;
 	}
 
 	for (i = 0; i < adapter->req_tx_queues; i++) {
@@ -3561,11 +3562,13 @@ restart_poll:
 			next->rx_comp.first = 0;
 			dev_kfree_skb_any(rx_buff->skb);
 			remove_buff_from_pool(adapter, rx_buff);
+			adapter->rx_stats_buffers[scrq_num].dropped_packets++;
 			continue;
 		} else if (!rx_buff->skb) {
 			/* free the entry */
 			next->rx_comp.first = 0;
 			remove_buff_from_pool(adapter, rx_buff);
+			adapter->rx_stats_buffers[scrq_num].dropped_packets++;
 			continue;
 		}
 
@@ -3861,6 +3864,7 @@ static void ibmvnic_get_strings(struct net_device *dev, u32 stringset, u8 *data)
 		ethtool_sprintf(&data, "rx%d_packets", i);
 		ethtool_sprintf(&data, "rx%d_bytes", i);
 		ethtool_sprintf(&data, "rx%d_interrupts", i);
+		ethtool_sprintf(&data, "rx%d_dropped_packets", i);
 	}
 }
 
@@ -3923,6 +3927,8 @@ static void ibmvnic_get_ethtool_stats(struct net_device *dev,
 		data[i] = adapter->rx_stats_buffers[j].bytes;
 		i++;
 		data[i] = adapter->rx_stats_buffers[j].interrupts;
+		i++;
+		data[i] = adapter->rx_stats_buffers[j].dropped_packets;
 		i++;
 	}
 }

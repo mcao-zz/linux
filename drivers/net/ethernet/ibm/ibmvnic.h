@@ -226,6 +226,7 @@ struct ibmvnic_rx_queue_stats {
 	u64 packets;
 	u64 bytes;
 	u64 interrupts;
+	u64 dropped_packets;
 };
 
 #define NUM_RX_STATS \
