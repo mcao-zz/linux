@@ -773,6 +773,43 @@ static const char *ibmveth_queue_irq_name(struct ibmveth_adapter *adapter,
 }
 
 /**
+ * ibmveth_set_queue_irq_hint - Point one RX queue's IRQ at its CPU mask
+ * @adapter: ibmveth adapter structure
+ * @queue_idx: RX queue index
+ *
+ * Called after request_irq() and before PHYP delivery is unmasked, so the
+ * first interrupt already lands near the queue's memory. Failure only
+ * costs locality; the IRQ keeps its default affinity.
+ */
+static void ibmveth_set_queue_irq_hint(struct ibmveth_adapter *adapter,
+				       int queue_idx)
+{
+	const struct cpumask *mask = ibmveth_rx_mask(adapter, queue_idx);
+	int rc;
+
+	if (!mask || !cpumask_intersects(mask, cpu_online_mask))
+		return;
+
+	rc = irq_set_affinity_and_hint(adapter->queue_irq[queue_idx], mask);
+	if (rc)
+		netdev_dbg(adapter->netdev,
+			   "queue %d affinity hint failed: %d\n",
+			   queue_idx, rc);
+}
+
+/**
+ * ibmveth_free_queue_irq - Clear the affinity hint and free one RX queue IRQ
+ * @adapter: ibmveth adapter structure
+ * @queue_idx: RX queue index
+ */
+static void ibmveth_free_queue_irq(struct ibmveth_adapter *adapter,
+				   int queue_idx)
+{
+	irq_update_affinity_hint(adapter->queue_irq[queue_idx], NULL);
+	free_irq(adapter->queue_irq[queue_idx], &adapter->napi[queue_idx]);
+}
+
+/**
  * ibmveth_setup_rx_interrupts - Register IRQs and enable NAPI
  * @adapter: ibmveth adapter structure
  *
@@ -808,6 +845,7 @@ ibmveth_setup_rx_interrupts(struct ibmveth_adapter *adapter)
 				   adapter->queue_irq[i], i, rc);
 			goto err_free_irqs;
 		}
+		ibmveth_set_queue_irq_hint(adapter, i);
 	}
 
 	for (i = 0; i < num; i++)
@@ -851,13 +889,13 @@ err_disable_napi:
 	}
 	for (i = 0; i < num; i++) {
 		if (adapter->queue_irq[i])
-			free_irq(adapter->queue_irq[i], &adapter->napi[i]);
+			ibmveth_free_queue_irq(adapter, i);
 	}
 	goto err_dispose_mappings;
 
 err_free_irqs:
 	while (--i >= 0)
-		free_irq(adapter->queue_irq[i], &adapter->napi[i]);
+		ibmveth_free_queue_irq(adapter, i);
 err_dispose_mappings:
 	/* Both setup failure paths own subordinate virq disposal. */
 	ibmveth_dispose_subordinate_irq_mappings(adapter);
@@ -906,7 +944,7 @@ ibmveth_cleanup_rx_interrupts(struct ibmveth_adapter *adapter)
 
 	for (i = 0; i < ibmveth_get_num_rx_queues(adapter); i++) {
 		if (adapter->queue_irq[i])
-			free_irq(adapter->queue_irq[i], &adapter->napi[i]);
+			ibmveth_free_queue_irq(adapter, i);
 	}
 
 	ibmveth_dispose_subordinate_irq_mappings(adapter);
@@ -941,6 +979,7 @@ ibmveth_setup_single_rx_interrupt(struct ibmveth_adapter *adapter,
 			   queue_idx, rc);
 		return rc;
 	}
+	ibmveth_set_queue_irq_hint(adapter, queue_idx);
 
 	netdev_dbg(netdev, "Setup IRQ %d for queue %d\n",
 		   adapter->queue_irq[queue_idx], queue_idx);
@@ -961,8 +1000,7 @@ ibmveth_cleanup_single_rx_interrupt(struct ibmveth_adapter *adapter,
 				    int queue_idx)
 {
 	if (adapter->queue_irq[queue_idx]) {
-		free_irq(adapter->queue_irq[queue_idx],
-			 &adapter->napi[queue_idx]);
+		ibmveth_free_queue_irq(adapter, queue_idx);
 		ibmveth_dispose_subordinate_irq_mapping(adapter, queue_idx);
 		netdev_dbg(adapter->netdev,
 			   "Freed IRQ for queue %d\n", queue_idx);
