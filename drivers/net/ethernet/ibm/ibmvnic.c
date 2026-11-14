@@ -493,6 +493,7 @@ static bool reuse_ltb(struct ibmvnic_long_term_buff *ltb, int size)
  * @adapter: ibmvnic adapter associated to the LTB
  * @ltb:     container object for the LTB
  * @size:    size of the LTB
+ * @node:    NUMA node for a newly allocated LTB
  *
  * Allocate an LTB of the specified size and notify VIOS.
  *
@@ -509,7 +510,8 @@ static bool reuse_ltb(struct ibmvnic_long_term_buff *ltb, int size)
  *	   a negative value otherwise.
  */
 static int alloc_long_term_buff(struct ibmvnic_adapter *adapter,
-				struct ibmvnic_long_term_buff *ltb, int size)
+				struct ibmvnic_long_term_buff *ltb, int size,
+				int node)
 {
 	struct device *dev = &adapter->vdev->dev;
 	u64 prev = 0;
@@ -527,8 +529,8 @@ static int alloc_long_term_buff(struct ibmvnic_adapter *adapter,
 		dev_dbg(dev, "Reusing LTB [map %d, size 0x%llx]\n",
 			ltb->map_id, ltb->size);
 	} else {
-		ltb->buff = dma_alloc_coherent(dev, size, &ltb->addr,
-					       GFP_KERNEL);
+		ltb->buff = dma_alloc_coherent_node(dev, size, &ltb->addr,
+						    GFP_KERNEL, node);
 		if (!ltb->buff) {
 			dev_err(dev, "Couldn't alloc long term buffer\n");
 			return -ENOMEM;
@@ -630,7 +632,7 @@ static void free_ltb_set(struct ibmvnic_adapter *adapter,
  * @ltb_set: container object for the set of LTBs
  * @num_buffs: Number of buffers in the LTB
  * @buff_size: Size of each buffer in the LTB
- * @node: NUMA node for the LTB array
+ * @node: NUMA node for the LTB array and the LTBs
  *
  * Allocate a set of LTBs to accommodate @num_buffs buffers of @buff_size
  * each. We currently cap size each LTB to IBMVNIC_ONE_LTB_SIZE. If the
@@ -721,7 +723,8 @@ static int alloc_ltb_set(struct ibmvnic_adapter *adapter,
 
 		rem_size -= ltb_size;
 
-		rc = alloc_long_term_buff(adapter, &new_set.ltbs[i], ltb_size);
+		rc = alloc_long_term_buff(adapter, &new_set.ltbs[i], ltb_size,
+					  node);
 		if (rc)
 			goto out;
 		i++;
@@ -4157,10 +4160,10 @@ init_sub_crq_queue(struct ibmvnic_adapter *adapter, const struct cpumask *mask)
 	scrq->ind_buf.index = 0;
 
 	scrq->ind_buf.indir_arr =
-		dma_alloc_coherent(dev,
-				   IBMVNIC_IND_MAX_ARR_SZ,
-				   &scrq->ind_buf.indir_dma,
-				   GFP_KERNEL);
+		dma_alloc_coherent_node(dev,
+					IBMVNIC_IND_MAX_ARR_SZ,
+					&scrq->ind_buf.indir_dma,
+					GFP_KERNEL, node);
 
 	if (!scrq->ind_buf.indir_arr)
 		goto indir_failed;
