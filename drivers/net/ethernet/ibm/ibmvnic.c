@@ -69,6 +69,7 @@
 #include <linux/if_vlan.h>
 #include <linux/utsname.h>
 #include <linux/cpu.h>
+#include <linux/group_cpus.h>
 
 #include "ibmvnic.h"
 
@@ -182,8 +183,6 @@ static void ibmvnic_clean_queue_affinity(struct ibmvnic_adapter *adapter,
 	if (!(queue && queue->irq))
 		return;
 
-	cpumask_clear(queue->affinity_mask);
-
 	if (irq_set_affinity_and_hint(queue->irq, NULL))
 		netdev_warn(adapter->netdev,
 			    "%s: Clear affinity failed, queue addr = %p, IRQ = %d\n",
@@ -213,58 +212,133 @@ static void ibmvnic_clean_affinity(struct ibmvnic_adapter *adapter)
 	}
 }
 
-static int ibmvnic_set_queue_affinity(struct ibmvnic_sub_crq_queue *queue,
-				      unsigned int *cpu, int *stragglers,
-				      int stride)
+/* Split @grp into disjoint TX and RX halves, taking whole SMT cores first */
+static void ibmvnic_split_group(const struct cpumask *grp, struct cpumask *tx,
+				struct cpumask *rx, struct cpumask *core)
 {
-	cpumask_var_t mask;
-	int i;
-	int rc = 0;
+	unsigned int half = cpumask_weight(grp) / 2;
+	unsigned int cpu, i = 0;
 
-	if (!(queue && queue->irq))
-		return rc;
-
-	/* cpumask_var_t is either a pointer or array, allocation works here */
-	if (!zalloc_cpumask_var(&mask, GFP_KERNEL))
-		return -ENOMEM;
-
-	/* while we have extra cpu give one extra to this irq */
-	if (*stragglers) {
-		stride++;
-		(*stragglers)--;
+	if (!half) {
+		cpumask_copy(tx, grp);
+		cpumask_copy(rx, grp);
+		return;
 	}
-	/* atomic write is safer than writing bit by bit directly */
-	for_each_online_cpu_wrap(i, *cpu) {
-		if (!stride--) {
-			/* For the next queue we start from the first
-			 * unused CPU in this queue
-			 */
-			*cpu = i;
+
+	cpumask_clear(tx);
+	for_each_cpu(cpu, grp) {
+		if (cpumask_test_cpu(cpu, tx))
+			continue;
+		cpumask_and(core, topology_sibling_cpumask(cpu), grp);
+		cpumask_set_cpu(cpu, core);
+		if (cpumask_weight(tx) + cpumask_weight(core) > half)
 			break;
-		}
-		cpumask_set_cpu(i, mask);
+		cpumask_or(tx, tx, core);
 	}
 
-	/* set queue affinity mask */
-	cpumask_copy(queue->affinity_mask, mask);
-	rc = irq_set_affinity_and_hint(queue->irq, queue->affinity_mask);
-	free_cpumask_var(mask);
+	/* A single core holds more than half of @grp: split its threads */
+	if (cpumask_empty(tx)) {
+		for_each_cpu(cpu, grp) {
+			if (i++ == half)
+				break;
+			cpumask_set_cpu(cpu, tx);
+		}
+	}
 
-	return rc;
+	cpumask_andnot(rx, grp, tx);
+}
+
+/**
+ * ibmvnic_queue_masks - Choose CPU masks for TX and RX sub-CRQs
+ * @ntx: number of TX queues
+ * @nrx: number of RX queues
+ *
+ * TX queue i and RX queue i share one group_cpus_evenly() group, split
+ * into halves. Groups never straddle a NUMA node when there are at least
+ * as many groups as nodes, so each queue's interrupts and memory can stay
+ * on one node. Masks cover all possible CPUs and do not change on CPU
+ * hotplug.
+ *
+ * Return: kfree()-able array of @ntx + @nrx masks, TX queues first, or
+ * NULL on allocation failure.
+ */
+static struct cpumask *ibmvnic_queue_masks(unsigned int ntx, unsigned int nrx)
+{
+	unsigned int npairs = max(ntx, nrx);
+	struct cpumask *groups, *masks;
+	unsigned int ngroups, i;
+	cpumask_var_t core;
+
+	groups = group_cpus_evenly(npairs, &ngroups);
+	if (!groups)
+		return NULL;
+
+	masks = kzalloc_objs(*masks, ntx + nrx);
+	if (!masks || !ngroups || !zalloc_cpumask_var(&core, GFP_KERNEL)) {
+		kfree(masks);
+		kfree(groups);
+		return NULL;
+	}
+
+	for (i = 0; i < npairs; i++) {
+		const struct cpumask *grp = &groups[i % ngroups];
+
+		if (i < ntx && i < nrx)
+			ibmvnic_split_group(grp, &masks[i], &masks[ntx + i],
+					    core);
+		else if (i < ntx)
+			cpumask_copy(&masks[i], grp);
+		else
+			cpumask_copy(&masks[ntx + i], grp);
+	}
+
+	free_cpumask_var(core);
+	kfree(groups);
+	return masks;
+}
+
+/* Node holding most CPUs of @mask, NUMA_NO_NODE for an empty mask */
+static int ibmvnic_mask_node(const struct cpumask *mask)
+{
+	unsigned int weight, best_weight = 0;
+	int node, best = NUMA_NO_NODE;
+
+	for_each_node_with_cpus(node) {
+		weight = cpumask_weight_and(mask, cpumask_of_node(node));
+		if (weight > best_weight) {
+			best_weight = weight;
+			best = node;
+		}
+	}
+
+	return best;
+}
+
+static void ibmvnic_set_queue_affinity(struct ibmvnic_adapter *adapter,
+				       struct ibmvnic_sub_crq_queue *queue)
+{
+	const struct cpumask *mask = queue->affinity_mask;
+	int rc;
+
+	if (!queue->irq)
+		return;
+
+	/* No hint while every CPU of the mask is offline */
+	if (!cpumask_intersects(mask, cpu_online_mask))
+		mask = NULL;
+
+	rc = irq_set_affinity_and_hint(queue->irq, mask);
+	if (rc)
+		netdev_warn(adapter->netdev,
+			    "%s: Set affinity failed, IRQ = %d, rc = %d.\n",
+			    __func__, queue->irq, rc);
 }
 
 /* assumes cpu read lock is held */
 static void ibmvnic_set_affinity(struct ibmvnic_adapter *adapter)
 {
-	struct ibmvnic_sub_crq_queue **rxqs = adapter->rx_scrq;
-	struct ibmvnic_sub_crq_queue **txqs = adapter->tx_scrq;
 	struct ibmvnic_sub_crq_queue *queue;
-	int num_rxqs = adapter->num_active_rx_scrqs, i_rxqs = 0;
-	int num_txqs = adapter->num_active_tx_scrqs, i_txqs = 0;
-	int total_queues, stride, stragglers, i;
-	unsigned int num_cpu, cpu = 0;
-	bool is_rx_queue;
-	int rc = 0;
+	int i, rc;
 
 	netdev_dbg(adapter->netdev, "%s: Setting irq affinity hints", __func__);
 	if (!(adapter->rx_scrq && adapter->tx_scrq)) {
@@ -274,47 +348,24 @@ static void ibmvnic_set_affinity(struct ibmvnic_adapter *adapter)
 		return;
 	}
 
-	total_queues = num_rxqs + num_txqs;
-	num_cpu = num_online_cpus();
-	/* number of cpu's assigned per irq */
-	stride = max_t(int, num_cpu / total_queues, 1);
-	/* number of leftover cpu's */
-	stragglers = num_cpu >= total_queues ? num_cpu % total_queues : 0;
-
-	for (i = 0; i < total_queues; i++) {
-		is_rx_queue = false;
-		/* balance core load by alternating rx and tx assignments
-		 * ex: TX0 -> RX0 -> TX1 -> RX1 etc.
-		 */
-		if ((i % 2 == 1 && i_rxqs < num_rxqs) || i_txqs == num_txqs) {
-			queue = rxqs[i_rxqs++];
-			is_rx_queue = true;
-		} else {
-			queue = txqs[i_txqs++];
-		}
-
-		rc = ibmvnic_set_queue_affinity(queue, &cpu, &stragglers,
-						stride);
-		if (rc)
-			goto out;
-
-		if (!queue || is_rx_queue)
+	for (i = 0; i < adapter->num_active_tx_scrqs; i++) {
+		queue = adapter->tx_scrq[i];
+		if (!queue)
 			continue;
 
+		ibmvnic_set_queue_affinity(adapter, queue);
 		rc = __netif_set_xps_queue(adapter->netdev,
 					   cpumask_bits(queue->affinity_mask),
-					   i_txqs - 1, XPS_CPUS);
+					   i, XPS_CPUS);
 		if (rc)
 			netdev_warn(adapter->netdev, "%s: Set XPS on queue %d failed, rc = %d.\n",
-				    __func__, i_txqs - 1, rc);
+				    __func__, i, rc);
 	}
 
-out:
-	if (rc) {
-		netdev_warn(adapter->netdev,
-			    "%s: Set affinity failed, queue addr = %p, IRQ = %d, rc = %d.\n",
-			    __func__, queue, queue->irq, rc);
-		ibmvnic_clean_affinity(adapter);
+	for (i = 0; i < adapter->num_active_rx_scrqs; i++) {
+		queue = adapter->rx_scrq[i];
+		if (queue)
+			ibmvnic_set_queue_affinity(adapter, queue);
 	}
 }
 
@@ -4037,8 +4088,8 @@ static void release_sub_crq_queue(struct ibmvnic_adapter *adapter,
 	kfree(scrq);
 }
 
-static struct ibmvnic_sub_crq_queue *init_sub_crq_queue(struct ibmvnic_adapter
-							*adapter)
+static struct ibmvnic_sub_crq_queue *
+init_sub_crq_queue(struct ibmvnic_adapter *adapter, const struct cpumask *mask)
 {
 	struct device *dev = &adapter->vdev->dev;
 	struct ibmvnic_sub_crq_queue *scrq;
@@ -4056,6 +4107,9 @@ static struct ibmvnic_sub_crq_queue *init_sub_crq_queue(struct ibmvnic_adapter
 	}
 	if (!zalloc_cpumask_var(&scrq->affinity_mask, GFP_KERNEL))
 		goto cpumask_alloc_failed;
+	if (mask)
+		cpumask_copy(scrq->affinity_mask, mask);
+	scrq->node = ibmvnic_mask_node(scrq->affinity_mask);
 
 	scrq->msg_token = dma_map_single(dev, scrq->msgs, 4 * PAGE_SIZE,
 					 DMA_BIDIRECTIONAL);
@@ -4430,6 +4484,7 @@ static int init_sub_crqs(struct ibmvnic_adapter *adapter)
 	struct device *dev = &adapter->vdev->dev;
 	struct ibmvnic_sub_crq_queue **allqueues;
 	int registered_queues = 0;
+	struct cpumask *masks;
 	int total_queues;
 	int more = 0;
 	int i;
@@ -4440,8 +4495,13 @@ static int init_sub_crqs(struct ibmvnic_adapter *adapter)
 	if (!allqueues)
 		return -ENOMEM;
 
+	/* Without masks the queues run with no affinity hint or XPS */
+	masks = ibmvnic_queue_masks(adapter->req_tx_queues,
+				    adapter->req_rx_queues);
+
 	for (i = 0; i < total_queues; i++) {
-		allqueues[i] = init_sub_crq_queue(adapter);
+		allqueues[i] = init_sub_crq_queue(adapter,
+						  masks ? &masks[i] : NULL);
 		if (!allqueues[i]) {
 			dev_warn(dev, "Couldn't allocate all sub-crqs\n");
 			break;
@@ -4497,6 +4557,22 @@ static int init_sub_crqs(struct ibmvnic_adapter *adapter)
 		adapter->num_active_rx_scrqs++;
 	}
 
+	/* Fewer queues than requested: re-pick masks for the final layout.
+	 * Memory already allocated stays on the node first chosen.
+	 */
+	if (registered_queues < total_queues) {
+		kfree(masks);
+		masks = ibmvnic_queue_masks(adapter->req_tx_queues,
+					    adapter->req_rx_queues);
+		for (i = 0; masks && i < adapter->req_tx_queues; i++)
+			cpumask_copy(adapter->tx_scrq[i]->affinity_mask,
+				     &masks[i]);
+		for (i = 0; masks && i < adapter->req_rx_queues; i++)
+			cpumask_copy(adapter->rx_scrq[i]->affinity_mask,
+				     &masks[adapter->req_tx_queues + i]);
+	}
+
+	kfree(masks);
 	kfree(allqueues);
 	return 0;
 
@@ -4506,6 +4582,7 @@ rx_failed:
 tx_failed:
 	for (i = 0; i < registered_queues; i++)
 		release_sub_crq_queue(adapter, allqueues[i], 1);
+	kfree(masks);
 	kfree(allqueues);
 	return -ENOMEM;
 }
