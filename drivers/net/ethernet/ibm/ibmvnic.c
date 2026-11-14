@@ -314,6 +314,11 @@ static int ibmvnic_mask_node(const struct cpumask *mask)
 	return best;
 }
 
+static int ibmvnic_scrq_node(struct ibmvnic_sub_crq_queue **scrqs, int i)
+{
+	return scrqs && scrqs[i] ? scrqs[i]->node : NUMA_NO_NODE;
+}
+
 static void ibmvnic_set_queue_affinity(struct ibmvnic_adapter *adapter,
 				       struct ibmvnic_sub_crq_queue *queue)
 {
@@ -625,6 +630,7 @@ static void free_ltb_set(struct ibmvnic_adapter *adapter,
  * @ltb_set: container object for the set of LTBs
  * @num_buffs: Number of buffers in the LTB
  * @buff_size: Size of each buffer in the LTB
+ * @node: NUMA node for the LTB array
  *
  * Allocate a set of LTBs to accommodate @num_buffs buffers of @buff_size
  * each. We currently cap size each LTB to IBMVNIC_ONE_LTB_SIZE. If the
@@ -637,7 +643,7 @@ static void free_ltb_set(struct ibmvnic_adapter *adapter,
  */
 static int alloc_ltb_set(struct ibmvnic_adapter *adapter,
 			 struct ibmvnic_ltb_set *ltb_set, int num_buffs,
-			 int buff_size)
+			 int buff_size, int node)
 {
 	struct device *dev = &adapter->vdev->dev;
 	struct ibmvnic_ltb_set old_set;
@@ -670,7 +676,7 @@ static int alloc_ltb_set(struct ibmvnic_adapter *adapter,
 	} else {
 		int tmp = nltbs * sizeof(struct ibmvnic_long_term_buff);
 
-		new_set.ltbs = kzalloc(tmp, GFP_KERNEL);
+		new_set.ltbs = kzalloc_node(tmp, GFP_KERNEL, node);
 		if (!new_set.ltbs)
 			return -ENOMEM;
 
@@ -1132,6 +1138,7 @@ static int init_rx_pools(struct net_device *netdev)
 	u64 pool_size;		/* # of buffers in one pool */
 	u64 buff_size;
 	int i, j, rc;
+	int node;
 
 	pool_size = adapter->req_rx_add_entries_per_subcrq;
 	num_pools = adapter->req_rx_queues;
@@ -1167,15 +1174,18 @@ static int init_rx_pools(struct net_device *netdev)
 		rx_pool->index = i;
 		rx_pool->buff_size = ALIGN(buff_size, L1_CACHE_BYTES);
 
-		rx_pool->free_map = kzalloc_objs(int, rx_pool->size);
+		node = ibmvnic_scrq_node(adapter->rx_scrq, i);
+		rx_pool->free_map = kcalloc_node(rx_pool->size, sizeof(int),
+						 GFP_KERNEL, node);
 		if (!rx_pool->free_map) {
 			dev_err(dev, "Couldn't alloc free_map %d\n", i);
 			rc = -ENOMEM;
 			goto out_release;
 		}
 
-		rx_pool->rx_buff = kzalloc_objs(struct ibmvnic_rx_buff,
-						rx_pool->size);
+		rx_pool->rx_buff = kcalloc_node(rx_pool->size,
+						sizeof(struct ibmvnic_rx_buff),
+						GFP_KERNEL, node);
 		if (!rx_pool->rx_buff) {
 			dev_err(dev, "Couldn't alloc rx buffers\n");
 			rc = -ENOMEM;
@@ -1193,7 +1203,8 @@ update_ltb:
 			i, rx_pool->size, rx_pool->buff_size);
 
 		rc = alloc_ltb_set(adapter, &rx_pool->ltb_set,
-				   rx_pool->size, rx_pool->buff_size);
+				   rx_pool->size, rx_pool->buff_size,
+				   ibmvnic_scrq_node(adapter->rx_scrq, i));
 		if (rc)
 			goto out;
 
@@ -1284,15 +1295,18 @@ static void release_tx_pools(struct ibmvnic_adapter *adapter)
 
 static int init_one_tx_pool(struct net_device *netdev,
 			    struct ibmvnic_tx_pool *tx_pool,
-			    int pool_size, int buf_size)
+			    int pool_size, int buf_size, int node)
 {
 	int i;
 
-	tx_pool->tx_buff = kzalloc_objs(struct ibmvnic_tx_buff, pool_size);
+	tx_pool->tx_buff = kcalloc_node(pool_size,
+					sizeof(struct ibmvnic_tx_buff),
+					GFP_KERNEL, node);
 	if (!tx_pool->tx_buff)
 		return -ENOMEM;
 
-	tx_pool->free_map = kzalloc_objs(int, pool_size);
+	tx_pool->free_map = kcalloc_node(pool_size, sizeof(int), GFP_KERNEL,
+					 node);
 	if (!tx_pool->free_map) {
 		kfree(tx_pool->tx_buff);
 		tx_pool->tx_buff = NULL;
@@ -1366,6 +1380,7 @@ static int init_tx_pools(struct net_device *netdev)
 	u64 pool_size;		/* # of buffers in pool */
 	u64 buff_size;
 	int i, j, rc;
+	int node;
 
 	num_pools = adapter->req_tx_queues;
 
@@ -1410,14 +1425,15 @@ static int init_tx_pools(struct net_device *netdev)
 		dev_dbg(dev, "Init tx pool %d [%llu, %llu]\n",
 			i, adapter->req_tx_entries_per_subcrq, buff_size);
 
+		node = ibmvnic_scrq_node(adapter->tx_scrq, i);
 		rc = init_one_tx_pool(netdev, &adapter->tx_pool[i],
-				      pool_size, buff_size);
+				      pool_size, buff_size, node);
 		if (rc)
 			goto out_release;
 
 		rc = init_one_tx_pool(netdev, &adapter->tso_pool[i],
 				      IBMVNIC_TSO_BUFS,
-				      IBMVNIC_TSO_BUF_SZ);
+				      IBMVNIC_TSO_BUF_SZ, node);
 		if (rc)
 			goto out_release;
 	}
@@ -1442,8 +1458,10 @@ update_ltb:
 		dev_dbg(dev, "Updating LTB for tx pool %d [%d, %d]\n",
 			i, tx_pool->num_buffers, tx_pool->buf_size);
 
+		node = ibmvnic_scrq_node(adapter->tx_scrq, i);
 		rc = alloc_ltb_set(adapter, &tx_pool->ltb_set,
-				   tx_pool->num_buffers, tx_pool->buf_size);
+				   tx_pool->num_buffers, tx_pool->buf_size,
+				   node);
 		if (rc)
 			goto out;
 
@@ -1459,7 +1477,8 @@ update_ltb:
 			i, tso_pool->num_buffers, tso_pool->buf_size);
 
 		rc = alloc_ltb_set(adapter, &tso_pool->ltb_set,
-				   tso_pool->num_buffers, tso_pool->buf_size);
+				   tso_pool->num_buffers, tso_pool->buf_size,
+				   node);
 		if (rc)
 			goto out;
 
@@ -4091,25 +4110,27 @@ static void release_sub_crq_queue(struct ibmvnic_adapter *adapter,
 static struct ibmvnic_sub_crq_queue *
 init_sub_crq_queue(struct ibmvnic_adapter *adapter, const struct cpumask *mask)
 {
+	int node = mask ? ibmvnic_mask_node(mask) : NUMA_NO_NODE;
 	struct device *dev = &adapter->vdev->dev;
 	struct ibmvnic_sub_crq_queue *scrq;
+	struct page *page;
 	int rc;
 
-	scrq = kzalloc_obj(*scrq);
+	scrq = kzalloc_node(sizeof(*scrq), GFP_KERNEL, node);
 	if (!scrq)
 		return NULL;
 
-	scrq->msgs =
-		(union sub_crq *)__get_free_pages(GFP_KERNEL | __GFP_ZERO, 2);
-	if (!scrq->msgs) {
+	page = alloc_pages_node(node, GFP_KERNEL | __GFP_ZERO, 2);
+	if (!page) {
 		dev_warn(dev, "Couldn't allocate crq queue messages page\n");
 		goto zero_page_failed;
 	}
-	if (!zalloc_cpumask_var(&scrq->affinity_mask, GFP_KERNEL))
+	scrq->msgs = page_address(page);
+	if (!zalloc_cpumask_var_node(&scrq->affinity_mask, GFP_KERNEL, node))
 		goto cpumask_alloc_failed;
 	if (mask)
 		cpumask_copy(scrq->affinity_mask, mask);
-	scrq->node = ibmvnic_mask_node(scrq->affinity_mask);
+	scrq->node = node;
 
 	scrq->msg_token = dma_map_single(dev, scrq->msgs, 4 * PAGE_SIZE,
 					 DMA_BIDIRECTIONAL);
