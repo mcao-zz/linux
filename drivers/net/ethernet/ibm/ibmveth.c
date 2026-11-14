@@ -32,6 +32,8 @@
 #include <linux/slab.h>
 #include <linux/spinlock.h>
 #include <linux/debugfs.h>
+#include <linux/group_cpus.h>
+#include <linux/nodemask.h>
 #include <asm/hvcall.h>
 #include <linux/atomic.h>
 #include <asm/vio.h>
@@ -367,6 +369,109 @@ static void ibmveth_free_tx_qstats(struct ibmveth_adapter *adapter)
 }
 
 /**
+ * ibmveth_alloc_rx_masks - Allocate per-queue RX CPU masks
+ * @adapter: ibmveth adapter structure
+ *
+ * Return: 0 on success, -ENOMEM on failure
+ */
+static int ibmveth_alloc_rx_masks(struct ibmveth_adapter *adapter)
+{
+	adapter->rx_masks = kcalloc(IBMVETH_MAX_RX_QUEUES,
+				    sizeof(*adapter->rx_masks), GFP_KERNEL);
+	if (!adapter->rx_masks)
+		return -ENOMEM;
+
+	return 0;
+}
+
+/**
+ * ibmveth_free_rx_masks - Free per-queue RX CPU masks
+ * @adapter: ibmveth adapter structure
+ */
+static void ibmveth_free_rx_masks(struct ibmveth_adapter *adapter)
+{
+	kfree(adapter->rx_masks);
+	adapter->rx_masks = NULL;
+}
+
+/**
+ * ibmveth_set_rx_masks - Pick CPU masks for RX queues @first..@count-1
+ * @adapter: ibmveth adapter structure
+ * @first: first queue to set
+ * @count: number of RX queues the masks are spread over
+ *
+ * group_cpus_evenly() splits the CPUs into @count NUMA- and SMT-aware
+ * groups; queue i gets group i. Queues below @first keep their masks, so
+ * a scale-up does not move queues whose memory is already allocated.
+ * If the grouping fails the masks are left empty and the queues fall
+ * back to NUMA_NO_NODE and no affinity hint.
+ */
+static void ibmveth_set_rx_masks(struct ibmveth_adapter *adapter,
+				 unsigned int first, unsigned int count)
+{
+	struct cpumask *masks;
+	unsigned int nr, i;
+
+	if (!adapter->rx_masks || first >= count)
+		return;
+
+	masks = group_cpus_evenly(count, &nr);
+	for (i = first; i < count; i++) {
+		if (masks && i < nr)
+			cpumask_copy(&adapter->rx_masks[i], &masks[i]);
+		else
+			cpumask_clear(&adapter->rx_masks[i]);
+	}
+	kfree(masks);
+}
+
+/**
+ * ibmveth_rx_mask - CPU mask of one RX queue
+ * @adapter: ibmveth adapter structure
+ * @queue_idx: RX queue index
+ *
+ * Return: the mask, or NULL if none was picked
+ */
+static const struct cpumask *ibmveth_rx_mask(struct ibmveth_adapter *adapter,
+					     int queue_idx)
+{
+	if (!adapter->rx_masks || cpumask_empty(&adapter->rx_masks[queue_idx]))
+		return NULL;
+
+	return &adapter->rx_masks[queue_idx];
+}
+
+/**
+ * ibmveth_rx_node - NUMA node for one RX queue's memory
+ * @adapter: ibmveth adapter structure
+ * @queue_idx: RX queue index
+ *
+ * A group can span nodes when there are fewer queues than nodes; use the
+ * node holding most of its CPUs.
+ *
+ * Return: the node, or NUMA_NO_NODE if the queue has no mask
+ */
+static int ibmveth_rx_node(struct ibmveth_adapter *adapter, int queue_idx)
+{
+	const struct cpumask *mask = ibmveth_rx_mask(adapter, queue_idx);
+	unsigned int w, best_w = 0;
+	int node, best = NUMA_NO_NODE;
+
+	if (!mask)
+		return NUMA_NO_NODE;
+
+	for_each_node_with_cpus(node) {
+		w = cpumask_weight_and(mask, cpumask_of_node(node));
+		if (w > best_w) {
+			best_w = w;
+			best = node;
+		}
+	}
+
+	return best;
+}
+
+/**
  * ibmveth_alloc_rx_queues - Allocate per-queue RX resources
  * @adapter: ibmveth adapter structure
  * @rxq_entries: Number of entries per RX queue
@@ -381,8 +486,11 @@ ibmveth_alloc_rx_queues(struct ibmveth_adapter *adapter, int rxq_entries)
 	int i;
 
 	for (i = 0; i < ibmveth_get_num_rx_queues(adapter); i++) {
-		adapter->buffer_list_addr[i] =
-			(void *)get_zeroed_page(GFP_KERNEL);
+		struct page *page;
+
+		page = alloc_pages_node(ibmveth_rx_node(adapter, i),
+					GFP_KERNEL | __GFP_ZERO, 0);
+		adapter->buffer_list_addr[i] = page ? page_address(page) : NULL;
 		if (!adapter->buffer_list_addr[i]) {
 			netdev_err(netdev,
 				   "unable to allocate buffer list for queue %d\n",
@@ -919,23 +1027,26 @@ static void ibmveth_init_buffer_pool(struct ibmveth_buff_pool *pool,
 }
 
 /* allocate and setup an buffer pool - called during open */
-static int ibmveth_alloc_buffer_pool(struct ibmveth_buff_pool *pool)
+static int ibmveth_alloc_buffer_pool(struct ibmveth_buff_pool *pool, int node)
 {
 	int i;
 
-	pool->free_map = kmalloc_array(pool->size, sizeof(u16), GFP_KERNEL);
+	pool->free_map = kmalloc_array_node(pool->size, sizeof(u16), GFP_KERNEL,
+					    node);
 
 	if (!pool->free_map)
 		return -1;
 
-	pool->dma_addr = kzalloc_objs(dma_addr_t, pool->size);
+	pool->dma_addr = kcalloc_node(pool->size, sizeof(dma_addr_t),
+				      GFP_KERNEL, node);
 	if (!pool->dma_addr) {
 		kfree(pool->free_map);
 		pool->free_map = NULL;
 		return -1;
 	}
 
-	pool->skbuff = kcalloc(pool->size, sizeof(void *), GFP_KERNEL);
+	pool->skbuff = kcalloc_node(pool->size, sizeof(void *), GFP_KERNEL,
+				    node);
 
 	if (!pool->skbuff) {
 		kfree(pool->dma_addr);
@@ -1533,6 +1644,7 @@ static int ibmveth_alloc_queue_buffer_pools(struct ibmveth_adapter *adapter,
 					    int queue)
 {
 	struct net_device *netdev = adapter->netdev;
+	int node = ibmveth_rx_node(adapter, queue);
 	int i;
 
 	for (i = 0; i < IBMVETH_NUM_BUFF_POOLS; i++) {
@@ -1542,7 +1654,7 @@ static int ibmveth_alloc_queue_buffer_pools(struct ibmveth_adapter *adapter,
 		if (!bpool->active)
 			continue;
 
-		if (ibmveth_alloc_buffer_pool(bpool)) {
+		if (ibmveth_alloc_buffer_pool(bpool, node)) {
 			netdev_err(netdev,
 				   "queue %d pool %d alloc failed (size=%u count=%u)\n",
 				   queue, i,
@@ -1644,9 +1756,11 @@ ibmveth_alloc_single_rx_queue(struct ibmveth_adapter *adapter, int queue_idx,
 	struct device *dev = &adapter->vdev->dev;
 	struct net_device *netdev = adapter->netdev;
 	int i, rc = -ENOMEM;
+	struct page *page;
 
-	adapter->buffer_list_addr[queue_idx] =
-		(void *)get_zeroed_page(GFP_KERNEL);
+	page = alloc_pages_node(ibmveth_rx_node(adapter, queue_idx),
+				GFP_KERNEL | __GFP_ZERO, 0);
+	adapter->buffer_list_addr[queue_idx] = page ? page_address(page) : NULL;
 	if (!adapter->buffer_list_addr[queue_idx]) {
 		netdev_err(netdev, "unable to allocate buffer list for queue %d\n",
 			   queue_idx);
@@ -2536,6 +2650,8 @@ ibmveth_scale_up_rx_queues(struct ibmveth_adapter *adapter, int old_count,
 		return rc;
 	}
 
+	ibmveth_set_rx_masks(adapter, old_count, new_count);
+
 	for (i = old_count; i < new_count; i++) {
 		if (adapter->queue_registered[i]) {
 			/*
@@ -3171,6 +3287,7 @@ static int ibmveth_open(struct net_device *netdev)
 	}
 
 	ibmveth_apply_mq_fallback(adapter);
+	ibmveth_set_rx_masks(adapter, 0, ibmveth_get_num_rx_queues(adapter));
 
 	for (i = 0; i < IBMVETH_NUM_BUFF_POOLS; i++)
 		rxq_entries += adapter->rx_buff_pool[0][i].size;
@@ -4980,6 +5097,7 @@ static void ibmveth_probe_cleanup(struct ibmveth_adapter *adapter,
 	cancel_work_sync(&adapter->work);
 	ibmveth_put_pool_kobjs(adapter, pools_ready);
 
+	ibmveth_free_rx_masks(adapter);
 	ibmveth_free_tx_qstats(adapter);
 	ibmveth_free_rx_qstats(adapter);
 	/* Probe failure never reaches ibmveth_remove(); clear before free
@@ -5054,7 +5172,8 @@ static int ibmveth_probe(struct vio_dev *dev, const struct vio_device_id *id)
 				      ibmveth_poll, 16);
 
 	if (ibmveth_alloc_rx_qstats(adapter) ||
-	    ibmveth_alloc_tx_qstats(adapter)) {
+	    ibmveth_alloc_tx_qstats(adapter) ||
+	    ibmveth_alloc_rx_masks(adapter)) {
 		ibmveth_probe_cleanup(adapter, 0);
 		return -ENOMEM;
 	}
@@ -5226,6 +5345,7 @@ static void ibmveth_remove(struct vio_dev *dev)
 		}
 	}
 
+	ibmveth_free_rx_masks(adapter);
 	ibmveth_free_tx_qstats(adapter);
 	ibmveth_free_rx_qstats(adapter);
 

@@ -398,6 +398,10 @@ struct ibmveth_adapter {
 
 	struct ibmveth_rx_queue_stats *rx_qstats;
 	struct ibmveth_tx_queue_stats *tx_qstats;
+	/* IBMVETH_MAX_RX_QUEUES entries, set under RTNL. Never moved:
+	 * IRQ affinity hints point into it.
+	 */
+	struct cpumask *rx_masks;
 
 	struct dentry *debugfs_dir;
 
