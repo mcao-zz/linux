@@ -834,6 +834,7 @@ struct ibmvnic_sub_crq_queue {
 	char name[32];
 	u64 handle;
 	cpumask_var_t affinity_mask;
+	int node;
 } ____cacheline_aligned;
 
 struct ibmvnic_long_term_buff {
