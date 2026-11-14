@@ -648,7 +648,7 @@ EXPORT_SYMBOL_GPL(dma_get_required_mask);
  *
  * Allocations served from per-device or global coherent pools, per-device CMA
  * areas, restricted or atomic pools, arch_dma_alloc() or dma_map_ops
- * implementations do not take @node into account.
+ * implementations that only provide ->alloc() do not take @node into account.
  *
  * Return: the CPU address of the allocation, or NULL on failure.
  */
@@ -691,6 +691,9 @@ void *dma_alloc_attrs_node(struct device *dev, size_t size,
 						 attrs, node);
 	} else if (use_dma_iommu(dev)) {
 		cpu_addr = iommu_dma_alloc(dev, size, dma_handle, flag, attrs,
+					   node);
+	} else if (ops->alloc_node) {
+		cpu_addr = ops->alloc_node(dev, size, dma_handle, flag, attrs,
 					   node);
 	} else if (ops->alloc) {
 		cpu_addr = ops->alloc(dev, size, dma_handle, flag, attrs);

@@ -17,6 +17,10 @@ struct dma_map_ops {
 	void *(*alloc)(struct device *dev, size_t size,
 			dma_addr_t *dma_handle, gfp_t gfp,
 			unsigned long attrs);
+	/* Same as ->alloc() with a NUMA node preference, used if set */
+	void *(*alloc_node)(struct device *dev, size_t size,
+			dma_addr_t *dma_handle, gfp_t gfp,
+			unsigned long attrs, int node);
 	void (*free)(struct device *dev, size_t size, void *vaddr,
 			dma_addr_t dma_handle, unsigned long attrs);
 	struct page *(*alloc_pages_op)(struct device *dev, size_t size,
