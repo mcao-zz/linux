@@ -482,7 +482,7 @@ static void vio_cmo_balance(struct work_struct *work)
 
 static void *vio_dma_iommu_alloc_coherent(struct device *dev, size_t size,
 					  dma_addr_t *dma_handle, gfp_t flag,
-					  unsigned long attrs)
+					  unsigned long attrs, int node)
 {
 	struct vio_dev *viodev = to_vio_dev(dev);
 	void *ret;
@@ -494,7 +494,7 @@ static void *vio_dma_iommu_alloc_coherent(struct device *dev, size_t size,
 
 	ret = iommu_alloc_coherent(dev, get_iommu_table_base(dev), size,
 				    dma_handle, dev->coherent_dma_mask, flag,
-				    dev_to_node(dev));
+				    node);
 	if (unlikely(ret == NULL)) {
 		vio_cmo_dealloc(viodev, roundup(size, PAGE_SIZE));
 		atomic_inc(&viodev->cmo.allocs_failed);
@@ -605,7 +605,7 @@ static void vio_dma_iommu_unmap_sg(struct device *dev,
 }
 
 static const struct dma_map_ops vio_dma_mapping_ops = {
-	.alloc             = vio_dma_iommu_alloc_coherent,
+	.alloc_node        = vio_dma_iommu_alloc_coherent,
 	.free              = vio_dma_iommu_free_coherent,
 	.map_sg            = vio_dma_iommu_map_sg,
 	.unmap_sg          = vio_dma_iommu_unmap_sg,
