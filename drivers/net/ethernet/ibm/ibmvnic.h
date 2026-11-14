@@ -217,19 +217,21 @@ struct ibmvnic_tx_queue_stats {
 	u64 direct_packets;
 	u64 bytes;
 	u64 dropped_packets;
-};
+} ____cacheline_aligned_in_smp;
 
+/* Counted by field, not sizeof(): the struct is padded to a cache line */
 #define NUM_TX_STATS \
-	(sizeof(struct ibmvnic_tx_queue_stats) / sizeof(u64))
+	(offsetofend(struct ibmvnic_tx_queue_stats, dropped_packets) / \
+	 sizeof(u64))
 
 struct ibmvnic_rx_queue_stats {
 	u64 packets;
 	u64 bytes;
 	u64 interrupts;
-};
+} ____cacheline_aligned_in_smp;
 
 #define NUM_RX_STATS \
-	(sizeof(struct ibmvnic_rx_queue_stats) / sizeof(u64))
+	(offsetofend(struct ibmvnic_rx_queue_stats, interrupts) / sizeof(u64))
 
 struct ibmvnic_acl_buffer {
 	__be32 len;
