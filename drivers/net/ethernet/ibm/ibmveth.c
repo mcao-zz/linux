@@ -32,6 +32,7 @@
 #include <linux/slab.h>
 #include <linux/spinlock.h>
 #include <linux/debugfs.h>
+#include <linux/cpu.h>
 #include <linux/group_cpus.h>
 #include <linux/nodemask.h>
 #include <asm/hvcall.h>
@@ -1667,6 +1668,50 @@ static void ibmveth_free_queue_buffer_pools(struct ibmveth_adapter *adapter,
 	}
 }
 
+struct ibmveth_fill_arg {
+	struct ibmveth_adapter *adapter;
+	int queue_idx;
+};
+
+static long ibmveth_fill_rx_queue_fn(void *data)
+{
+	struct ibmveth_fill_arg *arg = data;
+
+	ibmveth_replenish_task(arg->adapter, arg->queue_idx);
+	return 0;
+}
+
+/**
+ * ibmveth_fill_rx_queue - First replenish of an RX queue on its own CPUs
+ * @adapter: ibmveth adapter structure
+ * @queue_idx: RX queue index
+ *
+ * netdev_alloc_skb() takes memory from the current CPU's page frag cache,
+ * and frames below rx_copybreak recycle the pool skb for the queue's
+ * lifetime. Run the first fill on an online CPU of the queue's mask so
+ * those skbs start on the queue's node; later refills run in the queue's
+ * NAPI. Without a usable CPU, fill inline as before.
+ */
+static void ibmveth_fill_rx_queue(struct ibmveth_adapter *adapter,
+				  int queue_idx)
+{
+	const struct cpumask *mask = ibmveth_rx_mask(adapter, queue_idx);
+	struct ibmveth_fill_arg arg = {
+		.adapter = adapter,
+		.queue_idx = queue_idx,
+	};
+	unsigned int cpu = nr_cpu_ids;
+
+	cpus_read_lock();
+	if (mask)
+		cpu = cpumask_any_and(mask, cpu_online_mask);
+	if (cpu < nr_cpu_ids)
+		work_on_cpu(cpu, ibmveth_fill_rx_queue_fn, &arg);
+	else
+		ibmveth_replenish_task(adapter, queue_idx);
+	cpus_read_unlock();
+}
+
 /**
  * ibmveth_alloc_queue_buffer_pools - Allocate buffer pools for a single queue
  * @adapter: ibmveth adapter structure
@@ -2750,7 +2795,7 @@ ibmveth_scale_up_rx_queues(struct ibmveth_adapter *adapter, int old_count,
 		 * unpublished, empty, or NAPI-disabled queue.
 		 */
 		ibmveth_publish_num_rx_queues(adapter, i + 1);
-		ibmveth_replenish_task(adapter, i);
+		ibmveth_fill_rx_queue(adapter, i);
 		napi_enable(&adapter->napi[i]);
 
 		rc = ibmveth_enable_irq(adapter, i);
@@ -3382,7 +3427,7 @@ static int ibmveth_open(struct net_device *netdev)
 	 */
 	for (i = 0; i < ibmveth_get_num_rx_queues(adapter); i++) {
 		netdev_dbg(netdev, "initial replenish cycle for queue %d\n", i);
-		ibmveth_replenish_task(adapter, i);
+		ibmveth_fill_rx_queue(adapter, i);
 	}
 
 	/* Enables NAPI, so everything ibmveth_poll() touches must exist:
