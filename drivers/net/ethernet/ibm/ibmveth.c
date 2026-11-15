@@ -444,18 +444,16 @@ static const struct cpumask *ibmveth_rx_mask(struct ibmveth_adapter *adapter,
 }
 
 /**
- * ibmveth_rx_node - NUMA node for one RX queue's memory
- * @adapter: ibmveth adapter structure
- * @queue_idx: RX queue index
+ * ibmveth_mask_node - NUMA node for memory used by the CPUs of @mask
+ * @mask: CPU mask of one queue, or NULL
  *
  * A group can span nodes when there are fewer queues than nodes; use the
  * node holding most of its CPUs.
  *
- * Return: the node, or NUMA_NO_NODE if the queue has no mask
+ * Return: the node, or NUMA_NO_NODE if @mask is NULL or has no CPUs
  */
-static int ibmveth_rx_node(struct ibmveth_adapter *adapter, int queue_idx)
+static int ibmveth_mask_node(const struct cpumask *mask)
 {
-	const struct cpumask *mask = ibmveth_rx_mask(adapter, queue_idx);
 	unsigned int w, best_w = 0;
 	int node, best = NUMA_NO_NODE;
 
@@ -471,6 +469,11 @@ static int ibmveth_rx_node(struct ibmveth_adapter *adapter, int queue_idx)
 	}
 
 	return best;
+}
+
+static int ibmveth_rx_node(struct ibmveth_adapter *adapter, int queue_idx)
+{
+	return ibmveth_mask_node(ibmveth_rx_mask(adapter, queue_idx));
 }
 
 /**
@@ -2285,10 +2288,11 @@ static void ibmveth_free_tx_ltb(struct ibmveth_adapter *adapter, int idx)
 /* Caller must ensure tx_ltb_ptr[idx] is NULL. open() runs on
  * probe-zeroed slots; set_channels() skips populated indices.
  */
-static int ibmveth_allocate_tx_ltb(struct ibmveth_adapter *adapter, int idx)
+static int ibmveth_allocate_tx_ltb(struct ibmveth_adapter *adapter, int idx,
+				   int node)
 {
-	adapter->tx_ltb_ptr[idx] = kzalloc(adapter->tx_ltb_size,
-					   GFP_KERNEL);
+	adapter->tx_ltb_ptr[idx] = kzalloc_node(adapter->tx_ltb_size,
+						GFP_KERNEL, node);
 	if (!adapter->tx_ltb_ptr[idx]) {
 		netdev_err(adapter->netdev,
 			   "unable to allocate tx long term buffer\n");
@@ -2311,26 +2315,84 @@ static int ibmveth_allocate_tx_ltb(struct ibmveth_adapter *adapter, int idx)
 }
 
 /**
+ * ibmveth_tx_masks - CPU groups for @count TX queues
+ * @count: number of TX queues
+ *
+ * Same NUMA- and SMT-aware grouping as the RX queues. TX queues have no
+ * IRQ, so the masks are only used for XPS and to place each queue's LTB;
+ * they are not kept.
+ *
+ * Return: @count masks to kfree(), or NULL
+ */
+static struct cpumask *ibmveth_tx_masks(unsigned int count)
+{
+	unsigned int nr;
+	struct cpumask *masks = group_cpus_evenly(count, &nr);
+
+	if (masks && nr < count) {
+		kfree(masks);
+		return NULL;
+	}
+
+	return masks;
+}
+
+/**
+ * ibmveth_set_tx_xps - Map every CPU to the TX queue of its group
+ * @adapter: ibmveth adapter structure
+ *
+ * Without XPS the stack picks a TX queue by flow hash, so a CPU writes
+ * LTBs on every node. Failure only costs locality.
+ */
+static void ibmveth_set_tx_xps(struct ibmveth_adapter *adapter)
+{
+	struct net_device *netdev = adapter->netdev;
+	unsigned int i, count = netdev->real_num_tx_queues;
+	struct cpumask *masks;
+	int rc;
+
+	masks = ibmveth_tx_masks(count);
+	if (!masks)
+		return;
+
+	for (i = 0; i < count; i++) {
+		rc = netif_set_xps_queue(netdev, &masks[i], i);
+		if (rc)
+			netdev_dbg(netdev, "queue %u XPS failed: %d\n", i, rc);
+	}
+	kfree(masks);
+}
+
+/**
  * ibmveth_alloc_tx_resources - Allocate TX LTBs for real_num_tx_queues
  * @adapter: ibmveth adapter structure
  *
- * Allocates TX Long Term Buffers (LTBs) for real_num_tx_queues.
+ * Allocates TX Long Term Buffers (LTBs) for real_num_tx_queues, each on
+ * the node of its queue's CPU group, then installs XPS for those groups.
  *
  * Return: 0 on success, -ENOMEM on failure
  */
 static int ibmveth_alloc_tx_resources(struct ibmveth_adapter *adapter)
 {
 	struct net_device *netdev = adapter->netdev;
+	struct cpumask *masks;
 	int i;
 
+	masks = ibmveth_tx_masks(netdev->real_num_tx_queues);
 	for (i = 0; i < netdev->real_num_tx_queues; i++) {
-		if (ibmveth_allocate_tx_ltb(adapter, i))
+		if (ibmveth_allocate_tx_ltb(adapter, i,
+					    ibmveth_mask_node(masks ?
+							      &masks[i] :
+							      NULL)))
 			goto err_free_ltbs;
 	}
+	kfree(masks);
 
+	ibmveth_set_tx_xps(adapter);
 	return 0;
 
 err_free_ltbs:
+	kfree(masks);
 	while (--i >= 0)
 		ibmveth_free_tx_ltb(adapter, i);
 	return -ENOMEM;
@@ -4061,6 +4123,7 @@ static int ibmveth_set_channels(struct net_device *netdev,
 	unsigned int old_tx = netdev->real_num_tx_queues;
 	unsigned int goal_tx = channels->tx_count;
 	unsigned int want_tx = goal_tx;
+	struct cpumask *tx_masks;
 	unsigned int max_tx;
 	bool rx_changed = false;
 	int rc, i, alloc_rc = 0;
@@ -4140,12 +4203,20 @@ static int ibmveth_set_channels(struct net_device *netdev,
 	 */
 	netif_tx_stop_all_queues(netdev);
 
+	/* New LTBs go on the node of their group in the goal layout;
+	 * existing LTBs stay where they are.
+	 */
+	tx_masks = goal_tx > old_tx ? ibmveth_tx_masks(goal_tx) : NULL;
+
 	/* Allocate any queue that we need */
 	for (i = old_tx; i < goal_tx; i++) {
 		if (adapter->tx_ltb_ptr[i])
 			continue;
 
-		rc = ibmveth_allocate_tx_ltb(adapter, i);
+		rc = ibmveth_allocate_tx_ltb(adapter, i,
+					     ibmveth_mask_node(tx_masks ?
+							       &tx_masks[i] :
+							       NULL));
 		if (!rc)
 			continue;
 
@@ -4166,12 +4237,14 @@ static int ibmveth_set_channels(struct net_device *netdev,
 	} else if (alloc_rc) {
 		rc = alloc_rc;
 	}
+	kfree(tx_masks);
 	/* Free any that are no longer needed */
 	for (i = old_tx; i > goal_tx; i--) {
 		if (adapter->tx_ltb_ptr[i - 1])
 			ibmveth_free_tx_ltb(adapter, i - 1);
 	}
 
+	ibmveth_set_tx_xps(adapter);
 	netif_tx_wake_all_queues(netdev);
 
 	if (netdev->real_num_tx_queues != want_tx) {
