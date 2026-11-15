@@ -402,6 +402,13 @@ struct ibmveth_adapter {
 	 * IRQ affinity hints point into it.
 	 */
 	struct cpumask *rx_masks;
+	/* Serialises queue_irq_live[] and the IRQ hints against the CPU
+	 * hotplug callback, which cannot take RTNL.
+	 */
+	struct mutex irq_hint_lock;
+	bool queue_irq_live[IBMVETH_MAX_RX_QUEUES];
+	struct hlist_node cpuhp_node;
+	bool cpuhp_added;
 
 	struct dentry *debugfs_dir;
 

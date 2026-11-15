@@ -33,6 +33,7 @@
 #include <linux/spinlock.h>
 #include <linux/debugfs.h>
 #include <linux/cpu.h>
+#include <linux/cpuhotplug.h>
 #include <linux/group_cpus.h>
 #include <linux/nodemask.h>
 #include <asm/hvcall.h>
@@ -773,20 +774,13 @@ static const char *ibmveth_queue_irq_name(struct ibmveth_adapter *adapter,
 	return name;
 }
 
-/**
- * ibmveth_set_queue_irq_hint - Point one RX queue's IRQ at its CPU mask
- * @adapter: ibmveth adapter structure
- * @queue_idx: RX queue index
- *
- * Called after request_irq() and before PHYP delivery is unmasked, so the
- * first interrupt already lands near the queue's memory. Failure only
- * costs locality; the IRQ keeps its default affinity.
- */
-static void ibmveth_set_queue_irq_hint(struct ibmveth_adapter *adapter,
-				       int queue_idx)
+static void ibmveth_apply_queue_irq_hint(struct ibmveth_adapter *adapter,
+					 int queue_idx)
 {
 	const struct cpumask *mask = ibmveth_rx_mask(adapter, queue_idx);
 	int rc;
+
+	lockdep_assert_held(&adapter->irq_hint_lock);
 
 	if (!mask || !cpumask_intersects(mask, cpu_online_mask))
 		return;
@@ -799,6 +793,25 @@ static void ibmveth_set_queue_irq_hint(struct ibmveth_adapter *adapter,
 }
 
 /**
+ * ibmveth_set_queue_irq_hint - Point one RX queue's IRQ at its CPU mask
+ * @adapter: ibmveth adapter structure
+ * @queue_idx: RX queue index
+ *
+ * Called after request_irq() and before PHYP delivery is unmasked, so the
+ * first interrupt already lands near the queue's memory. Failure only
+ * costs locality; the IRQ keeps its default affinity. Marks the IRQ live
+ * so the hotplug callback can restore the affinity later.
+ */
+static void ibmveth_set_queue_irq_hint(struct ibmveth_adapter *adapter,
+				       int queue_idx)
+{
+	mutex_lock(&adapter->irq_hint_lock);
+	adapter->queue_irq_live[queue_idx] = true;
+	ibmveth_apply_queue_irq_hint(adapter, queue_idx);
+	mutex_unlock(&adapter->irq_hint_lock);
+}
+
+/**
  * ibmveth_free_queue_irq - Clear the affinity hint and free one RX queue IRQ
  * @adapter: ibmveth adapter structure
  * @queue_idx: RX queue index
@@ -806,8 +819,68 @@ static void ibmveth_set_queue_irq_hint(struct ibmveth_adapter *adapter,
 static void ibmveth_free_queue_irq(struct ibmveth_adapter *adapter,
 				   int queue_idx)
 {
+	mutex_lock(&adapter->irq_hint_lock);
+	adapter->queue_irq_live[queue_idx] = false;
 	irq_update_affinity_hint(adapter->queue_irq[queue_idx], NULL);
+	mutex_unlock(&adapter->irq_hint_lock);
 	free_irq(adapter->queue_irq[queue_idx], &adapter->napi[queue_idx]);
+}
+
+static enum cpuhp_state ibmveth_online_state;
+
+/**
+ * ibmveth_cpu_online - Restore RX IRQ affinity when a queue's CPU returns
+ * @cpu: CPU coming online
+ * @node: adapter's cpuhp instance
+ *
+ * When the last online CPU of a queue's mask goes offline, the IRQ core
+ * moves the IRQ elsewhere and drops its affinity; A2 also skips the hint
+ * while a mask has no online CPU. Re-apply it when @cpu is the first CPU
+ * of the mask back online. Masks cover possible CPUs, so they never need
+ * recomputing, and no memory is moved.
+ *
+ * Return: 0
+ */
+static int ibmveth_cpu_online(unsigned int cpu, struct hlist_node *node)
+{
+	struct ibmveth_adapter *adapter =
+		hlist_entry_safe(node, struct ibmveth_adapter, cpuhp_node);
+	const struct cpumask *mask;
+	int i;
+
+	mutex_lock(&adapter->irq_hint_lock);
+	for (i = 0; i < IBMVETH_MAX_RX_QUEUES; i++) {
+		if (!adapter->queue_irq_live[i])
+			continue;
+		mask = ibmveth_rx_mask(adapter, i);
+		if (!mask || !cpumask_test_cpu(cpu, mask) ||
+		    cpumask_weight_and(mask, cpu_online_mask) != 1)
+			continue;
+		ibmveth_apply_queue_irq_hint(adapter, i);
+	}
+	mutex_unlock(&adapter->irq_hint_lock);
+
+	return 0;
+}
+
+static void ibmveth_cpuhp_add(struct ibmveth_adapter *adapter)
+{
+	if (ibmveth_online_state <= 0)
+		return;
+
+	if (!cpuhp_state_add_instance_nocalls(ibmveth_online_state,
+					      &adapter->cpuhp_node))
+		adapter->cpuhp_added = true;
+}
+
+static void ibmveth_cpuhp_remove(struct ibmveth_adapter *adapter)
+{
+	if (!adapter->cpuhp_added)
+		return;
+
+	cpuhp_state_remove_instance_nocalls(ibmveth_online_state,
+					    &adapter->cpuhp_node);
+	adapter->cpuhp_added = false;
 }
 
 /**
@@ -5246,6 +5319,7 @@ static int ibmveth_probe(struct vio_dev *dev, const struct vio_device_id *id)
 	 */
 	for (i = 0; i < IBMVETH_MAX_RX_QUEUES; i++)
 		spin_lock_init(&adapter->rx_queue[i].replenish_lock);
+	mutex_init(&adapter->irq_hint_lock);
 
 	adapter->mcastFilterSize = be32_to_cpu(*mcastFilterSize_p);
 	ibmveth_init_link_settings(netdev);
@@ -5397,6 +5471,7 @@ static int ibmveth_probe(struct vio_dev *dev, const struct vio_device_id *id)
 	netdev_dbg(netdev, "registered\n");
 
 	ibmveth_debugfs_init(adapter);
+	ibmveth_cpuhp_add(adapter);
 
 	return 0;
 
@@ -5410,6 +5485,7 @@ static void ibmveth_remove(struct vio_dev *dev)
 	struct net_device *netdev = dev_get_drvdata(&dev->dev);
 	struct ibmveth_adapter *adapter = netdev_priv(netdev);
 
+	ibmveth_cpuhp_remove(adapter);
 	disable_work_sync(&adapter->work);
 
 	ibmveth_debugfs_exit(adapter);
@@ -5675,8 +5751,16 @@ static int __init ibmveth_module_init(void)
 
 	ibmveth_dbg_root = debugfs_create_dir(ibmveth_driver_name, NULL);
 
+	/* Without the state, IRQ affinity is just not restored on hotplug. */
+	rc = cpuhp_setup_state_multi(CPUHP_AP_ONLINE_DYN, "net/ibmveth:online",
+				     ibmveth_cpu_online, NULL);
+	if (rc > 0)
+		ibmveth_online_state = rc;
+
 	rc = vio_register_driver(&ibmveth_driver);
 	if (rc) {
+		if (ibmveth_online_state > 0)
+			cpuhp_remove_multi_state(ibmveth_online_state);
 		debugfs_remove_recursive(ibmveth_dbg_root);
 		ibmveth_dbg_root = NULL;
 	}
@@ -5687,6 +5771,8 @@ static int __init ibmveth_module_init(void)
 static void __exit ibmveth_module_exit(void)
 {
 	vio_unregister_driver(&ibmveth_driver);
+	if (ibmveth_online_state > 0)
+		cpuhp_remove_multi_state(ibmveth_online_state);
 	debugfs_remove_recursive(ibmveth_dbg_root);
 	ibmveth_dbg_root = NULL;
 }
