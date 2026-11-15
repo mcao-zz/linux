@@ -4445,8 +4445,7 @@ void lockdep_hardirqs_on_prepare(void)
 	 * Can't allow enabling interrupts while in an interrupt handler,
 	 * that's general bad form and such. Recursion, limited stack etc..
 	 */
-	if (DEBUG_LOCKS_WARN_ON(lockdep_hardirq_context()))
-		return;
+	WARN_ON_ONCE(lockdep_hardirq_context());
 
 	current->hardirq_chain_key = current->curr_chain_key;
 
