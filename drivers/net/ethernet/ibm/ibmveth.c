@@ -506,9 +506,11 @@ ibmveth_alloc_rx_queues(struct ibmveth_adapter *adapter, int rxq_entries)
 		adapter->rx_queue[i].queue_len =
 			sizeof(struct ibmveth_rx_q_entry) * rxq_entries;
 		adapter->rx_queue[i].queue_addr =
-			dma_alloc_coherent(dev, adapter->rx_queue[i].queue_len,
-					   &adapter->rx_queue[i].queue_dma,
-					   GFP_KERNEL);
+			dma_alloc_coherent_node(dev,
+						adapter->rx_queue[i].queue_len,
+						&adapter->rx_queue[i].queue_dma,
+						GFP_KERNEL,
+						ibmveth_rx_node(adapter, i));
 		if (!adapter->rx_queue[i].queue_addr) {
 			netdev_err(netdev,
 				   "unable to allocate RX queue for queue %d\n",
@@ -1929,9 +1931,11 @@ ibmveth_alloc_single_rx_queue(struct ibmveth_adapter *adapter, int queue_idx,
 	adapter->rx_queue[queue_idx].queue_len =
 		sizeof(struct ibmveth_rx_q_entry) * rxq_entries;
 	adapter->rx_queue[queue_idx].queue_addr =
-		dma_alloc_coherent(dev, adapter->rx_queue[queue_idx].queue_len,
-				   &adapter->rx_queue[queue_idx].queue_dma,
-				   GFP_KERNEL);
+		dma_alloc_coherent_node(dev,
+					adapter->rx_queue[queue_idx].queue_len,
+					&adapter->rx_queue[queue_idx].queue_dma,
+					GFP_KERNEL,
+					ibmveth_rx_node(adapter, queue_idx));
 	if (!adapter->rx_queue[queue_idx].queue_addr) {
 		netdev_err(netdev, "unable to allocate RX queue for queue %d\n",
 			   queue_idx);
