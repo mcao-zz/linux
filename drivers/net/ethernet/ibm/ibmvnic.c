@@ -6896,3 +6896,72 @@ static void __exit ibmvnic_module_exit(void)
 
 module_init(ibmvnic_module_init);
 module_exit(ibmvnic_module_exit);
+
+#if IS_ENABLED(CONFIG_KUNIT) && IS_BUILTIN(CONFIG_IBMVNIC)
+/* TEST ONLY, not for posting: V2 mask layout on the guest topology. */
+#include <kunit/test.h>
+
+static unsigned int ibmvnic_test_nodes(const struct cpumask *m)
+{
+	unsigned int n = 0;
+	int node;
+
+	for_each_node_with_cpus(node)
+		n += cpumask_intersects(m, cpumask_of_node(node));
+	return n;
+}
+
+static void ibmvnic_numa_masks_test(struct kunit *test)
+{
+	static const unsigned int layout[][2] = {
+		{ 16, 16 }, { 8, 8 }, { 4, 4 }, { 2, 2 }, { 1, 1 },
+		{ 16, 8 }, { 8, 16 },
+	};
+	unsigned int l, i, ntx, nrx, split, spans, shared;
+	struct cpumask all;
+
+	for (l = 0; l < ARRAY_SIZE(layout); l++) {
+		struct cpumask *m;
+
+		ntx = layout[l][0];
+		nrx = layout[l][1];
+		m = ibmvnic_queue_masks(ntx, nrx);
+		KUNIT_ASSERT_NOT_NULL(test, m);
+		cpumask_clear(&all);
+		split = 0;
+		spans = 0;
+		shared = 0;
+		for (i = 0; i < ntx + nrx; i++) {
+			KUNIT_EXPECT_FALSE(test, cpumask_empty(&m[i]));
+			cpumask_or(&all, &all, &m[i]);
+			spans += ibmvnic_test_nodes(&m[i]) > 1;
+		}
+		for (i = 0; i < min(ntx, nrx); i++) {
+			const struct cpumask *tx = &m[i], *rx = &m[ntx + i];
+
+			split += ibmvnic_mask_node(tx) != ibmvnic_mask_node(rx);
+			shared += cpumask_intersects(tx, rx);
+			kunit_info(test, "NUMA vnic %ux%u pair=%u txnode=%d rxnode=%d tx=%*pbl rx=%*pbl\n",
+				   ntx, nrx, i, ibmvnic_mask_node(tx),
+				   ibmvnic_mask_node(rx), cpumask_pr_args(tx),
+				   cpumask_pr_args(rx));
+		}
+		KUNIT_EXPECT_TRUE(test, cpumask_equal(&all, cpu_possible_mask));
+		kunit_info(test, "NUMA vnic %ux%u split_pairs=%u spanning_masks=%u shared_pairs=%u\n",
+			   ntx, nrx, split, spans, shared);
+		kfree(m);
+	}
+}
+
+static struct kunit_case ibmvnic_test_cases[] = {
+	KUNIT_CASE(ibmvnic_numa_masks_test),
+	{}
+};
+
+static struct kunit_suite ibmvnic_test_suite = {
+	.name = "ibmvnic-numa-test",
+	.test_cases = ibmvnic_test_cases,
+};
+
+kunit_test_suite(ibmvnic_test_suite);
+#endif

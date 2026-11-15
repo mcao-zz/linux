@@ -5266,6 +5266,62 @@ static int ibmveth_buffer_pools_show(struct seq_file *m, void *v)
 }
 DEFINE_SHOW_ATTRIBUTE(ibmveth_buffer_pools);
 
+/* TEST ONLY, not for posting: node of each per-queue buffer. */
+static int ibmveth_addr_node(const void *p)
+{
+	return p ? page_to_nid(virt_to_page(p)) : -1;
+}
+
+static int ibmveth_numa_show(struct seq_file *m, void *v)
+{
+	struct ibmveth_adapter *adapter = m->private;
+	struct net_device *netdev = adapter->netdev;
+	struct cpumask *tx_masks;
+	int i, j, k;
+
+	rtnl_lock();
+	seq_printf(m, "opened %d rxq %u txq %u\n", adapter->opened,
+		   ibmveth_get_num_rx_queues(adapter),
+		   netdev->real_num_tx_queues);
+	seq_puts(m, "rxq want irq live ring buflist freemap skbarr skb0 mask\n");
+	for (i = 0; i < ibmveth_get_num_rx_queues(adapter); i++) {
+		const struct cpumask *mask = ibmveth_rx_mask(adapter, i);
+		struct ibmveth_buff_pool *pool = NULL;
+		struct sk_buff *skb = NULL;
+
+		for (j = 0; j < IBMVETH_NUM_BUFF_POOLS && !pool; j++)
+			if (adapter->rx_buff_pool[i][j].active &&
+			    adapter->rx_buff_pool[i][j].skbuff)
+				pool = &adapter->rx_buff_pool[i][j];
+		for (k = 0; pool && k < pool->size && !skb; k++)
+			skb = pool->skbuff[k];
+
+		seq_printf(m, "%3d %4d %3u %4d %4d %7d %7d %6d %4d %*pbl\n",
+			   i, ibmveth_rx_node(adapter, i),
+			   adapter->queue_irq[i], adapter->queue_irq_live[i],
+			   ibmveth_addr_node(adapter->rx_queue[i].queue_addr),
+			   ibmveth_addr_node(adapter->buffer_list_addr[i]),
+			   ibmveth_addr_node(pool ? pool->free_map : NULL),
+			   ibmveth_addr_node(pool ? pool->skbuff : NULL),
+			   ibmveth_addr_node(skb ? skb->head : NULL),
+			   cpumask_pr_args(mask ? mask : cpu_none_mask));
+	}
+
+	tx_masks = ibmveth_tx_masks(netdev->real_num_tx_queues);
+	seq_puts(m, "txq want ltb mask\n");
+	for (i = 0; i < netdev->real_num_tx_queues; i++) {
+		const struct cpumask *mask = tx_masks ? &tx_masks[i] : NULL;
+
+		seq_printf(m, "%3d %4d %3d %*pbl\n", i, ibmveth_mask_node(mask),
+			   ibmveth_addr_node(adapter->tx_ltb_ptr[i]),
+			   cpumask_pr_args(mask ? mask : cpu_none_mask));
+	}
+	kfree(tx_masks);
+	rtnl_unlock();
+	return 0;
+}
+DEFINE_SHOW_ATTRIBUTE(ibmveth_numa);
+
 /* Driver-owned root so per-adapter dirs use a stable vio name, not the
  * mutable netdev->name (avoids stale names / eth0 collisions after rename).
  */
@@ -5278,6 +5334,8 @@ static void ibmveth_debugfs_init(struct ibmveth_adapter *adapter)
 				   ibmveth_dbg_root);
 	debugfs_create_file("buffer_pools", 0400, adapter->debugfs_dir,
 			    adapter, &ibmveth_buffer_pools_fops);
+	debugfs_create_file("numa", 0400, adapter->debugfs_dir,
+			    adapter, &ibmveth_numa_fops);
 }
 
 static void ibmveth_debugfs_exit(struct ibmveth_adapter *adapter)
@@ -6303,7 +6361,59 @@ static void ibmveth_rx_csum_helper_test(struct kunit *test)
 	KUNIT_EXPECT_EQ(test, CHECKSUM_NONE, (int)skb->ip_summed);
 }
 
+/* TEST ONLY: print the group masks for the guest topology. */
+static void ibmveth_numa_masks_test(struct kunit *test)
+{
+	static const unsigned int counts[] = { 1, 2, 4, 8, 16 };
+	struct ibmveth_adapter *adapter;
+	struct cpumask *keep, all;
+	unsigned int c, i, nr, spans;
+	int node;
+
+	for (c = 0; c < ARRAY_SIZE(counts); c++) {
+		struct cpumask *m = group_cpus_evenly(counts[c], &nr);
+
+		KUNIT_ASSERT_NOT_NULL(test, m);
+		cpumask_clear(&all);
+		spans = 0;
+		for (i = 0; i < counts[c]; i++) {
+			unsigned int n = 0;
+
+			KUNIT_EXPECT_FALSE(test, cpumask_intersects(&all, &m[i]));
+			cpumask_or(&all, &all, &m[i]);
+			for_each_node_with_cpus(node)
+				n += cpumask_intersects(&m[i],
+							cpumask_of_node(node));
+			spans += n > 1;
+			kunit_info(test, "NUMA veth n=%u g=%u node=%d nodes=%u cpus=%*pbl\n",
+				   counts[c], i, ibmveth_mask_node(&m[i]), n,
+				   cpumask_pr_args(&m[i]));
+		}
+		KUNIT_EXPECT_TRUE(test, cpumask_equal(&all, cpu_possible_mask));
+		kunit_info(test, "NUMA veth n=%u spanning=%u\n", counts[c], spans);
+		kfree(m);
+	}
+
+	/* Scale-up keeps the masks of live queues. */
+	adapter = kunit_kzalloc(test, sizeof(*adapter), GFP_KERNEL);
+	KUNIT_ASSERT_NOT_NULL(test, adapter);
+	adapter->rx_masks = kunit_kcalloc(test, IBMVETH_MAX_RX_QUEUES,
+					  sizeof(*adapter->rx_masks), GFP_KERNEL);
+	keep = kunit_kcalloc(test, 4, sizeof(*keep), GFP_KERNEL);
+	KUNIT_ASSERT_NOT_NULL(test, adapter->rx_masks);
+	KUNIT_ASSERT_NOT_NULL(test, keep);
+	ibmveth_set_rx_masks(adapter, 0, 4);
+	memcpy(keep, adapter->rx_masks, 4 * sizeof(*keep));
+	ibmveth_set_rx_masks(adapter, 4, 8);
+	for (i = 0; i < 4; i++)
+		KUNIT_EXPECT_TRUE(test, cpumask_equal(&keep[i],
+						      &adapter->rx_masks[i]));
+	for (i = 4; i < 8; i++)
+		KUNIT_EXPECT_FALSE(test, cpumask_empty(&adapter->rx_masks[i]));
+}
+
 static struct kunit_case ibmveth_test_cases[] = {
+	KUNIT_CASE(ibmveth_numa_masks_test),
 	KUNIT_CASE(ibmveth_remove_buffer_from_pool_test),
 	KUNIT_CASE(ibmveth_rxq_get_buffer_test),
 	KUNIT_CASE(ibmveth_rxq_harvest_correlator_test),
