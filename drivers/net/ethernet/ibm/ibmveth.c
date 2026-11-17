@@ -402,8 +402,7 @@ ibmveth_cleanup_rx_resources(struct ibmveth_adapter *adapter)
  * @queue_index: RX queue index
  * @enable: true to unmask, false to mask
  *
- * Only queue 0 exists for now. Its interrupt is the adapter's own, which
- * h_vio_signal() controls, so @queue_index is used only for logging.
+ * Queue 0 uses h_vio_signal(); subordinate queues use H_VIOCTL.
  *
  * Return: 0 on success, -EIO on failure
  */
@@ -414,8 +413,17 @@ ibmveth_toggle_irq(struct ibmveth_adapter *adapter, int queue_index,
 	const char *action = enable ? "enable" : "disable";
 	unsigned long h_rc;
 
-	h_rc = h_vio_signal(adapter->vdev->unit_address,
-			    enable ? VIO_IRQ_ENABLE : VIO_IRQ_DISABLE);
+	if (queue_index == 0)
+		h_rc = h_vio_signal(adapter->vdev->unit_address,
+				    enable ? VIO_IRQ_ENABLE : VIO_IRQ_DISABLE);
+	else
+		h_rc = plpar_hcall_norets(H_VIOCTL,
+					  adapter->vdev->unit_address,
+					  enable ? H_ENABLE_VIO_INTERRUPT :
+						   H_DISABLE_VIO_INTERRUPT,
+					  adapter->queue_hwirq[queue_index],
+					  0, 0);
+
 	if (h_rc) {
 		dev_err_ratelimited(&adapter->netdev->dev,
 				    "Failed to %s IRQ for queue %d, rc=0x%lx\n",
@@ -477,9 +485,9 @@ ibmveth_dispose_subordinate_irq_mappings(struct ibmveth_adapter *adapter)
  * ibmveth_setup_rx_interrupts - Register IRQs and enable NAPI
  * @adapter: ibmveth adapter structure
  *
- * The queues must already be masked in PHYP, as they are before the LAN
- * is registered; this does not unmask them. The caller kicks NAPI, and
- * the first poll unmasks.
+ * The queues must already be masked in PHYP: queue 0 before the LAN is
+ * registered, the others as they are registered. This does not unmask
+ * them. The caller kicks NAPI, and the first poll unmasks.
  *
  * Return: 0 on success, negative error code on failure
  */
@@ -1284,7 +1292,8 @@ static void ibmveth_free_all_queues(struct ibmveth_adapter *adapter)
  * H_FREE_LOGICAL_LAN.
  *
  * Return: 0 on success, -ENOMEM if the interrupt cannot be mapped,
- *         -EIO if H_REG_LOGICAL_LAN_QUEUE fails
+ *         -EIO if H_REG_LOGICAL_LAN_QUEUE fails or the interrupt
+ *         cannot be masked
  */
 static int ibmveth_register_rx_queue(struct ibmveth_adapter *adapter,
 				     int queue_idx)
@@ -1327,7 +1336,12 @@ static int ibmveth_register_rx_queue(struct ibmveth_adapter *adapter,
 
 	adapter->queue_handle[queue_idx] = handle;
 	adapter->queue_irq[queue_idx] = virq;
-	return 0;
+	adapter->queue_hwirq[queue_idx] = hwirq;
+
+	/* setup_rx_interrupts() expects every queue masked: until NAPI is
+	 * enabled, the handler does not mask it.
+	 */
+	return ibmveth_disable_irq(adapter, queue_idx);
 }
 
 /**
