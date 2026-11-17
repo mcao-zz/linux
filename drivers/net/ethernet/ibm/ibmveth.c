@@ -2457,11 +2457,70 @@ static void ibmveth_get_ethtool_stats(struct net_device *dev,
 static void ibmveth_get_channels(struct net_device *netdev,
 				 struct ethtool_channels *channels)
 {
+	struct ibmveth_adapter *adapter = netdev_priv(netdev);
+
 	channels->max_tx = ibmveth_real_max_tx_queues();
 	channels->tx_count = netdev->real_num_tx_queues;
 
-	channels->max_rx = netdev->real_num_rx_queues;
 	channels->rx_count = netdev->real_num_rx_queues;
+	/* Once MQ firmware has failed, the next open() drops to one queue;
+	 * until then rx_count may still be above 1, and a TX-only -L
+	 * resubmits it, so max_rx must not go below it.
+	 */
+	if (adapter->multi_queue && !READ_ONCE(adapter->mq_fallback))
+		channels->max_rx = IBMVETH_MAX_RX_QUEUES;
+	else
+		channels->max_rx = channels->rx_count;
+}
+
+/* Called with the device closed: open() sizes the RX queues and the TX
+ * LTBs from these counts.
+ */
+static int ibmveth_set_queue_counts(struct net_device *netdev,
+				    unsigned int rx, unsigned int tx)
+{
+	struct ibmveth_adapter *adapter = netdev_priv(netdev);
+	int rc;
+
+	rc = netif_set_real_num_queues(netdev, tx, rx);
+	if (!rc)
+		adapter->num_rx_queues = rx;
+	return rc;
+}
+
+static int ibmveth_reopen_with_counts(struct net_device *netdev,
+				      unsigned int rx, unsigned int tx)
+{
+	struct ibmveth_adapter *adapter = netdev_priv(netdev);
+	unsigned int old_rx = adapter->num_rx_queues;
+	unsigned int old_tx = netdev->real_num_tx_queues;
+	int rc, rc2;
+
+	ibmveth_close(netdev);
+
+	/* close() keeps the LAN mapped when H_FREE_LOGICAL_LAN fails, and
+	 * the next open() frees it with the current queue count.
+	 */
+	if (ibmveth_lan_resources_live(adapter))
+		return ibmveth_open(netdev) ?: -EBUSY;
+
+	rc = ibmveth_set_queue_counts(netdev, rx, tx);
+	if (!rc) {
+		rc = ibmveth_open(netdev);
+		if (!rc)
+			return 0;
+		if (ibmveth_lan_resources_live(adapter))
+			return rc;
+		if (ibmveth_set_queue_counts(netdev, old_rx, old_tx))
+			netdev_err(netdev, "failed to restore %u RX / %u TX queues\n",
+				   old_rx, old_tx);
+	}
+
+	rc2 = ibmveth_open(netdev);
+	if (rc2)
+		netdev_err(netdev, "reopen with the old queue counts failed: %d\n",
+			   rc2);
+	return rc;
 }
 
 static int ibmveth_set_channels(struct net_device *netdev,
@@ -2469,16 +2528,24 @@ static int ibmveth_set_channels(struct net_device *netdev,
 {
 	struct ibmveth_adapter *adapter = netdev_priv(netdev);
 	unsigned int old = netdev->real_num_tx_queues,
-		     goal = channels->tx_count;
+		     goal = channels->tx_count,
+		     rx = channels->rx_count;
 	int rc, i, alloc_rc = 0;
 
-	/*
-	 * RX channel resize is not supported; reject any request that
-	 * changes rx_count. Read-modify-write TX adjustments submit the
-	 * current rx_count and proceed.
+	/* A TX-only -L resubmits the current rx_count and takes the live
+	 * TX path below. An RX change closes and reopens the device, and
+	 * applies the TX count in the same window.
 	 */
-	if (channels->rx_count != adapter->num_rx_queues)
-		return -EOPNOTSUPP;
+	if (rx != adapter->num_rx_queues) {
+		if (rx > 1 && (!adapter->multi_queue ||
+			       READ_ONCE(adapter->mq_fallback)))
+			return -EOPNOTSUPP;
+		if (adapter->opened)
+			return ibmveth_reopen_with_counts(netdev, rx, goal);
+		if (ibmveth_lan_resources_live(adapter))
+			return -EBUSY;
+		return ibmveth_set_queue_counts(netdev, rx, goal);
+	}
 
 	/* If the device is not open (including a failed close/open with
 	 * IFF_UP still set) then don't allocate, just set desired
