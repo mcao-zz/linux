@@ -101,6 +101,40 @@ h_register_logical_lan_queue(unsigned long unit_address,
 }
 
 /**
+ * h_add_logical_lan_buffers_queue - Add buffers to an RX queue by handle
+ * @unit_address: Device unit address
+ * @queue_handle: Queue handle from h_register_logical_lan_queue() or
+ *		  h_register_logical_lan_with_handle() (queue 0)
+ * @buffersznum: Buffer size (upper 32 bits) | count (lower 32 bits)
+ * @ioba12: Buffer addresses 1 and 2 packed ((addr1 << 32) | addr2)
+ * @ioba34: Buffer addresses 3 and 4 packed
+ * @ioba56: Buffer addresses 5 and 6 packed
+ * @ioba78: Buffer addresses 7 and 8 packed
+ * @ioba910: Buffer addresses 9 and 10 packed
+ * @ioba1112: Buffer addresses 11 and 12 packed
+ *
+ * Return: hypervisor return code
+ */
+static inline long h_add_logical_lan_buffers_queue(unsigned long unit_address,
+						   unsigned long queue_handle,
+						   unsigned long buffersznum,
+						   unsigned long ioba12,
+						   unsigned long ioba34,
+						   unsigned long ioba56,
+						   unsigned long ioba78,
+						   unsigned long ioba910,
+						   unsigned long ioba1112)
+{
+	unsigned long retbuf[PLPAR_HCALL9_BUFSIZE];
+
+	return plpar_hcall9(H_ADD_LOGICAL_LAN_BUFFERS_QUEUE,
+			    retbuf, unit_address,
+			    queue_handle, buffersznum,
+			    ioba12, ioba34, ioba56,
+			    ioba78, ioba910, ioba1112);
+}
+
+/**
  * h_register_logical_lan_with_handle - Register primary queue and get handle
  * @unit_address: Device unit address
  * @buffer_list: DMA address of buffer list
@@ -194,7 +228,8 @@ static inline long h_illan_attributes(unsigned long unit_address,
 #define IBMVETH_DEFAULT_QUEUES 8U
 #define IBMVETH_MAX_RX_QUEUES 1U
 #define IBMVETH_DEFAULT_RX_QUEUES 1U
-#define IBMVETH_MAX_RX_PER_HCALL 8U
+#define IBMVETH_MAX_RX_REGULAR 8U
+#define IBMVETH_MAX_RX_PER_HCALL 12U
 
 static int pool_size[] = { 512, 1024 * 2, 1024 * 16, 1024 * 32, 1024 * 64 };
 static int pool_count[] = { 256, 512, 256, 256, 256 };
