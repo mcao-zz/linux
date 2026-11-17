@@ -256,6 +256,7 @@ struct ibmveth_adapter {
 	/* Opaque PHYP cookie, 0 can be valid. Set only in multi_queue mode. */
 	u64 queue_handle[IBMVETH_MAX_RX_QUEUES];
 	unsigned int queue_irq[IBMVETH_MAX_RX_QUEUES];
+	unsigned long queue_hwirq[IBMVETH_MAX_RX_QUEUES];
 	bool multi_queue;
 	unsigned int num_rx_queues;
 	int rx_csum;
