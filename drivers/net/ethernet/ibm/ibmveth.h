@@ -238,6 +238,26 @@ static int pool_active[] = { 1, 1, 0, 0, 1};
 
 #define IBM_VETH_INVALID_MAP ((u16)0xffff)
 
+/*
+ * Per-queue RX counters, written only from this queue's NAPI poll or
+ * with its NAPI disabled. Readers take no lock; 64-bit accesses do not
+ * tear on PPC64, so writers use IBMVETH_STAT_INC()/IBMVETH_STAT_ADD()
+ * and readers READ_ONCE().
+ */
+struct ibmveth_rx_queue_stats {
+	u64 packets;
+	u64 bytes;
+	u64 large_packets;
+	u64 invalid_buffers;
+	u64 dropped;
+	/* PHYP's drop count from the buffer-list page. */
+	u64 no_buffer_drops;
+	u64 replenish_task_cycles;
+	u64 replenish_no_mem;
+	u64 replenish_add_buff_failure;
+	u64 replenish_add_buff_success;
+} ____cacheline_aligned_in_smp;
+
 /* Per-queue TX counters; serialized by the stack's per-queue TX lock. */
 struct ibmveth_tx_queue_stats {
 	u64 packets;
@@ -307,16 +327,9 @@ struct ibmveth_adapter {
 	u64 fw_ipv6_csum_support;
 	u64 fw_ipv4_csum_support;
 	u64 fw_large_send_support;
-	/* adapter specific stats */
-	u64 replenish_task_cycles;
-	u64 replenish_no_mem;
-	u64 replenish_add_buff_failure;
-	u64 replenish_add_buff_success;
-	u64 rx_invalid_buffer;
-	u64 rx_no_buffer;
 	u64 tx_map_failed;
-	u64 rx_large_packets;
 
+	struct ibmveth_rx_queue_stats *rx_qstats;
 	struct ibmveth_tx_queue_stats *tx_qstats;
 
 	/* Ethtool settings */
