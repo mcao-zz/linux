@@ -1405,6 +1405,13 @@ static int ibmveth_open(struct net_device *netdev)
 	if (rc)
 		goto out_free_buffer_pools;
 
+	/* NAPI is still disabled, so nothing else posts buffers yet. With
+	 * more than one queue, setup_rx_interrupts() unmasks PHYP, so every
+	 * queue needs buffers before it.
+	 */
+	for (i = 0; i < adapter->num_rx_queues; i++)
+		ibmveth_replenish_task(adapter, i);
+
 	/* Enables NAPI, so everything ibmveth_poll() touches must exist:
 	 * netpoll during the direct close()/open() pairs, or a direct
 	 * kick, can run it as soon as it is enabled.
@@ -1413,8 +1420,11 @@ static int ibmveth_open(struct net_device *netdev)
 	if (rc)
 		goto out_unregister_queues;
 
-	netdev_dbg(netdev, "initial replenish cycle\n");
-	ibmveth_schedule_rx_queue(adapter, 0);
+	/* An idle queue with nothing pending would stay masked until the
+	 * next reset; one poll per queue unmasks it.
+	 */
+	for (i = 0; i < adapter->num_rx_queues; i++)
+		ibmveth_schedule_rx_queue(adapter, i);
 
 	/* netif_tx_lock() takes each txq lock, so a sender that then sees
 	 * DRV_XOFF clear under its txq lock also sees the LTBs set up above.
@@ -2955,8 +2965,12 @@ static int ibmveth_resume(struct device *dev)
 {
 	struct net_device *netdev = dev_get_drvdata(dev);
 	struct ibmveth_adapter *adapter = netdev_priv(netdev);
+	unsigned int num = adapter->num_rx_queues;
+	int i;
 
-	ibmveth_schedule_rx_queue(adapter, 0);
+	for (i = 0; i < num; i++)
+		ibmveth_schedule_rx_queue(adapter, i);
+
 	return 0;
 }
 
