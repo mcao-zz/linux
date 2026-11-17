@@ -69,6 +69,38 @@ static inline long h_add_logical_lan_buffers(unsigned long unit_address,
 }
 
 /**
+ * h_register_logical_lan_queue - Register a subordinate receive queue
+ * @unit_address: Device unit address
+ * @buffer_list: DMA address of 4KB page for tracking registered buffers
+ * @rec_queue: Buffer descriptor of receive queue
+ * @queue_handle: Output queue handle on success
+ * @irq: Output hypervisor IRQ number on success
+ *
+ * Return: hypervisor return code; H_BUSY and H_LONG_BUSY_* mean retry
+ */
+static inline long
+h_register_logical_lan_queue(unsigned long unit_address,
+			     unsigned long buffer_list,
+			     unsigned long rec_queue,
+			     unsigned long *queue_handle,
+			     unsigned long *irq)
+{
+	unsigned long retbuf[PLPAR_HCALL_BUFSIZE];
+	long rc;
+
+	rc = plpar_hcall(H_REG_LOGICAL_LAN_QUEUE,
+			 retbuf, unit_address,
+			 buffer_list, rec_queue);
+
+	if (rc == H_SUCCESS) {
+		*queue_handle = retbuf[0];
+		*irq = retbuf[1];
+	}
+
+	return rc;
+}
+
+/**
  * h_register_logical_lan_with_handle - Register primary queue and get handle
  * @unit_address: Device unit address
  * @buffer_list: DMA address of buffer list
