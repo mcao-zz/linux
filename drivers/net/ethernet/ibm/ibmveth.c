@@ -74,30 +74,63 @@ module_param(old_large_send, bool, 0444);
 MODULE_PARM_DESC(old_large_send,
 	"Use old large send method on firmware that supports the new method");
 
+/**
+ * enum ibmveth_stat_src - where an ethtool -S counter is stored
+ * @IBMVETH_STAT_ADAPTER: plain u64 in struct ibmveth_adapter
+ * @IBMVETH_STAT_RX_QSUM: per-queue u64, summed over rx_qstats[]
+ * @IBMVETH_STAT_TX_QSUM: per-queue u64, summed over tx_qstats[]
+ * @IBMVETH_STAT_RX_NO_BUFFER: rx_qstats[] live-page absolute plus the
+ *	absolutes carried over from pages the queue has already retired
+ *
+ * Counters live per queue so that queues never share a field.
+ */
+enum ibmveth_stat_src {
+	IBMVETH_STAT_ADAPTER,
+	IBMVETH_STAT_RX_QSUM,
+	IBMVETH_STAT_TX_QSUM,
+	IBMVETH_STAT_RX_NO_BUFFER,
+};
+
 struct ibmveth_stat {
 	char name[ETH_GSTRING_LEN];
-	int offset;
+	enum ibmveth_stat_src src;
+	/* Offset into the struct named by @src. */
+	size_t off;
 };
 
 #define IBMVETH_STAT_OFF(stat) offsetof(struct ibmveth_adapter, stat)
+#define IBMVETH_RXQ_OFF(stat) offsetof(struct ibmveth_rx_queue_stats, stat)
+#define IBMVETH_TXQ_OFF(stat) offsetof(struct ibmveth_tx_queue_stats, stat)
+
+/* Single writer per counter; lockless readers use READ_ONCE(). */
+#define IBMVETH_STAT_ADD(stat, n)	WRITE_ONCE((stat), (stat) + (n))
+#define IBMVETH_STAT_INC(stat)		IBMVETH_STAT_ADD(stat, 1)
 #define IBMVETH_GET_STAT(a, off) *((u64 *)(((unsigned long)(a)) + off))
 
+#define IBMVETH_ADAPTER_STAT(key, field) \
+	{ key, IBMVETH_STAT_ADAPTER, IBMVETH_STAT_OFF(field) }
+#define IBMVETH_RXQ_STAT(key, field) \
+	{ key, IBMVETH_STAT_RX_QSUM, IBMVETH_RXQ_OFF(field) }
+#define IBMVETH_TXQ_STAT(key, field) \
+	{ key, IBMVETH_STAT_TX_QSUM, IBMVETH_TXQ_OFF(field) }
+
+/* Key names and order are user-visible: append only. */
 static struct ibmveth_stat ibmveth_stats[] = {
-	{ "replenish_task_cycles", IBMVETH_STAT_OFF(replenish_task_cycles) },
-	{ "replenish_no_mem", IBMVETH_STAT_OFF(replenish_no_mem) },
-	{ "replenish_add_buff_failure",
-			IBMVETH_STAT_OFF(replenish_add_buff_failure) },
-	{ "replenish_add_buff_success",
-			IBMVETH_STAT_OFF(replenish_add_buff_success) },
-	{ "rx_invalid_buffer", IBMVETH_STAT_OFF(rx_invalid_buffer) },
-	{ "rx_no_buffer", IBMVETH_STAT_OFF(rx_no_buffer) },
-	{ "tx_map_failed", IBMVETH_STAT_OFF(tx_map_failed) },
-	{ "tx_send_failed", IBMVETH_STAT_OFF(tx_send_failed) },
-	{ "fw_enabled_ipv4_csum", IBMVETH_STAT_OFF(fw_ipv4_csum_support) },
-	{ "fw_enabled_ipv6_csum", IBMVETH_STAT_OFF(fw_ipv6_csum_support) },
-	{ "tx_large_packets", IBMVETH_STAT_OFF(tx_large_packets) },
-	{ "rx_large_packets", IBMVETH_STAT_OFF(rx_large_packets) },
-	{ "fw_enabled_large_send", IBMVETH_STAT_OFF(fw_large_send_support) }
+	IBMVETH_RXQ_STAT("replenish_task_cycles", replenish_task_cycles),
+	IBMVETH_RXQ_STAT("replenish_no_mem", replenish_no_mem),
+	IBMVETH_RXQ_STAT("replenish_add_buff_failure",
+			 replenish_add_buff_failure),
+	IBMVETH_RXQ_STAT("replenish_add_buff_success",
+			 replenish_add_buff_success),
+	IBMVETH_RXQ_STAT("rx_invalid_buffer", invalid_buffers),
+	{ "rx_no_buffer", IBMVETH_STAT_RX_NO_BUFFER, 0 },
+	IBMVETH_ADAPTER_STAT("tx_map_failed", tx_map_failed),
+	IBMVETH_TXQ_STAT("tx_send_failed", send_failures),
+	IBMVETH_ADAPTER_STAT("fw_enabled_ipv4_csum", fw_ipv4_csum_support),
+	IBMVETH_ADAPTER_STAT("fw_enabled_ipv6_csum", fw_ipv6_csum_support),
+	IBMVETH_TXQ_STAT("tx_large_packets", large_packets),
+	IBMVETH_RXQ_STAT("rx_large_packets", large_packets),
+	IBMVETH_ADAPTER_STAT("fw_enabled_large_send", fw_large_send_support),
 };
 
 /* simple methods of getting data from the current rxq entry */
@@ -225,6 +258,60 @@ ibmveth_free_filter_list(struct ibmveth_adapter *adapter)
 		free_page((unsigned long)adapter->filter_list_addr);
 		adapter->filter_list_addr = NULL;
 	}
+}
+
+/**
+ * ibmveth_alloc_rx_qstats - Allocate per-queue RX statistics
+ * @adapter: ibmveth adapter structure
+ *
+ * Return: 0 on success, -ENOMEM on failure
+ */
+static int ibmveth_alloc_rx_qstats(struct ibmveth_adapter *adapter)
+{
+	adapter->rx_qstats = kcalloc(IBMVETH_MAX_RX_QUEUES,
+				     sizeof(*adapter->rx_qstats),
+				     GFP_KERNEL);
+	if (!adapter->rx_qstats)
+		return -ENOMEM;
+
+	return 0;
+}
+
+/**
+ * ibmveth_free_rx_qstats - Free per-queue RX statistics
+ * @adapter: ibmveth adapter structure
+ */
+static void ibmveth_free_rx_qstats(struct ibmveth_adapter *adapter)
+{
+	kfree(adapter->rx_qstats);
+	adapter->rx_qstats = NULL;
+}
+
+/**
+ * ibmveth_alloc_tx_qstats - Allocate per-queue TX statistics
+ * @adapter: ibmveth adapter structure
+ *
+ * Return: 0 on success, -ENOMEM on failure
+ */
+static int ibmveth_alloc_tx_qstats(struct ibmveth_adapter *adapter)
+{
+	adapter->tx_qstats = kcalloc(IBMVETH_MAX_QUEUES,
+				     sizeof(*adapter->tx_qstats),
+				     GFP_KERNEL);
+	if (!adapter->tx_qstats)
+		return -ENOMEM;
+
+	return 0;
+}
+
+/**
+ * ibmveth_free_tx_qstats - Free per-queue TX statistics
+ * @adapter: ibmveth adapter structure
+ */
+static void ibmveth_free_tx_qstats(struct ibmveth_adapter *adapter)
+{
+	kfree(adapter->tx_qstats);
+	adapter->tx_qstats = NULL;
 }
 
 /**
@@ -680,6 +767,14 @@ static long ibmveth_add_logical_lan_buffers(struct ibmveth_adapter *adapter,
 	return rc;
 }
 
+static void ibmveth_count_add_fail(struct ibmveth_rx_queue_stats *qstats,
+				   bool no_mem)
+{
+	if (no_mem)
+		IBMVETH_STAT_INC(qstats->replenish_no_mem);
+	IBMVETH_STAT_INC(qstats->replenish_add_buff_failure);
+}
+
 /* replenish the buffers for a pool.  note that we don't need to
  * skb_reserve these since they are used for incoming...
  */
@@ -687,6 +782,8 @@ static void ibmveth_replenish_buffer_pool(struct ibmveth_adapter *adapter,
 					  struct ibmveth_buff_pool *pool,
 					  int queue_index)
 {
+	struct ibmveth_rx_queue_stats *qstats =
+		&adapter->rx_qstats[queue_index];
 	union ibmveth_buf_desc descs[IBMVETH_MAX_RX_PER_HCALL] = {0};
 	u32 remaining = pool->size - atomic_read(&pool->available);
 	u64 correlators[IBMVETH_MAX_RX_PER_HCALL] = {0};
@@ -712,7 +809,7 @@ static void ibmveth_replenish_buffer_pool(struct ibmveth_adapter *adapter,
 		for (filled = 0; filled < min(remaining, batch); filled++) {
 			index = pool->free_map[free_index];
 			if (WARN_ON(index == IBM_VETH_INVALID_MAP)) {
-				adapter->replenish_add_buff_failure++;
+				ibmveth_count_add_fail(qstats, false);
 				netdev_info(adapter->netdev,
 					    "Invalid map index %u, reset\n",
 					    index);
@@ -726,8 +823,7 @@ static void ibmveth_replenish_buffer_pool(struct ibmveth_adapter *adapter,
 				skb = netdev_alloc_skb(adapter->netdev,
 						       pool->buff_size);
 				if (!skb) {
-					adapter->replenish_no_mem++;
-					adapter->replenish_add_buff_failure++;
+					ibmveth_count_add_fail(qstats, true);
 					break;
 				}
 
@@ -736,7 +832,7 @@ static void ibmveth_replenish_buffer_pool(struct ibmveth_adapter *adapter,
 							  DMA_FROM_DEVICE);
 				if (dma_mapping_error(dev, dma_addr)) {
 					dev_kfree_skb_any(skb);
-					adapter->replenish_add_buff_failure++;
+					ibmveth_count_add_fail(qstats, false);
 					break;
 				}
 
@@ -796,7 +892,7 @@ static void ibmveth_replenish_buffer_pool(struct ibmveth_adapter *adapter,
 		}
 
 		buffers_added += filled;
-		adapter->replenish_add_buff_success += filled;
+		IBMVETH_STAT_ADD(qstats->replenish_add_buff_success, filled);
 		remaining -= filled;
 
 		memset(&descs, 0, sizeof(descs));
@@ -819,7 +915,7 @@ hcall_failure:
 				pool->skbuff[index] = NULL;
 			}
 		}
-		adapter->replenish_add_buff_failure += filled;
+		IBMVETH_STAT_ADD(qstats->replenish_add_buff_failure, filled);
 
 		/*
 		 * If multi rx buffers hcall is no longer supported by FW
@@ -858,12 +954,46 @@ hcall_failure:
  * because there was not a buffer in the buffer list capable of holding
  * the frame.
  */
-static void ibmveth_update_rx_no_buffer(struct ibmveth_adapter *adapter)
+static void ibmveth_update_rx_no_buffer(struct ibmveth_adapter *adapter,
+					int queue_index)
 {
+	struct ibmveth_rx_queue_stats *qstats;
 	__be64 *p;
+	u64 drops;
 
-	p = adapter->buffer_list_addr[0] + 4096 - 8;
-	adapter->rx_no_buffer = be64_to_cpup(p);
+	p = adapter->buffer_list_addr[queue_index] + 4096 - 8;
+	drops = be64_to_cpup(p);
+
+	qstats = &adapter->rx_qstats[queue_index];
+
+	/* The page reads 0 once PHYP has freed the LAN; keep what was seen. */
+	if (drops < qstats->no_buffer_drops)
+		IBMVETH_STAT_ADD(qstats->no_buffer_retired,
+				 qstats->no_buffer_drops);
+	WRITE_ONCE(qstats->no_buffer_drops, drops);
+	WRITE_ONCE(qstats->no_buffer_total,
+		   qstats->no_buffer_retired + drops);
+}
+
+static u64 ibmveth_rx_no_buffer_total(struct ibmveth_adapter *adapter,
+				      int queue_index)
+{
+	return READ_ONCE(adapter->rx_qstats[queue_index].no_buffer_total);
+}
+
+/*
+ * Fold the last sample into retired once the queue is freed: the next
+ * registration restarts PHYP's counter at 0. The fold leaves
+ * no_buffer_total unchanged.
+ */
+static void ibmveth_retire_rx_no_buffer(struct ibmveth_adapter *adapter,
+					int queue_index)
+{
+	struct ibmveth_rx_queue_stats *qstats;
+
+	qstats = &adapter->rx_qstats[queue_index];
+	IBMVETH_STAT_ADD(qstats->no_buffer_retired, qstats->no_buffer_drops);
+	WRITE_ONCE(qstats->no_buffer_drops, 0);
 }
 
 /* replenish routine */
@@ -872,7 +1002,7 @@ static void ibmveth_replenish_task(struct ibmveth_adapter *adapter,
 {
 	int i;
 
-	adapter->replenish_task_cycles++;
+	IBMVETH_STAT_INC(adapter->rx_qstats[queue_index].replenish_task_cycles);
 
 	for (i = (IBMVETH_NUM_BUFF_POOLS - 1); i >= 0; i--) {
 		struct ibmveth_buff_pool *pool =
@@ -884,7 +1014,7 @@ static void ibmveth_replenish_task(struct ibmveth_adapter *adapter,
 						      queue_index);
 	}
 
-	ibmveth_update_rx_no_buffer(adapter);
+	ibmveth_update_rx_no_buffer(adapter, queue_index);
 }
 
 /* empty and free ana buffer pool - also used to do cleanup in error paths */
@@ -1341,11 +1471,19 @@ static void ibmveth_release_lan_resources(struct ibmveth_adapter *adapter)
  * as close() always did: on a CMO partition vio_cmo_bus_remove()
  * BUG()s on an outstanding entitlement.
  *
+ * PHYP zeroes the buffer-list pages on free, so each queue's no-buffer
+ * counter is sampled before H_FREE_LOGICAL_LAN and retired only once
+ * the caller may unmap.
+ *
  * Return: 0 if the caller may unmap, -EIO if it must not
  */
 static int ibmveth_free_all_queues(struct ibmveth_adapter *adapter)
 {
 	long lpar_rc;
+	int i;
+
+	for (i = 0; i < adapter->num_rx_queues; i++)
+		ibmveth_update_rx_no_buffer(adapter, i);
 
 	lpar_rc = ibmveth_free_logical_lan(adapter);
 	if (lpar_rc != H_SUCCESS) {
@@ -1354,6 +1492,9 @@ static int ibmveth_free_all_queues(struct ibmveth_adapter *adapter)
 		if (lpar_rc != H_PARAMETER && adapter->multi_queue)
 			return -EIO;
 	}
+
+	for (i = 0; i < adapter->num_rx_queues; i++)
+		ibmveth_retire_rx_no_buffer(adapter, i);
 
 	return 0;
 }
@@ -1606,10 +1747,8 @@ static int ibmveth_close(struct net_device *netdev)
 
 	ibmveth_cleanup_rx_interrupts(adapter);
 
-	if (!ibmveth_free_all_queues(adapter)) {
-		ibmveth_update_rx_no_buffer(adapter);
+	if (!ibmveth_free_all_queues(adapter))
 		ibmveth_release_lan_resources(adapter);
-	}
 	/* netif_tx_disable() above keeps xmit off the TX LTBs, and PHYP
 	 * copies each frame before H_SEND_LOGICAL_LAN returns.
 	 */
@@ -1875,6 +2014,63 @@ static int ibmveth_set_features(struct net_device *dev,
 	return rc1 ? rc1 : rc2;
 }
 
+/*
+ * Sum every slot, not just the live queues, so shrinking the queue
+ * count cannot make a counter go backwards.
+ */
+static u64 ibmveth_sum_rx_qstat(struct ibmveth_adapter *adapter, size_t off)
+{
+	u64 total = 0;
+	int i;
+
+	for (i = 0; i < IBMVETH_MAX_RX_QUEUES; i++) {
+		const u8 *q = (const u8 *)&adapter->rx_qstats[i];
+
+		total += READ_ONCE(*(const u64 *)(q + off));
+	}
+
+	return total;
+}
+
+static u64 ibmveth_sum_tx_qstat(struct ibmveth_adapter *adapter, size_t off)
+{
+	u64 total = 0;
+	int i;
+
+	for (i = 0; i < IBMVETH_MAX_QUEUES; i++) {
+		const u8 *q = (const u8 *)&adapter->tx_qstats[i];
+
+		total += READ_ONCE(*(const u64 *)(q + off));
+	}
+
+	return total;
+}
+
+static u64 ibmveth_ethtool_adapter_stat(struct ibmveth_adapter *adapter,
+					int index)
+{
+	const struct ibmveth_stat *stat = &ibmveth_stats[index];
+
+	switch (stat->src) {
+	case IBMVETH_STAT_RX_QSUM:
+		return ibmveth_sum_rx_qstat(adapter, stat->off);
+	case IBMVETH_STAT_TX_QSUM:
+		return ibmveth_sum_tx_qstat(adapter, stat->off);
+	case IBMVETH_STAT_RX_NO_BUFFER: {
+		u64 total = 0;
+		int i;
+
+		for (i = 0; i < IBMVETH_MAX_RX_QUEUES; i++)
+			total += ibmveth_rx_no_buffer_total(adapter, i);
+		return total;
+	}
+	case IBMVETH_STAT_ADAPTER:
+		break;
+	}
+
+	return IBMVETH_GET_STAT(adapter, stat->off);
+}
+
 static void ibmveth_get_strings(struct net_device *dev, u32 stringset, u8 *data)
 {
 	int i;
@@ -1903,7 +2099,7 @@ static void ibmveth_get_ethtool_stats(struct net_device *dev,
 	struct ibmveth_adapter *adapter = netdev_priv(dev);
 
 	for (i = 0; i < ARRAY_SIZE(ibmveth_stats); i++)
-		data[i] = IBMVETH_GET_STAT(adapter, ibmveth_stats[i].offset);
+		data[i] = ibmveth_ethtool_adapter_stat(adapter, i);
 }
 
 static void ibmveth_get_channels(struct net_device *netdev,
@@ -2024,8 +2220,10 @@ static int ibmveth_send(struct ibmveth_adapter *adapter,
 }
 
 static int ibmveth_is_packet_unsupported(struct sk_buff *skb,
-					 struct net_device *netdev)
+					 struct ibmveth_adapter *adapter,
+					 int queue_num)
 {
+	struct net_device *netdev = adapter->netdev;
 	struct ethhdr *ether_header;
 	int ret = 0;
 
@@ -2033,7 +2231,7 @@ static int ibmveth_is_packet_unsupported(struct sk_buff *skb,
 
 	if (ether_addr_equal(ether_header->h_dest, netdev->dev_addr)) {
 		netdev_dbg(netdev, "veth doesn't support loopback packets, dropping packet.\n");
-		netdev->stats.tx_dropped++;
+		IBMVETH_STAT_INC(adapter->tx_qstats[queue_num].dropped_packets);
 		ret = -EOPNOTSUPP;
 	}
 
@@ -2044,22 +2242,25 @@ static netdev_tx_t ibmveth_start_xmit(struct sk_buff *skb,
 				      struct net_device *netdev)
 {
 	struct ibmveth_adapter *adapter = netdev_priv(netdev);
+	struct ibmveth_tx_queue_stats *txs;
 	unsigned int desc_flags, total_bytes;
 	union ibmveth_buf_desc desc;
 	int i, queue_num = skb_get_queue_mapping(skb);
 	unsigned long mss = 0;
 	void *ltb;
 
+	txs = &adapter->tx_qstats[queue_num];
+
 	/* A sender that picked its queue before ethtool -L shrank the TX
 	 * queues can get here after that queue's LTB was freed.
 	 */
 	ltb = READ_ONCE(adapter->tx_ltb_ptr[queue_num]);
 	if (unlikely(!ltb)) {
-		netdev->stats.tx_dropped++;
+		IBMVETH_STAT_INC(txs->dropped_packets);
 		goto out;
 	}
 
-	if (ibmveth_is_packet_unsupported(skb, netdev))
+	if (ibmveth_is_packet_unsupported(skb, adapter, queue_num))
 		goto out;
 	/* veth can't checksum offload UDP */
 	if (skb->ip_summed == CHECKSUM_PARTIAL &&
@@ -2070,7 +2271,7 @@ static netdev_tx_t ibmveth_start_xmit(struct sk_buff *skb,
 	    skb_checksum_help(skb)) {
 
 		netdev_err(netdev, "tx: failed to checksum packet\n");
-		netdev->stats.tx_dropped++;
+		IBMVETH_STAT_INC(txs->dropped_packets);
 		goto out;
 	}
 
@@ -2093,7 +2294,7 @@ static netdev_tx_t ibmveth_start_xmit(struct sk_buff *skb,
 	if (skb->ip_summed == CHECKSUM_PARTIAL && skb_is_gso(skb)) {
 		if (adapter->fw_large_send_support) {
 			mss = (unsigned long)skb_shinfo(skb)->gso_size;
-			adapter->tx_large_packets++;
+			IBMVETH_STAT_INC(txs->large_packets);
 		} else if (!skb_is_gso_v6(skb)) {
 			/* Put -1 in the IP checksum to tell phyp it
 			 * is a largesend packet. Put the mss in
@@ -2102,7 +2303,7 @@ static netdev_tx_t ibmveth_start_xmit(struct sk_buff *skb,
 			ip_hdr(skb)->check = 0xffff;
 			tcp_hdr(skb)->check =
 				cpu_to_be16(skb_shinfo(skb)->gso_size);
-			adapter->tx_large_packets++;
+			IBMVETH_STAT_INC(txs->large_packets);
 		}
 	}
 
@@ -2110,7 +2311,7 @@ static netdev_tx_t ibmveth_start_xmit(struct sk_buff *skb,
 	if (unlikely(skb->len > adapter->tx_ltb_size)) {
 		netdev_err(adapter->netdev, "tx: packet size (%u) exceeds ltb (%u)\n",
 			   skb->len, adapter->tx_ltb_size);
-		netdev->stats.tx_dropped++;
+		IBMVETH_STAT_INC(txs->dropped_packets);
 		goto out;
 	}
 	memcpy(ltb, skb->data, skb_headlen(skb));
@@ -2127,7 +2328,7 @@ static netdev_tx_t ibmveth_start_xmit(struct sk_buff *skb,
 	if (unlikely(total_bytes != skb->len)) {
 		netdev_err(adapter->netdev, "tx: incorrect packet len copied into ltb (%u != %u)\n",
 			   skb->len, total_bytes);
-		netdev->stats.tx_dropped++;
+		IBMVETH_STAT_INC(txs->dropped_packets);
 		goto out;
 	}
 	desc.fields.flags_len = desc_flags | skb->len;
@@ -2136,11 +2337,11 @@ static netdev_tx_t ibmveth_start_xmit(struct sk_buff *skb,
 	dma_wmb();
 
 	if (ibmveth_send(adapter, desc.desc, mss)) {
-		adapter->tx_send_failed++;
-		netdev->stats.tx_dropped++;
+		IBMVETH_STAT_INC(txs->send_failures);
+		IBMVETH_STAT_INC(txs->dropped_packets);
 	} else {
-		netdev->stats.tx_packets++;
-		netdev->stats.tx_bytes += skb->len;
+		IBMVETH_STAT_INC(txs->packets);
+		IBMVETH_STAT_ADD(txs->bytes, skb->len);
 	}
 
 out:
@@ -2314,12 +2515,12 @@ static bool ibmveth_poll_recycle_invalid(struct net_device *netdev,
 {
 	int rc;
 
-	adapter->rx_invalid_buffer++;
+	IBMVETH_STAT_INC(adapter->rx_qstats[queue_index].invalid_buffers);
 	netdev_dbg(netdev, "recycling invalid buffer\n");
 	rc = ibmveth_rxq_harvest_buffer(adapter, queue_index, correlator,
 					true);
 	if (unlikely(rc))
-		netdev->stats.rx_dropped++;
+		IBMVETH_STAT_INC(adapter->rx_qstats[queue_index].dropped);
 	return rc;
 }
 
@@ -2334,7 +2535,7 @@ static void ibmveth_poll_drop_bad_frame(struct net_device *netdev,
 			   "bad RX frame offset %u length %u (buffer %u) on queue %d, dropping\n",
 			   off, len, room, queue_index);
 	ibmveth_rxq_harvest_buffer(adapter, queue_index, correlator, true);
-	netdev->stats.rx_dropped++;
+	IBMVETH_STAT_INC(adapter->rx_qstats[queue_index].dropped);
 }
 
 /**
@@ -2350,6 +2551,7 @@ static void ibmveth_poll_deliver_frame(struct napi_struct *napi,
 				       struct net_device *netdev,
 				       int queue_index, u64 correlator)
 {
+	struct ibmveth_rx_queue_stats *rxs = &adapter->rx_qstats[queue_index];
 	int length = ibmveth_rxq_frame_length(adapter, queue_index);
 	int offset = ibmveth_rxq_frame_offset(adapter, queue_index);
 	int csum_good = ibmveth_rxq_csum_good(adapter, queue_index);
@@ -2364,7 +2566,7 @@ static void ibmveth_poll_deliver_frame(struct napi_struct *napi,
 	skb = ibmveth_rxq_get_buffer(adapter, queue_index, correlator);
 	if (unlikely(!skb)) {
 		ibmveth_rxq_advance(adapter, queue_index);
-		netdev->stats.rx_dropped++;
+		IBMVETH_STAT_INC(rxs->dropped);
 		return;
 	}
 
@@ -2402,7 +2604,7 @@ static void ibmveth_poll_deliver_frame(struct napi_struct *napi,
 						correlator, true);
 		if (unlikely(rc)) {
 			dev_kfree_skb_any(new_skb);
-			netdev->stats.rx_dropped++;
+			IBMVETH_STAT_INC(rxs->dropped);
 			return;
 		}
 		skb = new_skb;
@@ -2410,7 +2612,7 @@ static void ibmveth_poll_deliver_frame(struct napi_struct *napi,
 		rc = ibmveth_rxq_harvest_buffer(adapter, queue_index,
 						correlator, false);
 		if (unlikely(rc)) {
-			netdev->stats.rx_dropped++;
+			IBMVETH_STAT_INC(rxs->dropped);
 			return;
 		}
 		skb_reserve(skb, offset);
@@ -2433,7 +2635,7 @@ static void ibmveth_poll_deliver_frame(struct napi_struct *napi,
 	    lrg_pkt || iph_check == 0xffff) {
 		if (!ibmveth_rx_mss_helper(skb, mss, lrg_pkt))
 			csum_good = 0;
-		adapter->rx_large_packets++;
+		IBMVETH_STAT_INC(rxs->large_packets);
 	}
 
 	if (csum_good) {
@@ -2443,8 +2645,8 @@ static void ibmveth_poll_deliver_frame(struct napi_struct *napi,
 
 	napi_gro_receive(napi, skb);	/* send it up */
 
-	netdev->stats.rx_packets++;
-	netdev->stats.rx_bytes += length;
+	IBMVETH_STAT_INC(rxs->packets);
+	IBMVETH_STAT_ADD(rxs->bytes, length);
 }
 
 static int ibmveth_poll(struct napi_struct *napi, int budget)
@@ -2709,6 +2911,39 @@ static netdev_features_t ibmveth_features_check(struct sk_buff *skb,
 	return vlan_features_check(skb, features);
 }
 
+/**
+ * ibmveth_get_stats64 - Return aggregated per-queue statistics
+ * @dev: network device
+ * @stats: rtnl link statistics storage
+ *
+ * Sums per-queue rx_qstats and tx_qstats into the rtnl counters.
+ * rx_missed_errors is the PHYP no-buffer pair (live + retired),
+ * which if_link.h counts separately from rx_dropped.
+ * Walk the full allocated arrays (not the live queue count) so shrinking
+ * channels cannot make the totals go backwards.
+ */
+static void ibmveth_get_stats64(struct net_device *dev,
+				struct rtnl_link_stats64 *stats)
+{
+	struct ibmveth_adapter *adapter = netdev_priv(dev);
+	int i;
+
+	for (i = 0; i < IBMVETH_MAX_RX_QUEUES; i++) {
+		stats->rx_packets += READ_ONCE(adapter->rx_qstats[i].packets);
+		stats->rx_bytes += READ_ONCE(adapter->rx_qstats[i].bytes);
+		stats->rx_dropped += READ_ONCE(adapter->rx_qstats[i].dropped);
+		stats->rx_missed_errors +=
+			ibmveth_rx_no_buffer_total(adapter, i);
+	}
+
+	for (i = 0; i < IBMVETH_MAX_QUEUES; i++) {
+		stats->tx_packets += READ_ONCE(adapter->tx_qstats[i].packets);
+		stats->tx_bytes += READ_ONCE(adapter->tx_qstats[i].bytes);
+		stats->tx_dropped +=
+			READ_ONCE(adapter->tx_qstats[i].dropped_packets);
+	}
+}
+
 static const struct net_device_ops ibmveth_netdev_ops = {
 	.ndo_open		= ibmveth_open,
 	.ndo_stop		= ibmveth_close,
@@ -2721,6 +2956,7 @@ static const struct net_device_ops ibmveth_netdev_ops = {
 	.ndo_validate_addr	= eth_validate_addr,
 	.ndo_set_mac_address    = ibmveth_set_mac_addr,
 	.ndo_features_check	= ibmveth_features_check,
+	.ndo_get_stats64	= ibmveth_get_stats64,
 };
 
 /**
@@ -2876,6 +3112,12 @@ static int ibmveth_probe(struct vio_dev *dev, const struct vio_device_id *id)
 			kobject_uevent(kobj, KOBJ_ADD);
 	}
 
+	if (ibmveth_alloc_rx_qstats(adapter) ||
+	    ibmveth_alloc_tx_qstats(adapter)) {
+		rc = -ENOMEM;
+		goto err_put_pools;
+	}
+
 	rc = netif_set_real_num_tx_queues(netdev, min(num_online_cpus(),
 						      IBMVETH_DEFAULT_QUEUES));
 	if (rc) {
@@ -2905,6 +3147,8 @@ static int ibmveth_probe(struct vio_dev *dev, const struct vio_device_id *id)
 
 err_put_pools:
 	ibmveth_put_pool_kobjs(adapter);
+	ibmveth_free_tx_qstats(adapter);
+	ibmveth_free_rx_qstats(adapter);
 	free_netdev(netdev);
 	return rc;
 }
@@ -2927,6 +3171,9 @@ static void ibmveth_remove(struct vio_dev *dev)
 		else
 			ibmveth_release_lan_resources(adapter);
 	}
+
+	ibmveth_free_tx_qstats(adapter);
+	ibmveth_free_rx_qstats(adapter);
 
 	free_netdev(netdev);
 	dev_set_drvdata(&dev->dev, NULL);
