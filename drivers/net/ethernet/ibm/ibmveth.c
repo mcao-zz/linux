@@ -43,6 +43,7 @@
 
 static irqreturn_t ibmveth_interrupt(int irq, void *dev_instance);
 static unsigned long ibmveth_get_desired_dma(struct vio_dev *vdev);
+static void ibmveth_set_multicast_list(struct net_device *netdev);
 
 static struct kobj_type ktype_veth_pool;
 
@@ -1704,9 +1705,10 @@ static int ibmveth_close(struct net_device *netdev)
 {
 	struct ibmveth_adapter *adapter = netdev_priv(netdev);
 
-	/* change_mtu, pool sysfs, set_csum and set_tso call close() and
-	 * open() directly. If that open() fails, IFF_UP stays set and
-	 * NAPI is disabled; a second close() would hang in napi_disable().
+	/* change_mtu, pool sysfs, set_csum, set_tso and set_channels call
+	 * close() and open() directly. If that open() fails, IFF_UP stays
+	 * set and NAPI is disabled; a second close() would hang in
+	 * napi_disable().
 	 */
 	if (!adapter->opened)
 		return 0;
@@ -2075,11 +2077,69 @@ static void ibmveth_get_ethtool_stats(struct net_device *dev,
 static void ibmveth_get_channels(struct net_device *netdev,
 				 struct ethtool_channels *channels)
 {
+	struct ibmveth_adapter *adapter = netdev_priv(netdev);
+
 	channels->max_tx = ibmveth_real_max_tx_queues();
 	channels->tx_count = netdev->real_num_tx_queues;
 
-	channels->max_rx = netdev->real_num_rx_queues;
 	channels->rx_count = netdev->real_num_rx_queues;
+	channels->max_rx = adapter->multi_queue ?
+			   IBMVETH_MAX_RX_QUEUES : channels->rx_count;
+}
+
+/* Called with the device closed: open() sizes the RX queues and the TX
+ * LTBs from these counts.
+ */
+static int ibmveth_set_queue_counts(struct net_device *netdev,
+				    unsigned int rx, unsigned int tx)
+{
+	struct ibmveth_adapter *adapter = netdev_priv(netdev);
+	int rc;
+
+	rc = netif_set_real_num_queues(netdev, tx, rx);
+	if (!rc)
+		adapter->num_rx_queues = rx;
+	return rc;
+}
+
+static void ibmveth_restore_rx_mode(struct net_device *netdev)
+{
+	netif_addr_lock_bh(netdev);
+	ibmveth_set_multicast_list(netdev);
+	netif_addr_unlock_bh(netdev);
+}
+
+static int ibmveth_reopen_with_counts(struct net_device *netdev,
+				      unsigned int rx, unsigned int tx)
+{
+	struct ibmveth_adapter *adapter = netdev_priv(netdev);
+	unsigned int old_rx = adapter->num_rx_queues;
+	unsigned int old_tx = netdev->real_num_tx_queues;
+	int rc, rc2;
+
+	ibmveth_close(netdev);
+
+	rc = ibmveth_set_queue_counts(netdev, rx, tx);
+	if (!rc) {
+		rc = ibmveth_open(netdev);
+		if (!rc) {
+			ibmveth_restore_rx_mode(netdev);
+			return 0;
+		}
+		if (ibmveth_set_queue_counts(netdev, old_rx, old_tx)) {
+			netdev_err(netdev, "failed to restore %u RX / %u TX queues\n",
+				   old_rx, old_tx);
+			return rc;
+		}
+	}
+
+	rc2 = ibmveth_open(netdev);
+	if (!rc2)
+		ibmveth_restore_rx_mode(netdev);
+	else
+		netdev_err(netdev, "reopen with the old queue counts failed: %d\n",
+			   rc2);
+	return rc;
 }
 
 static int ibmveth_set_channels(struct net_device *netdev,
@@ -2087,16 +2147,20 @@ static int ibmveth_set_channels(struct net_device *netdev,
 {
 	struct ibmveth_adapter *adapter = netdev_priv(netdev);
 	unsigned int old = netdev->real_num_tx_queues,
-		     goal = channels->tx_count;
+		     goal = channels->tx_count,
+		     rx = channels->rx_count;
 	int rc, i, alloc_rc = 0;
 
-	/*
-	 * RX channel resize is not supported; reject any request that
-	 * changes rx_count. Read-modify-write TX adjustments submit the
-	 * current rx_count and proceed.
+	/* A TX-only -L resubmits the current rx_count and takes the live
+	 * TX path below. An RX change closes and reopens a running device,
+	 * and applies the TX count in the same window; a closed device
+	 * just takes the new counts.
 	 */
-	if (channels->rx_count != adapter->num_rx_queues)
-		return -EOPNOTSUPP;
+	if (rx != adapter->num_rx_queues) {
+		if (adapter->opened)
+			return ibmveth_reopen_with_counts(netdev, rx, goal);
+		return ibmveth_set_queue_counts(netdev, rx, goal);
+	}
 
 	/* If the device is not open (including a failed close/open with
 	 * IFF_UP still set) then don't allocate, just set desired
