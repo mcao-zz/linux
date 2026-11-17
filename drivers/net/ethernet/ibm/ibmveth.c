@@ -520,6 +520,30 @@ ibmveth_dispose_subordinate_irq_mappings(struct ibmveth_adapter *adapter)
 }
 
 /**
+ * ibmveth_queue_irq_name - Name for one RX queue's Linux IRQ
+ * @adapter: ibmveth adapter structure
+ * @queue_idx: RX queue index
+ *
+ * Queue 0 keeps netdev->name, as before multi-queue. Subordinate queues
+ * use "ibmveth-<unit address>-rx<N>", which survives a rename.
+ * request_irq() keeps the pointer, so the string lives in the adapter.
+ *
+ * Return: the name to pass to request_irq()
+ */
+static const char *ibmveth_queue_irq_name(struct ibmveth_adapter *adapter,
+					  int queue_idx)
+{
+	char *name = adapter->queue_irq_name[queue_idx];
+
+	if (!queue_idx)
+		return adapter->netdev->name;
+
+	snprintf(name, sizeof(adapter->queue_irq_name[0]), "ibmveth-%x-rx%d",
+		 adapter->vdev->unit_address, queue_idx);
+	return name;
+}
+
+/**
  * ibmveth_setup_rx_interrupts - Register IRQs and enable NAPI
  * @adapter: ibmveth adapter structure
  *
@@ -542,7 +566,8 @@ ibmveth_setup_rx_interrupts(struct ibmveth_adapter *adapter)
 
 	for (i = 0; i < num; i++) {
 		rc = request_irq(adapter->queue_irq[i], ibmveth_interrupt,
-				 0, netdev->name, &adapter->napi[i]);
+				 0, ibmveth_queue_irq_name(adapter, i),
+				 &adapter->napi[i]);
 		if (rc) {
 			netdev_err(netdev,
 				   "request_irq() failed for irq 0x%x queue %d: %d\n",
@@ -925,6 +950,7 @@ hcall_failure:
 			dev_err_ratelimited(dev,
 					    "MQ buffer add H_FUNCTION (q=%d, batch=%u), reset\n",
 					    queue_index, batch);
+			WRITE_ONCE(adapter->mq_fallback, true);
 			schedule_work(&adapter->work);
 		} else if (batch > 1 && lpar_rc == H_FUNCTION) {
 			/*
@@ -1143,12 +1169,30 @@ static int ibmveth_alloc_queue_buffer_pools(struct ibmveth_adapter *adapter,
  * ibmveth_alloc_buffer_pools - Allocate buffer pools for all queues
  * @adapter: ibmveth adapter structure
  *
+ * Copy queue 0's pool metadata onto any further queues, then allocate
+ * buffer pools for every queue.
+ *
  * Return: 0 on success, -ENOMEM on failure
  */
 static int
 ibmveth_alloc_buffer_pools(struct ibmveth_adapter *adapter)
 {
-	int q, rc;
+	int i, q, rc;
+
+	for (q = 1; q < adapter->num_rx_queues; q++) {
+		for (i = 0; i < IBMVETH_NUM_BUFF_POOLS; i++) {
+			struct ibmveth_buff_pool *src =
+				&adapter->rx_buff_pool[0][i];
+			struct ibmveth_buff_pool *dst =
+				&adapter->rx_buff_pool[q][i];
+
+			dst->size = src->size;
+			dst->index = src->index;
+			dst->buff_size = src->buff_size;
+			dst->threshold = src->threshold;
+			dst->active = src->active;
+		}
+	}
 
 	for (q = 0; q < adapter->num_rx_queues; q++) {
 		rc = ibmveth_alloc_queue_buffer_pools(adapter, q);
@@ -1559,7 +1603,8 @@ static int ibmveth_register_rx_queue(struct ibmveth_adapter *adapter,
  * queues 1..N when multi-queue mode is enabled.
  *
  * Return: 0 on success, -ENONET if queue 0 registration fails,
- *         or the error from ibmveth_register_rx_queue()
+ *         or the error from ibmveth_register_rx_queue(); on
+ *         -EOPNOTSUPP (H_FUNCTION) this function latches mq_fallback
  */
 static int
 ibmveth_register_rx_queues(struct ibmveth_adapter *adapter, u64 mac_address,
@@ -1602,8 +1647,12 @@ ibmveth_register_rx_queues(struct ibmveth_adapter *adapter, u64 mac_address,
 
 	for (i = 1; i < num; i++) {
 		rc = ibmveth_register_rx_queue(adapter, i);
-		if (rc)
+		if (rc) {
+			/* Firmware MQ gone: ibmveth_open() retries SQ. */
+			if (rc == -EOPNOTSUPP)
+				WRITE_ONCE(adapter->mq_fallback, true);
 			goto err_unregister;
+		}
 	}
 
 	return 0;
@@ -1615,7 +1664,35 @@ err_unregister:
 	return rc;
 }
 
-static int ibmveth_open(struct net_device *netdev)
+/**
+ * ibmveth_apply_mq_fallback - Drop multi-queue mode after firmware rejection
+ * @adapter: ibmveth adapter
+ *
+ * mq_fallback is set when firmware rejects MQ (subordinate register or
+ * buffer-add H_FUNCTION). Called at the start of open, after teardown,
+ * so num_rx_queues never shrinks under live IRQs or NAPI. Clearing
+ * multi_queue makes single-queue permanent for this device.
+ */
+static void ibmveth_apply_mq_fallback(struct ibmveth_adapter *adapter)
+{
+	struct net_device *netdev = adapter->netdev;
+
+	if (!READ_ONCE(adapter->mq_fallback))
+		return;
+
+	WRITE_ONCE(adapter->mq_fallback, false);
+
+	netdev_warn(netdev,
+		    "Falling back to single RX queue (firmware MQ unavailable)\n");
+	adapter->multi_queue = false;
+	adapter->num_rx_queues = 1;
+	if (netif_set_real_num_rx_queues(netdev, 1))
+		netdev_err(netdev, "failed to set number of rx queues\n");
+	if (adapter->rx_buffers_per_hcall > IBMVETH_MAX_RX_REGULAR)
+		adapter->rx_buffers_per_hcall = IBMVETH_MAX_RX_REGULAR;
+}
+
+static int __ibmveth_open(struct net_device *netdev)
 {
 	struct ibmveth_adapter *adapter = netdev_priv(netdev);
 	u64 mac_address = ether_addr_to_u64(netdev->dev_addr);
@@ -1632,7 +1709,8 @@ static int ibmveth_open(struct net_device *netdev)
 	netif_tx_disable(netdev);
 
 	/* close() leaves LAN memory mapped when H_FREE_LOGICAL_LAN fails.
-	 * Free it before a new alloc overwrites those pages.
+	 * Free it before apply_mq_fallback() changes the queue count, and
+	 * before a new alloc overwrites those pages.
 	 */
 	if (ibmveth_lan_resources_live(adapter)) {
 		if (ibmveth_free_all_queues(adapter)) {
@@ -1642,6 +1720,8 @@ static int ibmveth_open(struct net_device *netdev)
 		}
 		ibmveth_release_lan_resources(adapter);
 	}
+
+	ibmveth_apply_mq_fallback(adapter);
 
 	for (i = 0; i < IBMVETH_NUM_BUFF_POOLS; i++)
 		rxq_entries += adapter->rx_buff_pool[0][i].size;
@@ -1674,12 +1754,24 @@ static int ibmveth_open(struct net_device *netdev)
 		goto out_free_buffer_pools;
 	}
 
+	rc = netif_set_real_num_rx_queues(netdev, adapter->num_rx_queues);
+	if (rc) {
+		netdev_err(netdev, "failed to set number of rx queues\n");
+		goto out_unregister_queues;
+	}
+
 	/* NAPI is still disabled, so nothing else posts buffers yet. With
 	 * more than one queue, setup_rx_interrupts() unmasks PHYP, so every
 	 * queue needs buffers before it.
 	 */
 	for (i = 0; i < adapter->num_rx_queues; i++)
 		ibmveth_replenish_task(adapter, i);
+
+	/* A buffer add hit H_FUNCTION; ibmveth_open() retries single-queue. */
+	if (READ_ONCE(adapter->mq_fallback)) {
+		rc = -EOPNOTSUPP;
+		goto out_unregister_queues;
+	}
 
 	/* Enables NAPI, so everything ibmveth_poll() touches must exist:
 	 * netpoll during the direct close()/open() pairs, or a direct
@@ -1724,6 +1816,23 @@ out_free_queue_mem:
 out_free_filter_list:
 	ibmveth_free_filter_list(adapter);
 out:
+	return rc;
+}
+
+static int ibmveth_open(struct net_device *netdev)
+{
+	struct ibmveth_adapter *adapter = netdev_priv(netdev);
+	int rc;
+
+	rc = __ibmveth_open(netdev);
+	/* Firmware refused MQ; the retry applies the fallback. A reset still
+	 * pending is only needed if the retry fails.
+	 */
+	if (rc == -EOPNOTSUPP && READ_ONCE(adapter->mq_fallback)) {
+		rc = __ibmveth_open(netdev);
+		if (!rc)
+			cancel_work(&adapter->work);
+	}
 	return rc;
 }
 
@@ -2117,6 +2226,14 @@ static int ibmveth_set_channels(struct net_device *netdev,
 	unsigned int old = netdev->real_num_tx_queues,
 		     goal = channels->tx_count;
 	int rc, i, alloc_rc = 0;
+
+	/*
+	 * RX channel resize is not supported; reject any request that
+	 * changes rx_count. Read-modify-write TX adjustments submit the
+	 * current rx_count and proceed.
+	 */
+	if (channels->rx_count != adapter->num_rx_queues)
+		return -EOPNOTSUPP;
 
 	/* If the device is not open (including a failed close/open with
 	 * IFF_UP still set) then don't allocate, just set desired
@@ -2636,6 +2753,7 @@ static void ibmveth_poll_deliver_frame(struct napi_struct *napi,
 		ibmveth_rx_csum_helper(skb, adapter);
 	}
 
+	skb_record_rx_queue(skb, queue_index);
 	napi_gro_receive(napi, skb);	/* send it up */
 
 	IBMVETH_STAT_INC(rxs->packets);
@@ -3103,7 +3221,8 @@ static int ibmveth_probe(struct vio_dev *dev, const struct vio_device_id *id)
 		return -EINVAL;
 	}
 
-	netdev = alloc_etherdev_mqs(sizeof(struct ibmveth_adapter), IBMVETH_MAX_QUEUES, 1);
+	netdev = alloc_etherdev_mqs(sizeof(struct ibmveth_adapter),
+				    IBMVETH_MAX_QUEUES, IBMVETH_MAX_RX_QUEUES);
 	if (!netdev)
 		return -ENOMEM;
 
@@ -3116,7 +3235,9 @@ static int ibmveth_probe(struct vio_dev *dev, const struct vio_device_id *id)
 	adapter->mcastFilterSize = be32_to_cpu(*mcastFilterSize_p);
 	ibmveth_init_link_settings(netdev);
 
-	netif_napi_add_weight(netdev, &adapter->napi[0], ibmveth_poll, 16);
+	for (i = 0; i < IBMVETH_MAX_RX_QUEUES; i++)
+		netif_napi_add_weight(netdev, &adapter->napi[i],
+				      ibmveth_poll, 16);
 
 	netdev->irq = dev->irq;
 	netdev->netdev_ops = &ibmveth_netdev_ops;
@@ -3149,11 +3270,29 @@ static int ibmveth_probe(struct vio_dev *dev, const struct vio_device_id *id)
 		netdev->features |= NETIF_F_FRAGLIST;
 	}
 
-	adapter->num_rx_queues = IBMVETH_DEFAULT_RX_QUEUES;
+	/* MQ can keep LAN memory mapped after a hard H_FREE failure;
+	 * CMO BUG()s on outstanding IO entitlement at remove.
+	 */
+	if (ret == H_SUCCESS &&
+	    (ret_attr & IBMVETH_ILLAN_RX_MULTI_QUEUE_SUPPORT) &&
+	    !firmware_has_feature(FW_FEATURE_CMO)) {
+		adapter->multi_queue = true;
+		adapter->num_rx_queues = min(num_online_cpus(),
+					     IBMVETH_DEFAULT_QUEUES);
+		netdev_dbg(netdev, "RX multi queue mode enabled: %u queues\n",
+			   adapter->num_rx_queues);
+	} else {
+		adapter->multi_queue = false;
+		adapter->num_rx_queues = IBMVETH_DEFAULT_RX_QUEUES;
+	}
 
 	if (ret == H_SUCCESS &&
 	    (ret_attr & IBMVETH_ILLAN_RX_MULTI_BUFF_SUPPORT)) {
-		adapter->rx_buffers_per_hcall = IBMVETH_MAX_RX_REGULAR;
+		if (adapter->multi_queue)
+			adapter->rx_buffers_per_hcall =
+				IBMVETH_MAX_RX_PER_HCALL;
+		else
+			adapter->rx_buffers_per_hcall = IBMVETH_MAX_RX_REGULAR;
 		netdev_dbg(netdev,
 			   "RX Multi-buffer hcall supported by FW, batch set to %u\n",
 			    adapter->rx_buffers_per_hcall);
@@ -3199,6 +3338,15 @@ static int ibmveth_probe(struct vio_dev *dev, const struct vio_device_id *id)
 			   rc);
 		goto err_put_pools;
 	}
+
+	/* alloc_etherdev_mqs() set real_num_rx_queues to the maximum. */
+	rc = netif_set_real_num_rx_queues(netdev, adapter->num_rx_queues);
+	if (rc) {
+		netdev_dbg(netdev, "failed to set number of rx queues rc=%d\n",
+			   rc);
+		goto err_put_pools;
+	}
+
 	adapter->tx_ltb_size = PAGE_ALIGN(IBMVETH_MAX_TX_BUF_SIZE);
 	for (i = 0; i < IBMVETH_MAX_QUEUES; i++)
 		adapter->tx_ltb_ptr[i] = NULL;
