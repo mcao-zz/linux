@@ -134,6 +134,15 @@ static int pool_active[] = { 1, 1, 0, 0, 1};
 
 #define IBM_VETH_INVALID_MAP ((u16)0xffff)
 
+/* Per-queue TX counters; serialized by the stack's per-queue TX lock. */
+struct ibmveth_tx_queue_stats {
+	u64 packets;
+	u64 bytes;
+	u64 large_packets;
+	u64 dropped_packets;
+	u64 send_failures;
+} ____cacheline_aligned_in_smp;
+
 struct ibmveth_buff_pool {
     u32 size;
     u32 index;
@@ -195,9 +204,10 @@ struct ibmveth_adapter {
 	u64 rx_invalid_buffer;
 	u64 rx_no_buffer;
 	u64 tx_map_failed;
-	u64 tx_send_failed;
-	u64 tx_large_packets;
 	u64 rx_large_packets;
+
+	struct ibmveth_tx_queue_stats *tx_qstats;
+
 	/* Ethtool settings */
 	u8 duplex;
 	u32 speed;
