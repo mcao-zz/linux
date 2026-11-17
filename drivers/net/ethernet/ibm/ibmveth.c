@@ -21,6 +21,7 @@
 #include <linux/skbuff.h>
 #include <linux/init.h>
 #include <linux/interrupt.h>
+#include <linux/irq.h>
 #include <linux/irqdomain.h>
 #include <linux/mm.h>
 #include <linux/pm.h>
@@ -349,8 +350,7 @@ ibmveth_cleanup_rx_resources(struct ibmveth_adapter *adapter)
  * @queue_index: RX queue index
  * @enable: true to unmask, false to mask
  *
- * Only queue 0 exists for now. Its interrupt is the adapter's own, which
- * h_vio_signal() controls, so @queue_index is used only for logging.
+ * Queue 0 uses h_vio_signal(); subordinate queues use H_VIOCTL.
  *
  * Return: 0 on success, -EIO on failure
  */
@@ -358,11 +358,24 @@ static int
 ibmveth_toggle_irq(struct ibmveth_adapter *adapter, int queue_index,
 		   bool enable)
 {
-	const char *action = enable ? "enable" : "disable";
 	unsigned long h_rc;
+	unsigned long irq = adapter->queue_irq[queue_index];
+	const char *action = enable ? "enable" : "disable";
 
-	h_rc = h_vio_signal(adapter->vdev->unit_address,
-			    enable ? VIO_IRQ_ENABLE : VIO_IRQ_DISABLE);
+	if (queue_index == 0) {
+		h_rc = h_vio_signal(adapter->vdev->unit_address,
+				    enable ? VIO_IRQ_ENABLE : VIO_IRQ_DISABLE);
+	} else {
+		irq_hw_number_t hwirq = irqd_to_hwirq(irq_get_irq_data(irq));
+		u64 vioctl_cmd = enable ? H_ENABLE_VIO_INTERRUPT :
+			H_DISABLE_VIO_INTERRUPT;
+
+		h_rc = plpar_hcall_norets(H_VIOCTL,
+					  adapter->vdev->unit_address,
+					  vioctl_cmd,
+					  hwirq, 0, 0);
+	}
+
 	if (h_rc) {
 		dev_err_ratelimited(&adapter->netdev->dev,
 				    "Failed to %s IRQ for queue %d, rc=0x%lx\n",
@@ -425,8 +438,10 @@ ibmveth_dispose_subordinate_irq_mappings(struct ibmveth_adapter *adapter)
  * @adapter: ibmveth adapter structure
  *
  * The queues must already be masked in PHYP, as they are before the LAN
- * is registered; this does not unmask them. The caller kicks NAPI, and
- * the first poll unmasks.
+ * is registered. With one queue this does not unmask it; the caller
+ * kicks NAPI, and the first poll unmasks. With more than one queue,
+ * every queue is unmasked once all handlers are installed and NAPI is
+ * enabled, so the caller must post buffers to every queue first.
  *
  * Return: 0 on success, negative error code on failure
  */
@@ -450,8 +465,28 @@ ibmveth_setup_rx_interrupts(struct ibmveth_adapter *adapter)
 	for (i = 0; i < num; i++)
 		napi_enable(&adapter->napi[i]);
 
+	if (adapter->multi_queue && num > 1) {
+		for (i = 0; i < num; i++) {
+			rc = ibmveth_enable_irq(adapter, i);
+			if (rc)
+				goto err_disable_napi;
+		}
+	}
+
 	return 0;
 
+err_disable_napi:
+	/* Wait for the poll tail, then remask; an in-flight poll can
+	 * unmask after napi_complete_done().
+	 */
+	for (i = 0; i < num; i++)
+		napi_disable(&adapter->napi[i]);
+	synchronize_net();
+	for (i = 0; i < num; i++) {
+		ibmveth_disable_irq(adapter, i);
+		synchronize_irq(adapter->queue_irq[i]);
+	}
+	i = num;
 err_free_irqs:
 	while (--i >= 0)
 		free_irq(adapter->queue_irq[i], &adapter->napi[i]);
