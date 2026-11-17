@@ -611,11 +611,81 @@ static inline void ibmveth_flush_buffer(void *addr, unsigned long length)
 		asm("dcbf %0,%1,1" :: "b" (addr), "r" (offset));
 }
 
+/**
+ * ibmveth_add_logical_lan_buffers - Add receive buffers to hypervisor
+ * @adapter: ibmveth adapter structure
+ * @descs: array of buffer descriptors to add
+ * @filled: number of valid descriptors in the array
+ * @buff_size: size of each buffer (multi-queue mode only)
+ * @queue_index: RX queue index
+ *
+ * Return: hypervisor return code
+ */
+static long ibmveth_add_logical_lan_buffers(struct ibmveth_adapter *adapter,
+					    union ibmveth_buf_desc *descs,
+					    int filled,
+					    unsigned long buff_size,
+					    int queue_index)
+{
+	struct vio_dev *vdev = adapter->vdev;
+	unsigned long rc;
+
+	/*
+	 * The MQ hcall takes six ioba words (12 packed addresses). The
+	 * legacy hcall takes eight descriptors. The argument lists below
+	 * are written out by hand; keep the defines matched to those lists.
+	 */
+	static_assert(IBMVETH_MAX_RX_PER_HCALL == 12);
+	static_assert(IBMVETH_MAX_RX_REGULAR == 8);
+
+	if (adapter->multi_queue) {
+		unsigned long buffersznum = (buff_size << 32) | filled;
+		unsigned long ioba[IBMVETH_MAX_RX_PER_HCALL / 2] = {0};
+		unsigned long handle = adapter->queue_handle[queue_index];
+		int i;
+
+		/* Even descriptors go in the high 32 bits of an ioba word,
+		 * odd ones in the low 32 bits.
+		 */
+		for (i = 0; i < filled && i < IBMVETH_MAX_RX_PER_HCALL; i++) {
+			int pair_idx = i / 2;
+			int is_high = (i % 2 == 0);
+
+			if (is_high)
+				ioba[pair_idx] = (unsigned long)
+					descs[i].fields.address << 32;
+			else
+				ioba[pair_idx] |= descs[i].fields.address;
+		}
+
+		rc = h_add_logical_lan_buffers_queue(vdev->unit_address,
+						     handle,
+						     buffersznum,
+						     ioba[0], ioba[1], ioba[2],
+						     ioba[3], ioba[4], ioba[5]);
+	} else if (filled == 1) {
+		rc = h_add_logical_lan_buffer(vdev->unit_address,
+					      descs[0].desc);
+	} else {
+		/* Legacy 8-desc hcall; rx_buffers_per_hcall never exceeds
+		 * IBMVETH_MAX_RX_REGULAR outside multi-queue mode.
+		 */
+		rc = h_add_logical_lan_buffers(vdev->unit_address,
+					       descs[0].desc, descs[1].desc,
+					       descs[2].desc, descs[3].desc,
+					       descs[4].desc, descs[5].desc,
+					       descs[6].desc, descs[7].desc);
+	}
+
+	return rc;
+}
+
 /* replenish the buffers for a pool.  note that we don't need to
  * skb_reserve these since they are used for incoming...
  */
 static void ibmveth_replenish_buffer_pool(struct ibmveth_adapter *adapter,
-					  struct ibmveth_buff_pool *pool)
+					  struct ibmveth_buff_pool *pool,
+					  int queue_index)
 {
 	union ibmveth_buf_desc descs[IBMVETH_MAX_RX_PER_HCALL] = {0};
 	u32 remaining = pool->size - atomic_read(&pool->available);
@@ -701,24 +771,16 @@ static void ibmveth_replenish_buffer_pool(struct ibmveth_adapter *adapter,
 		if (!filled)
 			break;
 
-		/* single buffer case*/
-		if (filled == 1)
-			lpar_rc = h_add_logical_lan_buffer(vdev->unit_address,
-							   descs[0].desc);
-		else
-			/* Multi-buffer hcall */
-			lpar_rc = h_add_logical_lan_buffers(vdev->unit_address,
-							    descs[0].desc,
-							    descs[1].desc,
-							    descs[2].desc,
-							    descs[3].desc,
-							    descs[4].desc,
-							    descs[5].desc,
-							    descs[6].desc,
-							    descs[7].desc);
+		lpar_rc = ibmveth_add_logical_lan_buffers(adapter, descs,
+							  filled,
+							  pool->buff_size,
+							  queue_index);
 		if (lpar_rc != H_SUCCESS) {
 			dev_warn_ratelimited(dev,
-					     "RX h_add_logical_lan failed: filled=%u, rc=%lu, batch=%u\n",
+					     "RX %s failed: filled=%u, rc=%lu, batch=%u\n",
+					     adapter->multi_queue ?
+					     "h_add_logical_lan_buffers_queue" :
+					     "h_add_logical_lan",
 					     filled, lpar_rc, batch);
 			goto hcall_failure;
 		}
@@ -758,6 +820,18 @@ hcall_failure:
 			}
 		}
 		adapter->replenish_add_buff_failure += filled;
+
+		/* Probe saw MQ support, so this is unexpected. There is no
+		 * smaller MQ hcall: reset rather than sit without buffers,
+		 * link up.
+		 */
+		if (lpar_rc == H_FUNCTION && adapter->multi_queue) {
+			dev_err_ratelimited(dev,
+					    "MQ buffer add H_FUNCTION (q=%d, batch=%u), reset\n",
+					    queue_index, batch);
+			schedule_work(&adapter->work);
+			break;
+		}
 
 		/*
 		 * If multi rx buffers hcall is no longer supported by FW
@@ -812,7 +886,8 @@ static void ibmveth_replenish_task(struct ibmveth_adapter *adapter,
 
 		if (pool->active &&
 		    (atomic_read(&pool->available) < pool->threshold))
-			ibmveth_replenish_buffer_pool(adapter, pool);
+			ibmveth_replenish_buffer_pool(adapter, pool,
+						      queue_index);
 	}
 
 	ibmveth_update_rx_no_buffer(adapter);
@@ -2706,7 +2781,7 @@ static int ibmveth_probe(struct vio_dev *dev, const struct vio_device_id *id)
 
 	if (ret == H_SUCCESS &&
 	    (ret_attr & IBMVETH_ILLAN_RX_MULTI_BUFF_SUPPORT)) {
-		adapter->rx_buffers_per_hcall = IBMVETH_MAX_RX_PER_HCALL;
+		adapter->rx_buffers_per_hcall = IBMVETH_MAX_RX_REGULAR;
 		netdev_dbg(netdev,
 			   "RX Multi-buffer hcall supported by FW, batch set to %u\n",
 			    adapter->rx_buffers_per_hcall);
