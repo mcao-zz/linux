@@ -1418,17 +1418,19 @@ err_free_ltbs:
 }
 
 /**
- * ibmveth_free_tx_resources - Free TX LTBs for real_num_tx_queues
+ * ibmveth_free_tx_resources - Free every allocated TX LTB
  * @adapter: ibmveth adapter structure
  *
- * Frees TX Long Term Buffers (LTBs) for real_num_tx_queues.
+ * Walks IBMVETH_MAX_QUEUES, not real_num_tx_queues. An ethtool -L
+ * while down can shrink real_num while skip-unmap close left bounce
+ * buffers mapped; stopping the walk at real_num would skip those
+ * slots. ibmveth_free_tx_ltb() is a no-op on a NULL slot.
  */
 static void ibmveth_free_tx_resources(struct ibmveth_adapter *adapter)
 {
-	struct net_device *netdev = adapter->netdev;
 	int i;
 
-	for (i = 0; i < netdev->real_num_tx_queues; i++)
+	for (i = 0; i < IBMVETH_MAX_QUEUES; i++)
 		ibmveth_free_tx_ltb(adapter, i);
 }
 
@@ -1504,27 +1506,65 @@ retry:
 	return rc;
 }
 
+static bool ibmveth_lan_resources_live(struct ibmveth_adapter *adapter)
+{
+	int i;
+
+	if (adapter->filter_list_addr)
+		return true;
+	if (adapter->tx_ltb_ptr[0])
+		return true;
+	for (i = 0; i < IBMVETH_MAX_RX_QUEUES; i++) {
+		if (adapter->queue_registered[i])
+			return true;
+		if (adapter->buffer_list_addr[i])
+			return true;
+	}
+	return false;
+}
+
+static void ibmveth_release_lan_resources(struct ibmveth_adapter *adapter)
+{
+	ibmveth_free_tx_resources(adapter);
+	ibmveth_free_buffer_pools(adapter);
+	ibmveth_cleanup_rx_resources(adapter);
+	ibmveth_free_filter_list(adapter);
+}
+
 /**
  * ibmveth_free_all_queues - Free all RX queues at once
  * @adapter: ibmveth adapter structure
  *
  * Issues one H_FREE_LOGICAL_LAN, which frees the logical LAN and every
- * RX queue registered under it. A failure is logged; the caller still
- * frees the RX memory, as close() always has. Queue handles are cleared
- * either way.
+ * RX queue registered under it.
+ *
+ * In multi-queue mode a failure other than H_PARAMETER (already free)
+ * is fail-before-start: PHYP may still DMA into the LAN memory, so
+ * return -EIO with the slots still registered. The caller skips the
+ * unmap, and the next open() or remove() retries. Single-queue mode
+ * keeps what close() always did, log and let the caller unmap; one
+ * reason it cannot simply keep the memory mapped is that on a CMO
+ * partition vio_cmo_bus_remove() BUG()s on an outstanding entitlement.
+ *
+ * Return: 0 if the caller may unmap, -EIO if it must not
  */
-static void ibmveth_free_all_queues(struct ibmveth_adapter *adapter)
+static int ibmveth_free_all_queues(struct ibmveth_adapter *adapter)
 {
 	long lpar_rc;
 	int i;
 
 	lpar_rc = ibmveth_free_logical_lan(adapter);
-	if (lpar_rc != H_SUCCESS)
+	if (lpar_rc != H_SUCCESS) {
 		netdev_err(adapter->netdev,
 			   "h_free_logical_lan failed: %ld\n", lpar_rc);
+		if (lpar_rc != H_PARAMETER && adapter->multi_queue)
+			return -EIO;
+	}
 
 	for (i = 0; i < ibmveth_get_num_rx_queues(adapter); i++)
 		ibmveth_clear_rx_queue_handle(adapter, i);
+
+	return 0;
 }
 
 static long ibmveth_free_logical_lan_queue(struct ibmveth_adapter *adapter,
@@ -1665,6 +1705,9 @@ ibmveth_register_single_rx_queue(struct ibmveth_adapter *adapter,
  * ibmveth_register_rx_queues - Register RX queues with hypervisor
  * @adapter: ibmveth adapter structure
  * @mac_address: MAC address for device registration
+ * @skip_unmap: set when H_FREE_LOGICAL_LAN hard-fails after a
+ *              subordinate register error, so open() does not unmap
+ *              pages PHYP still owns
  *
  * Registers queue 0 via ibmveth_register_logical_lan(), then subordinate
  * queues 1..N when multi-queue mode is enabled.
@@ -1674,13 +1717,16 @@ ibmveth_register_single_rx_queue(struct ibmveth_adapter *adapter,
  *         (H_FUNCTION), -EIO on other subordinate failures
  */
 static int
-ibmveth_register_rx_queues(struct ibmveth_adapter *adapter, u64 mac_address)
+ibmveth_register_rx_queues(struct ibmveth_adapter *adapter, u64 mac_address,
+			   bool *skip_unmap)
 {
 	struct net_device *netdev = adapter->netdev;
 	union ibmveth_buf_desc rxq_desc;
 	long lpar_rc;
 	unsigned int num;
 	int i, rc;
+
+	*skip_unmap = false;
 
 	rxq_desc.fields.flags_len = IBMVETH_BUF_VALID |
 				    adapter->rx_queue[0].queue_len;
@@ -1729,7 +1775,8 @@ ibmveth_register_rx_queues(struct ibmveth_adapter *adapter, u64 mac_address)
 
 err_unregister:
 	ibmveth_dispose_subordinate_irq_mappings(adapter);
-	ibmveth_free_all_queues(adapter);
+	if (ibmveth_free_all_queues(adapter))
+		*skip_unmap = true;
 	return rc;
 }
 
@@ -1738,6 +1785,7 @@ static int ibmveth_open(struct net_device *netdev)
 	struct ibmveth_adapter *adapter = netdev_priv(netdev);
 	u64 mac_address = ether_addr_to_u64(netdev->dev_addr);
 	int rxq_entries = 1;
+	bool skip_unmap;
 	int rc;
 	int i;
 
@@ -1747,6 +1795,18 @@ static int ibmveth_open(struct net_device *netdev)
 	 * so generic XDP_TX can run during TX LTB alloc.
 	 */
 	netif_tx_disable(netdev);
+
+	/* close() may have skipped unmap on H_FREE fail-before-start.
+	 * Retry before a new alloc overwrites those pages.
+	 */
+	if (ibmveth_lan_resources_live(adapter)) {
+		if (ibmveth_free_all_queues(adapter)) {
+			netdev_err(netdev,
+				   "h_free_logical_lan still failing; LAN remains registered\n");
+			return -EIO;
+		}
+		ibmveth_release_lan_resources(adapter);
+	}
 
 	for (i = 0; i < IBMVETH_NUM_BUFF_POOLS; i++)
 		rxq_entries += adapter->rx_buff_pool[0][i].size;
@@ -1769,9 +1829,15 @@ static int ibmveth_open(struct net_device *netdev)
 		goto out_free_queue_mem;
 	}
 
-	rc = ibmveth_register_rx_queues(adapter, mac_address);
-	if (rc)
+	rc = ibmveth_register_rx_queues(adapter, mac_address, &skip_unmap);
+	if (rc) {
+		if (skip_unmap) {
+			/* Nothing is posted yet: PHYP never saw the pools. */
+			ibmveth_free_buffer_pools(adapter);
+			goto out;
+		}
 		goto out_free_buffer_pools;
+	}
 
 	rc = netif_set_real_num_rx_queues(netdev,
 					  ibmveth_get_num_rx_queues(adapter));
@@ -1826,7 +1892,8 @@ out_cleanup_rx_interrupts:
 out_unregister_queues:
 	ibmveth_dispose_subordinate_irq_mappings(adapter);
 out_free_all_queues:
-	ibmveth_free_all_queues(adapter);
+	if (ibmveth_free_all_queues(adapter))
+		goto out;
 out_free_buffer_pools:
 	ibmveth_free_buffer_pools(adapter);
 out_free_queue_mem:
@@ -1855,13 +1922,11 @@ static int ibmveth_close(struct net_device *netdev)
 
 	ibmveth_cleanup_rx_interrupts(adapter);
 
-	ibmveth_free_all_queues(adapter);
-	ibmveth_update_rx_no_buffer(adapter);
-	/* netif_tx_disable() above keeps xmit off the TX LTBs. */
-	ibmveth_free_tx_resources(adapter);
-	ibmveth_free_buffer_pools(adapter);
-	ibmveth_cleanup_rx_resources(adapter);
-	ibmveth_free_filter_list(adapter);
+	if (!ibmveth_free_all_queues(adapter)) {
+		ibmveth_update_rx_no_buffer(adapter);
+		/* netif_tx_disable() above keeps xmit off the TX LTBs. */
+		ibmveth_release_lan_resources(adapter);
+	}
 
 	netdev_dbg(netdev, "close complete\n");
 
@@ -3161,6 +3226,14 @@ static void ibmveth_remove(struct vio_dev *dev)
 
 	unregister_netdev(netdev);
 
+	if (ibmveth_lan_resources_live(adapter)) {
+		if (ibmveth_free_all_queues(adapter))
+			dev_err(&dev->dev,
+				"h_free_logical_lan still failing at remove; leaking LAN buffers\n");
+		else
+			ibmveth_release_lan_resources(adapter);
+	}
+
 	free_netdev(netdev);
 	dev_set_drvdata(&dev->dev, NULL);
 }
@@ -3202,8 +3275,11 @@ static ssize_t veth_pool_show(struct kobject *kobj,
  * Return:
  * * %-EPERM  - Not allowed to disabled all MTU-sized buffer pools
  * * %-EINVAL - New pool size or buffer size is out of range
+ * * %-EBUSY  - The old pools are still mapped after a failed
+ *              H_FREE_LOGICAL_LAN; nothing was changed
  * * count    - Return count for success
- * * other    - Return value from a failed ibmveth_open call
+ * * other    - Return value from a failed ibmveth_open call; the new
+ *              geometry stays if that left its pools mapped
  */
 static ssize_t veth_pool_store(struct kobject *kobj, struct attribute *attr,
 			       const char *buf, size_t count)
@@ -3285,6 +3361,18 @@ static ssize_t veth_pool_store(struct kobject *kobj, struct attribute *attr,
 		if (netif_running(netdev))
 			ibmveth_close(netdev);
 
+		/* close() keeps the pools mapped when H_FREE_LOGICAL_LAN
+		 * fails; open() or remove() frees them later with
+		 * pool->size and pool->buff_size, so the geometry must not
+		 * change until they are gone.
+		 */
+		if (ibmveth_lan_resources_live(adapter)) {
+			rc = -EBUSY;
+			if (netif_running(netdev))
+				rc = ibmveth_open(netdev) ?: -EBUSY;
+			goto unlock_err;
+		}
+
 		pool->active = newactive;
 		pool->buff_size = newbuff_size;
 		pool->size = newsize;
@@ -3292,9 +3380,14 @@ static ssize_t veth_pool_store(struct kobject *kobj, struct attribute *attr,
 		if (netif_running(netdev)) {
 			rc = ibmveth_open(netdev);
 			if (rc) {
-				pool->active = oldactive;
-				pool->buff_size = oldbuff_size;
-				pool->size = oldsize;
+				/* A failed open() can keep the new pools
+				 * mapped; their free needs this geometry.
+				 */
+				if (!ibmveth_lan_resources_live(adapter)) {
+					pool->active = oldactive;
+					pool->buff_size = oldbuff_size;
+					pool->size = oldsize;
+				}
 				goto unlock_err;
 			}
 		}
