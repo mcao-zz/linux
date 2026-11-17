@@ -1255,13 +1255,64 @@ static void ibmveth_free_all_queues(struct ibmveth_adapter *adapter)
 }
 
 /**
+ * ibmveth_register_rx_queue - Register one subordinate RX queue
+ * @adapter: ibmveth adapter structure
+ * @queue_idx: RX queue index (1..N)
+ *
+ * Registers the queue with H_REG_LOGICAL_LAN_QUEUE and maps its interrupt.
+ * On failure the caller frees every queue with H_FREE_LOGICAL_LAN.
+ *
+ * Return: 0 on success, -EOPNOTSUPP if firmware rejects MQ (H_FUNCTION),
+ *         -ENOMEM if the interrupt cannot be mapped, -EIO otherwise
+ */
+static int ibmveth_register_rx_queue(struct ibmveth_adapter *adapter,
+				     int queue_idx)
+{
+	struct ibmveth_rx_q *rxq = &adapter->rx_queue[queue_idx];
+	unsigned long bl = adapter->buffer_list_dma[queue_idx];
+	unsigned long ua = adapter->vdev->unit_address;
+	union ibmveth_buf_desc rxq_desc;
+	unsigned long handle, hwirq;
+	unsigned int virq;
+	long lpar_rc;
+
+	rxq_desc.fields.flags_len = IBMVETH_BUF_VALID | rxq->queue_len;
+	rxq_desc.fields.address = rxq->queue_dma;
+
+	do {
+		lpar_rc = h_register_logical_lan_queue(ua, bl, rxq_desc.desc,
+						       &handle, &hwirq);
+	} while (H_IS_LONG_BUSY(lpar_rc) || lpar_rc == H_BUSY);
+	if (lpar_rc != H_SUCCESS) {
+		netdev_err(adapter->netdev,
+			   "h_register_logical_lan_queue failed for queue %d: %ld\n",
+			   queue_idx, lpar_rc);
+		return lpar_rc == H_FUNCTION ? -EOPNOTSUPP : -EIO;
+	}
+
+	virq = irq_create_mapping(NULL, hwirq);
+	if (!virq) {
+		netdev_err(adapter->netdev,
+			   "failed to map IRQ for queue %d (hwirq=%lu)\n",
+			   queue_idx, hwirq);
+		return -ENOMEM;
+	}
+
+	adapter->queue_handle[queue_idx] = handle;
+	adapter->queue_irq[queue_idx] = virq;
+	return 0;
+}
+
+/**
  * ibmveth_register_rx_queues - Register RX queues with hypervisor
  * @adapter: ibmveth adapter structure
  * @mac_address: MAC address for device registration
  *
- * Registers queue 0 with H_REGISTER_LOGICAL_LAN.
+ * Registers queue 0 via ibmveth_register_logical_lan(), then subordinate
+ * queues 1..N when multi-queue mode is enabled.
  *
- * Return: 0 on success, -ENONET if queue 0 registration fails
+ * Return: 0 on success, -ENONET if queue 0 registration fails,
+ *         or the error from ibmveth_register_rx_queue()
  */
 static int
 ibmveth_register_rx_queues(struct ibmveth_adapter *adapter, u64 mac_address)
@@ -1269,7 +1320,8 @@ ibmveth_register_rx_queues(struct ibmveth_adapter *adapter, u64 mac_address)
 	struct net_device *netdev = adapter->netdev;
 	union ibmveth_buf_desc rxq_desc;
 	long lpar_rc;
-	int rc;
+	unsigned int num;
+	int i, rc;
 
 	rxq_desc.fields.flags_len = IBMVETH_BUF_VALID |
 				    adapter->rx_queue[0].queue_len;
@@ -1294,7 +1346,22 @@ ibmveth_register_rx_queues(struct ibmveth_adapter *adapter, u64 mac_address)
 		return -ENONET;
 	}
 
+	num = adapter->num_rx_queues;
+	if (num == 1 || !adapter->multi_queue)
+		return 0;
+
+	for (i = 1; i < num; i++) {
+		rc = ibmveth_register_rx_queue(adapter, i);
+		if (rc)
+			goto err_unregister;
+	}
+
 	return 0;
+
+err_unregister:
+	ibmveth_dispose_subordinate_irq_mappings(adapter);
+	ibmveth_free_all_queues(adapter);
+	return rc;
 }
 
 static int ibmveth_open(struct net_device *netdev)
