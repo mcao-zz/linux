@@ -260,6 +260,7 @@ struct ibmveth_rx_queue_stats {
 	u64 replenish_no_mem;
 	u64 replenish_add_buff_failure;
 	u64 replenish_add_buff_success;
+	u64 copybreak_no_mem;
 } ____cacheline_aligned_in_smp;
 
 /* Per-queue TX counters; serialized by the stack's per-queue TX lock. */
