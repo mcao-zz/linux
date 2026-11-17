@@ -1220,6 +1220,21 @@ static long ibmveth_free_logical_lan(struct ibmveth_adapter *adapter)
 	return rc;
 }
 
+static void ibmveth_set_rx_queue_handle(struct ibmveth_adapter *adapter,
+					int queue_index, u64 handle)
+{
+	/* PHYP handle; 0 can be valid. queue_registered[] is the sentinel. */
+	adapter->queue_handle[queue_index] = handle;
+	adapter->queue_registered[queue_index] = true;
+}
+
+static void ibmveth_clear_rx_queue_handle(struct ibmveth_adapter *adapter,
+					  int queue_index)
+{
+	adapter->queue_registered[queue_index] = false;
+	adapter->queue_handle[queue_index] = 0;
+}
+
 static long ibmveth_register_logical_lan(struct ibmveth_adapter *adapter,
 					 union ibmveth_buf_desc rxq_desc,
 					 u64 mac_address)
@@ -1229,6 +1244,7 @@ static long ibmveth_register_logical_lan(struct ibmveth_adapter *adapter,
 	unsigned long ua = adapter->vdev->unit_address;
 	unsigned long buf_dma = adapter->buffer_list_dma[0];
 	unsigned long filter_dma = adapter->filter_list_dma;
+	unsigned long qh0;
 
 	/*
 	 * After a kexec the adapter will still be open, so our attempt to
@@ -1236,9 +1252,23 @@ static long ibmveth_register_logical_lan(struct ibmveth_adapter *adapter,
 	 * try again, but only once.
 	 */
 retry:
-	rc = h_register_logical_lan(ua, buf_dma, rxq_desc.desc, filter_dma,
-				    mac_address);
-	netdev_dbg(adapter->netdev, "h_register_logical_lan rc=%ld\n", rc);
+	/* In multi-queue mode, obtain a queue handle for queue 0 so all RX
+	 * queues can use the same per-queue buffer hypercalls.
+	 */
+	if (adapter->multi_queue) {
+		rc = h_register_logical_lan_with_handle(ua, buf_dma,
+							rxq_desc.desc,
+							filter_dma,
+							mac_address,
+							&qh0);
+		if (rc == H_SUCCESS)
+			ibmveth_set_rx_queue_handle(adapter, 0, qh0);
+	} else {
+		rc = h_register_logical_lan(ua, buf_dma, rxq_desc.desc,
+					    filter_dma, mac_address);
+	}
+	netdev_dbg(adapter->netdev, "h_register_logical_lan%s rc=%ld\n",
+		   adapter->multi_queue ? "_with_handle" : "", rc);
 
 	if (rc != H_SUCCESS && try_again) {
 		rc = ibmveth_free_logical_lan(adapter);
@@ -1257,16 +1287,21 @@ retry:
  *
  * Issues one H_FREE_LOGICAL_LAN, which frees the logical LAN and every
  * RX queue registered under it. A failure is logged; the caller still
- * frees the RX memory, as close() always has.
+ * frees the RX memory, as close() always has. Queue handles are cleared
+ * either way.
  */
 static void ibmveth_free_all_queues(struct ibmveth_adapter *adapter)
 {
 	long lpar_rc;
+	int i;
 
 	lpar_rc = ibmveth_free_logical_lan(adapter);
 	if (lpar_rc != H_SUCCESS)
 		netdev_err(adapter->netdev,
 			   "h_free_logical_lan failed: %ld\n", lpar_rc);
+
+	for (i = 0; i < adapter->num_rx_queues; i++)
+		ibmveth_clear_rx_queue_handle(adapter, i);
 }
 
 /**
