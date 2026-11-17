@@ -164,6 +164,28 @@ static int ibmveth_rxq_csum_good(struct ibmveth_adapter *adapter,
 	return ibmveth_rxq_flags(adapter, queue_index) & IBMVETH_RXQ_CSUM_GOOD;
 }
 
+/* Lockless IRQ/poll readers vs resize publishers. */
+static unsigned int
+ibmveth_get_num_rx_queues(const struct ibmveth_adapter *adapter)
+{
+	/*
+	 * Pairs with the release in ibmveth_publish_num_rx_queues(): a reader
+	 * that sees the new count also sees the per-queue state behind it.
+	 */
+	return smp_load_acquire(&adapter->num_rx_queues);
+}
+
+static void
+ibmveth_publish_num_rx_queues(struct ibmveth_adapter *adapter,
+			      unsigned int num)
+{
+	/*
+	 * Pairs with the acquire in ibmveth_get_num_rx_queues(): per-queue
+	 * state must be visible to a reader before it observes the new count.
+	 */
+	smp_store_release(&adapter->num_rx_queues, num);
+}
+
 static unsigned int ibmveth_real_max_tx_queues(void)
 {
 	unsigned int n_cpu = num_online_cpus();
@@ -241,7 +263,7 @@ ibmveth_alloc_rx_queues(struct ibmveth_adapter *adapter, int rxq_entries)
 	struct net_device *netdev = adapter->netdev;
 	int i;
 
-	for (i = 0; i < adapter->num_rx_queues; i++) {
+	for (i = 0; i < ibmveth_get_num_rx_queues(adapter); i++) {
 		adapter->buffer_list_addr[i] =
 			(void *)get_zeroed_page(GFP_KERNEL);
 		if (!adapter->buffer_list_addr[i]) {
@@ -292,7 +314,7 @@ ibmveth_alloc_rx_queues(struct ibmveth_adapter *adapter, int rxq_entries)
 	}
 
 	netdev_dbg(netdev, "allocated %u RX queue(s) with %d entries each\n",
-		   adapter->num_rx_queues, rxq_entries);
+		   ibmveth_get_num_rx_queues(adapter), rxq_entries);
 
 	return 0;
 
@@ -336,9 +358,9 @@ ibmveth_cleanup_rx_resources(struct ibmveth_adapter *adapter)
 	int i;
 
 	netdev_dbg(adapter->netdev, "cleaning up %u RX queue(s)\n",
-		   adapter->num_rx_queues);
+		   ibmveth_get_num_rx_queues(adapter));
 
-	for (i = 0; i < adapter->num_rx_queues; i++) {
+	for (i = 0; i < ibmveth_get_num_rx_queues(adapter); i++) {
 		if (adapter->buffer_list_addr[i]) {
 			dma_unmap_single(dev, adapter->buffer_list_dma[i],
 					 4096, DMA_BIDIRECTIONAL);
@@ -497,7 +519,7 @@ ibmveth_dispose_subordinate_irq_mappings(struct ibmveth_adapter *adapter)
 {
 	int i;
 
-	for (i = 1; i < adapter->num_rx_queues; i++)
+	for (i = 1; i < ibmveth_get_num_rx_queues(adapter); i++)
 		ibmveth_dispose_subordinate_irq_mapping(adapter, i);
 }
 
@@ -520,7 +542,7 @@ static int
 ibmveth_setup_rx_interrupts(struct ibmveth_adapter *adapter)
 {
 	struct net_device *netdev = adapter->netdev;
-	int i, rc, num = adapter->num_rx_queues;
+	int i, rc, num = ibmveth_get_num_rx_queues(adapter);
 
 	for (i = 0; i < num; i++) {
 		if (!adapter->queue_irq[i]) {
@@ -614,26 +636,26 @@ ibmveth_cleanup_rx_interrupts(struct ibmveth_adapter *adapter)
 	if (!adapter->rx_irq_setup)
 		return;
 
-	for (i = 0; i < adapter->num_rx_queues; i++) {
+	for (i = 0; i < ibmveth_get_num_rx_queues(adapter); i++) {
 		if (!adapter->queue_irq[i])
 			continue;
 		ibmveth_disable_irq(adapter, i);
 		synchronize_irq(adapter->queue_irq[i]);
 	}
 
-	for (i = 0; i < adapter->num_rx_queues; i++)
+	for (i = 0; i < ibmveth_get_num_rx_queues(adapter); i++)
 		napi_disable(&adapter->napi[i]);
 
 	synchronize_net();
 
-	for (i = 0; i < adapter->num_rx_queues; i++) {
+	for (i = 0; i < ibmveth_get_num_rx_queues(adapter); i++) {
 		if (!adapter->queue_irq[i])
 			continue;
 		ibmveth_disable_irq(adapter, i);
 		synchronize_irq(adapter->queue_irq[i]);
 	}
 
-	for (i = 0; i < adapter->num_rx_queues; i++) {
+	for (i = 0; i < ibmveth_get_num_rx_queues(adapter); i++) {
 		if (adapter->queue_irq[i])
 			free_irq(adapter->queue_irq[i], &adapter->napi[i]);
 	}
@@ -1110,7 +1132,7 @@ ibmveth_alloc_buffer_pools(struct ibmveth_adapter *adapter)
 	int i, q, rc;
 
 	/* Initialize pool metadata for queues 1..N from queue 0 settings */
-	for (q = 1; q < adapter->num_rx_queues; q++) {
+	for (q = 1; q < ibmveth_get_num_rx_queues(adapter); q++) {
 		for (i = 0; i < IBMVETH_NUM_BUFF_POOLS; i++) {
 			struct ibmveth_buff_pool *src =
 				&adapter->rx_buff_pool[0][i];
@@ -1126,7 +1148,7 @@ ibmveth_alloc_buffer_pools(struct ibmveth_adapter *adapter)
 	}
 
 	/* Allocate actual buffers for all queues */
-	for (q = 0; q < adapter->num_rx_queues; q++) {
+	for (q = 0; q < ibmveth_get_num_rx_queues(adapter); q++) {
 		rc = ibmveth_alloc_queue_buffer_pools(adapter, q);
 		if (rc) {
 			/* Free pools for all previous queues */
@@ -1137,7 +1159,7 @@ ibmveth_alloc_buffer_pools(struct ibmveth_adapter *adapter)
 	}
 
 	netdev_dbg(netdev, "allocated buffer pools for %u queue(s)\n",
-		   adapter->num_rx_queues);
+		   ibmveth_get_num_rx_queues(adapter));
 	return 0;
 }
 
@@ -1153,11 +1175,11 @@ ibmveth_free_buffer_pools(struct ibmveth_adapter *adapter)
 	int q;
 
 	/* Free buffer pools for all queues */
-	for (q = 0; q < adapter->num_rx_queues; q++)
+	for (q = 0; q < ibmveth_get_num_rx_queues(adapter); q++)
 		ibmveth_free_queue_buffer_pools(adapter, q);
 
 	netdev_dbg(adapter->netdev, "freed buffer pools for %u queue(s)\n",
-		   adapter->num_rx_queues);
+		   ibmveth_get_num_rx_queues(adapter));
 }
 
 /**
@@ -1449,8 +1471,142 @@ static void ibmveth_free_all_queues(struct ibmveth_adapter *adapter)
 		netdev_err(adapter->netdev,
 			   "h_free_logical_lan failed: %ld\n", lpar_rc);
 
-	for (i = 0; i < adapter->num_rx_queues; i++)
+	for (i = 0; i < ibmveth_get_num_rx_queues(adapter); i++)
 		ibmveth_clear_rx_queue_handle(adapter, i);
+}
+
+static long ibmveth_free_logical_lan_queue(struct ibmveth_adapter *adapter,
+					   unsigned long handle)
+{
+	long rc;
+
+	do {
+		rc = h_free_logical_lan_queue(adapter->vdev->unit_address,
+					      handle);
+	} while (H_IS_LONG_BUSY(rc) || rc == H_BUSY);
+
+	return rc;
+}
+
+/**
+ * ibmveth_register_logical_lan_queue - Register subordinate queue with
+ * hypervisor
+ * @adapter: ibmveth adapter structure
+ * @rxq_desc: Receive queue descriptor
+ * @queue_index: RX queue index (1..N for subordinate queues)
+ *
+ * Registers a subordinate receive queue using H_REG_LOGICAL_LAN_QUEUE.
+ * On success, stores the queue handle and virtual IRQ in the adapter.
+ * If IRQ mapping fails after a successful hypervisor registration, the
+ * queue is freed before returning.
+ *
+ * Return: H_SUCCESS on success, negative errno on IRQ mapping failure,
+ *         hypervisor error code otherwise
+ */
+static int
+ibmveth_register_logical_lan_queue(struct ibmveth_adapter *adapter,
+				   union ibmveth_buf_desc rxq_desc,
+				   int queue_index)
+{
+	unsigned long handle, hwirq;
+	unsigned int virq;
+	long lpar_rc;
+	unsigned long ua = adapter->vdev->unit_address;
+	unsigned long bl = adapter->buffer_list_dma[queue_index];
+
+	netdev_dbg(adapter->netdev,
+		   "register queue %d: ua=0x%lx bl=0x%lx rxq=0x%llx\n",
+		   queue_index, ua, bl, rxq_desc.desc);
+	do {
+		lpar_rc = h_register_logical_lan_queue(ua, bl,
+						       rxq_desc.desc, &handle,
+						       &hwirq);
+	} while (H_IS_LONG_BUSY(lpar_rc) || (lpar_rc == H_BUSY));
+	netdev_dbg(adapter->netdev,
+		   "h_register_logical_lan_queue queue %d rc=%ld\n",
+		   queue_index, lpar_rc);
+
+	if (lpar_rc == H_SUCCESS) {
+		virq = irq_create_mapping(NULL, hwirq);
+		if (!virq) {
+			long free_rc;
+
+			netdev_err(adapter->netdev,
+				   "Failed to map IRQ for queue %d (hwirq=%lu)\n",
+				   queue_index, hwirq);
+			free_rc = ibmveth_free_logical_lan_queue(adapter,
+								 handle);
+			if (free_rc != H_SUCCESS)
+				netdev_err(adapter->netdev,
+					   "h_free_logical_lan_queue failed for queue %d after IRQ map failure: rc=0x%lx\n",
+					   queue_index, free_rc);
+			return -EINVAL;
+		}
+
+		ibmveth_set_rx_queue_handle(adapter, queue_index, handle);
+		adapter->queue_irq[queue_index] = virq;
+
+		netdev_dbg(adapter->netdev,
+			   "queue %d registered: handle=0x%llx irq=%u\n",
+			   queue_index, adapter->queue_handle[queue_index],
+			   adapter->queue_irq[queue_index]);
+		return H_SUCCESS;
+	}
+
+	if (lpar_rc == H_FUNCTION)
+		netdev_err(adapter->netdev,
+			   "h_register_logical_lan_queue H_FUNCTION for queue %d (firmware MQ unsupported)\n",
+			   queue_index);
+
+	netdev_err(adapter->netdev,
+		   "h_register_logical_lan_queue failed for queue %d with %ld\n",
+		   queue_index, lpar_rc);
+	netdev_err(adapter->netdev,
+		   "queue %d params: unit_addr=0x%x buffer_list_dma=0x%llx rxq_desc=0x%llx\n",
+		   queue_index, adapter->vdev->unit_address,
+		   adapter->buffer_list_dma[queue_index],
+		   rxq_desc.desc);
+
+	return lpar_rc;
+}
+
+/**
+ * ibmveth_register_single_rx_queue - Register one subordinate RX queue
+ * @adapter: ibmveth adapter structure
+ * @queue_idx: Queue index to register (1..N)
+ *
+ * Builds the queue descriptor and registers with the hypervisor via
+ * ibmveth_register_logical_lan_queue().
+ *
+ * Return: 0 on success, -EOPNOTSUPP if firmware rejects MQ (H_FUNCTION),
+ *         -EIO on other failures
+ */
+static int
+ibmveth_register_single_rx_queue(struct ibmveth_adapter *adapter,
+				 int queue_idx)
+{
+	struct net_device *netdev = adapter->netdev;
+	union ibmveth_buf_desc rxq_desc;
+	long lpar_rc;
+
+	rxq_desc.fields.flags_len = IBMVETH_BUF_VALID |
+				    adapter->rx_queue[queue_idx].queue_len;
+	rxq_desc.fields.address = adapter->rx_queue[queue_idx].queue_dma;
+
+	lpar_rc = ibmveth_register_logical_lan_queue(adapter, rxq_desc,
+						     queue_idx);
+	if (lpar_rc != H_SUCCESS) {
+		netdev_err(netdev, "Failed to register queue %d: rc=%ld\n",
+			   queue_idx, lpar_rc);
+		if (lpar_rc == H_FUNCTION)
+			return -EOPNOTSUPP;
+		return -EIO;
+	}
+
+	netdev_dbg(netdev, "Registered queue %d with handle 0x%llx\n",
+		   queue_idx, adapter->queue_handle[queue_idx]);
+
+	return 0;
 }
 
 /**
@@ -1458,10 +1614,12 @@ static void ibmveth_free_all_queues(struct ibmveth_adapter *adapter)
  * @adapter: ibmveth adapter structure
  * @mac_address: MAC address for device registration
  *
- * Registers queue 0 via ibmveth_register_logical_lan(). Subordinate queue
- * registration is added when multi-queue RX is enabled.
+ * Registers queue 0 via ibmveth_register_logical_lan(), then subordinate
+ * queues 1..N when multi-queue mode is enabled.
  *
- * Return: 0 on success, -ENONET if queue 0 registration fails
+ * Return: 0 on success, -ENONET if queue 0 registration fails,
+ *         -EOPNOTSUPP if firmware rejects a subordinate queue
+ *         (H_FUNCTION), -EIO on other subordinate failures
  */
 static int
 ibmveth_register_rx_queues(struct ibmveth_adapter *adapter, u64 mac_address)
@@ -1469,7 +1627,8 @@ ibmveth_register_rx_queues(struct ibmveth_adapter *adapter, u64 mac_address)
 	struct net_device *netdev = adapter->netdev;
 	union ibmveth_buf_desc rxq_desc;
 	long lpar_rc;
-	int rc;
+	unsigned int num;
+	int i, rc;
 
 	rxq_desc.fields.flags_len = IBMVETH_BUF_VALID |
 				    adapter->rx_queue[0].queue_len;
@@ -1494,9 +1653,32 @@ ibmveth_register_rx_queues(struct ibmveth_adapter *adapter, u64 mac_address)
 		return -ENONET;
 	}
 
+	num = ibmveth_get_num_rx_queues(adapter);
+	if (num == 1 || !adapter->multi_queue) {
+		netdev_dbg(netdev,
+			   "registered 1 RX queue with hypervisor (single-queue mode)\n");
+		return 0;
+	}
+
+	netdev_dbg(netdev, "Registering %u subordinate queues (1-%u)\n",
+		   num - 1, num - 1);
+
+	for (i = 1; i < num; i++) {
+		rc = ibmveth_register_single_rx_queue(adapter, i);
+		if (rc)
+			goto err_unregister;
+	}
+
 	netdev_dbg(netdev,
-		   "registered 1 RX queue with hypervisor (single-queue mode)\n");
+		   "registered %u RX queues with hypervisor (multi-queue mode)\n",
+		   num);
+
 	return 0;
+
+err_unregister:
+	ibmveth_dispose_subordinate_irq_mappings(adapter);
+	ibmveth_free_all_queues(adapter);
+	return rc;
 }
 
 static int ibmveth_open(struct net_device *netdev)
@@ -1539,7 +1721,8 @@ static int ibmveth_open(struct net_device *netdev)
 	if (rc)
 		goto out_free_buffer_pools;
 
-	rc = netif_set_real_num_rx_queues(netdev, adapter->num_rx_queues);
+	rc = netif_set_real_num_rx_queues(netdev,
+					  ibmveth_get_num_rx_queues(adapter));
 	if (rc) {
 		netdev_err(netdev, "failed to set number of rx queues\n");
 		goto out_unregister_queues;
@@ -2832,7 +3015,7 @@ static int ibmveth_probe(struct vio_dev *dev, const struct vio_device_id *id)
 		netdev->features |= NETIF_F_FRAGLIST;
 	}
 
-	adapter->num_rx_queues = IBMVETH_DEFAULT_RX_QUEUES;
+	ibmveth_publish_num_rx_queues(adapter, IBMVETH_DEFAULT_RX_QUEUES);
 
 	if (ret == H_SUCCESS &&
 	    (ret_attr & IBMVETH_ILLAN_RX_MULTI_BUFF_SUPPORT)) {
