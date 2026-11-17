@@ -1529,8 +1529,9 @@ static int ibmveth_open(struct net_device *netdev)
 	if (rc)
 		goto out_unregister_queues;
 
-	netdev_dbg(netdev, "initial replenish cycle\n");
-	ibmveth_schedule_rx_queue(adapter, 0);
+	/* Each queue's first poll posts its buffers and unmasks it. */
+	for (i = 0; i < adapter->num_rx_queues; i++)
+		ibmveth_schedule_rx_queue(adapter, i);
 
 	/* netif_tx_lock() takes each txq lock, so a sender that then sees
 	 * DRV_XOFF clear under its txq lock also sees the LTBs set up above.
@@ -3146,8 +3147,12 @@ static int ibmveth_resume(struct device *dev)
 {
 	struct net_device *netdev = dev_get_drvdata(dev);
 	struct ibmveth_adapter *adapter = netdev_priv(netdev);
+	unsigned int num = adapter->num_rx_queues;
+	int i;
 
-	ibmveth_schedule_rx_queue(adapter, 0);
+	for (i = 0; i < num; i++)
+		ibmveth_schedule_rx_queue(adapter, i);
+
 	return 0;
 }
 
