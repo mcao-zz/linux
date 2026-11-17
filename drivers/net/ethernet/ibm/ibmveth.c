@@ -21,6 +21,8 @@
 #include <linux/skbuff.h>
 #include <linux/init.h>
 #include <linux/interrupt.h>
+#include <linux/irq.h>
+#include <linux/irqdomain.h>
 #include <linux/mm.h>
 #include <linux/pm.h>
 #include <linux/ethtool.h>
@@ -346,17 +348,32 @@ ibmveth_cleanup_rx_resources(struct ibmveth_adapter *adapter)
  * @queue_index: RX queue index
  * @enable: true to unmask, false to mask
  *
+ * Queue 0 uses h_vio_signal(); subordinate queues use H_VIOCTL.
+ *
  * Return: 0 on success, -EIO on failure
  */
 static int
 ibmveth_toggle_irq(struct ibmveth_adapter *adapter, int queue_index,
 		   bool enable)
 {
-	const char *action = enable ? "enable" : "disable";
 	unsigned long h_rc;
+	unsigned long irq = adapter->queue_irq[queue_index];
+	const char *action = enable ? "enable" : "disable";
 
-	h_rc = h_vio_signal(adapter->vdev->unit_address,
-			    enable ? VIO_IRQ_ENABLE : VIO_IRQ_DISABLE);
+	if (queue_index == 0) {
+		h_rc = h_vio_signal(adapter->vdev->unit_address,
+				    enable ? VIO_IRQ_ENABLE : VIO_IRQ_DISABLE);
+	} else {
+		irq_hw_number_t hwirq = irqd_to_hwirq(irq_get_irq_data(irq));
+		u64 vioctl_cmd = enable ? H_ENABLE_VIO_INTERRUPT :
+			H_DISABLE_VIO_INTERRUPT;
+
+		h_rc = plpar_hcall_norets(H_VIOCTL,
+					  adapter->vdev->unit_address,
+					  vioctl_cmd,
+					  hwirq, 0, 0);
+	}
+
 	if (h_rc) {
 		dev_err_ratelimited(&adapter->netdev->dev,
 				    "Failed to %s IRQ for queue %d, rc=0x%lx\n",
@@ -393,11 +410,39 @@ ibmveth_enable_irq(struct ibmveth_adapter *adapter, int queue_index)
 }
 
 /**
+ * ibmveth_dispose_subordinate_irq_mappings - Drop virq mappings for queues 1..N
+ * @adapter: ibmveth adapter structure
+ *
+ * Subordinate queues get mappings from irq_create_mapping() during PHYP
+ * registration; queue 0 uses netdev->irq and is left alone. Call after
+ * free_irq(), or after a registration failure that may have mapped only
+ * some of the queues.
+ */
+static void
+ibmveth_dispose_subordinate_irq_mappings(struct ibmveth_adapter *adapter)
+{
+	int i;
+
+	for (i = 1; i < adapter->num_rx_queues; i++) {
+		if (adapter->queue_irq[i]) {
+			irq_dispose_mapping(adapter->queue_irq[i]);
+			adapter->queue_irq[i] = 0;
+		}
+	}
+}
+
+/**
  * ibmveth_setup_rx_interrupts - Register IRQs and enable NAPI
  * @adapter: ibmveth adapter structure
  *
- * Leaves the queues masked in PHYP; the caller kicks NAPI, and the first
- * poll unmasks.
+ * Registers interrupt handlers for all RX queues, enables NAPI, then
+ * enables hypervisor interrupt delivery for multi-queue mode after
+ * every queue has a Linux handler installed. For multi-queue open the
+ * caller should replenish RX buffers before this helper so traffic
+ * during open is not dropped (PHYP only interrupts after a successful
+ * enqueue, which needs buffers). Single-queue open leaves PHYP masked
+ * here and kicks NAPI afterward (classic path: first poll posts then
+ * enables).
  *
  * Return: 0 on success, negative error code on failure
  */
@@ -421,8 +466,28 @@ ibmveth_setup_rx_interrupts(struct ibmveth_adapter *adapter)
 	for (i = 0; i < num; i++)
 		napi_enable(&adapter->napi[i]);
 
+	if (adapter->multi_queue && num > 1) {
+		for (i = 0; i < num; i++) {
+			rc = ibmveth_enable_irq(adapter, i);
+			if (rc)
+				goto err_disable_napi;
+		}
+	}
+
 	return 0;
 
+err_disable_napi:
+	/* Wait for the poll tail, then remask; an in-flight poll can
+	 * unmask after napi_complete_done().
+	 */
+	for (i = 0; i < num; i++)
+		napi_disable(&adapter->napi[i]);
+	synchronize_net();
+	for (i = 0; i < num; i++) {
+		ibmveth_disable_irq(adapter, i);
+		synchronize_irq(adapter->queue_irq[i]);
+	}
+	i = num;
 err_free_irqs:
 	while (--i >= 0)
 		free_irq(adapter->queue_irq[i], &adapter->napi[i]);
@@ -459,6 +524,8 @@ ibmveth_cleanup_rx_interrupts(struct ibmveth_adapter *adapter)
 
 	for (i = 0; i < adapter->num_rx_queues; i++)
 		free_irq(adapter->queue_irq[i], &adapter->napi[i]);
+
+	ibmveth_dispose_subordinate_irq_mappings(adapter);
 }
 
 /**
@@ -1276,7 +1343,7 @@ static int ibmveth_open(struct net_device *netdev)
 	 */
 	rc = ibmveth_setup_rx_interrupts(adapter);
 	if (rc)
-		goto out_free_all_queues;
+		goto out_unregister_queues;
 
 	netdev_dbg(netdev, "initial replenish cycle\n");
 	ibmveth_schedule_rx_queue(adapter, 0);
@@ -1299,7 +1366,8 @@ static int ibmveth_open(struct net_device *netdev)
 
 out_cleanup_rx_interrupts:
 	ibmveth_cleanup_rx_interrupts(adapter);
-out_free_all_queues:
+out_unregister_queues:
+	ibmveth_dispose_subordinate_irq_mappings(adapter);
 	ibmveth_free_all_queues(adapter);
 out_free_buffer_pools:
 	ibmveth_free_buffer_pools(adapter);
