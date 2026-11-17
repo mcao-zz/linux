@@ -37,6 +37,7 @@
 #include <asm/firmware.h>
 #include <net/tcp.h>
 #include <net/ip6_checksum.h>
+#include <net/netdev_queues.h>
 
 #include "ibmveth.h"
 
@@ -2950,6 +2951,87 @@ static void ibmveth_get_stats64(struct net_device *dev,
 	}
 }
 
+static void ibmveth_get_queue_stats_rx(struct net_device *dev, int idx,
+				       struct netdev_queue_stats_rx *stats)
+{
+	struct ibmveth_adapter *adapter = netdev_priv(dev);
+	u64 no_buffer;
+
+	stats->packets = READ_ONCE(adapter->rx_qstats[idx].packets);
+	stats->bytes = READ_ONCE(adapter->rx_qstats[idx].bytes);
+	/* Frames PHYP dropped for lack of a posted buffer, on the live
+	 * page and on pages this queue already released.
+	 */
+	no_buffer = ibmveth_rx_no_buffer_total(adapter, idx);
+	stats->hw_drops = no_buffer;
+	stats->hw_drop_overruns = no_buffer;
+	stats->alloc_fail = READ_ONCE(adapter->rx_qstats[idx].replenish_no_mem);
+}
+
+static void ibmveth_get_queue_stats_tx(struct net_device *dev, int idx,
+				       struct netdev_queue_stats_tx *stats)
+{
+	struct ibmveth_adapter *adapter = netdev_priv(dev);
+
+	stats->packets = READ_ONCE(adapter->tx_qstats[idx].packets);
+	stats->bytes = READ_ONCE(adapter->tx_qstats[idx].bytes);
+	/* TX hw_drops left unset: dropped_packets includes
+	 * software xmit rejects that never reached PHYP.
+	 */
+}
+
+/**
+ * ibmveth_get_base_stats - account for traffic not on a live queue
+ * @dev: network device
+ * @rx: RX base statistics storage
+ * @tx: TX base statistics storage
+ *
+ * The core sums get_queue_stats_{rx,tx}() only below
+ * real_num_{rx,tx}_queues, while ibmveth_get_stats64() walks every
+ * slot. Report the slots at or above real_num here so the two agree
+ * after the queue count goes down.
+ *
+ * Every field the queue callbacks set must be set here too: the core
+ * drops a field from the device total if the base leaves it unset.
+ */
+static void ibmveth_get_base_stats(struct net_device *dev,
+				   struct netdev_queue_stats_rx *rx,
+				   struct netdev_queue_stats_tx *tx)
+{
+	struct ibmveth_adapter *adapter = netdev_priv(dev);
+	unsigned int i;
+
+	rx->packets = 0;
+	rx->bytes = 0;
+	rx->alloc_fail = 0;
+	rx->hw_drops = 0;
+	rx->hw_drop_overruns = 0;
+	tx->packets = 0;
+	tx->bytes = 0;
+
+	for (i = dev->real_num_rx_queues; i < IBMVETH_MAX_RX_QUEUES; i++) {
+		u64 no_buffer = ibmveth_rx_no_buffer_total(adapter, i);
+
+		rx->packets += READ_ONCE(adapter->rx_qstats[i].packets);
+		rx->bytes += READ_ONCE(adapter->rx_qstats[i].bytes);
+		rx->hw_drops += no_buffer;
+		rx->hw_drop_overruns += no_buffer;
+		rx->alloc_fail +=
+			READ_ONCE(adapter->rx_qstats[i].replenish_no_mem);
+	}
+
+	for (i = dev->real_num_tx_queues; i < IBMVETH_MAX_QUEUES; i++) {
+		tx->packets += READ_ONCE(adapter->tx_qstats[i].packets);
+		tx->bytes += READ_ONCE(adapter->tx_qstats[i].bytes);
+	}
+}
+
+static const struct netdev_stat_ops ibmveth_stat_ops = {
+	.get_queue_stats_rx	= ibmveth_get_queue_stats_rx,
+	.get_queue_stats_tx	= ibmveth_get_queue_stats_tx,
+	.get_base_stats		= ibmveth_get_base_stats,
+};
+
 static const struct net_device_ops ibmveth_netdev_ops = {
 	.ndo_open		= ibmveth_open,
 	.ndo_stop		= ibmveth_close,
@@ -3054,6 +3136,7 @@ static int ibmveth_probe(struct vio_dev *dev, const struct vio_device_id *id)
 	netdev->irq = dev->irq;
 	netdev->netdev_ops = &ibmveth_netdev_ops;
 	netdev->ethtool_ops = &netdev_ethtool_ops;
+	netdev->stat_ops = &ibmveth_stat_ops;
 	SET_NETDEV_DEV(netdev, &dev->dev);
 	netdev->hw_features = NETIF_F_SG;
 	if (vio_get_attribute(dev, "ibm,illan-options", NULL) != NULL) {
