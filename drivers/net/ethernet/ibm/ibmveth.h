@@ -250,8 +250,12 @@ struct ibmveth_rx_queue_stats {
 	u64 large_packets;
 	u64 invalid_buffers;
 	u64 dropped;
-	/* PHYP's drop count from the buffer-list page. */
+	/* PHYP's per-page absolute drop count for the live page. */
 	u64 no_buffer_drops;
+	/* Absolutes from retired pages or seen before a lower reading. */
+	u64 no_buffer_retired;
+	/* no_buffer_retired + no_buffer_drops, for lockless readers. */
+	u64 no_buffer_total;
 	u64 replenish_task_cycles;
 	u64 replenish_no_mem;
 	u64 replenish_add_buff_failure;

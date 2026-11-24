@@ -79,6 +79,8 @@ MODULE_PARM_DESC(old_large_send,
  * @IBMVETH_STAT_ADAPTER: plain u64 in struct ibmveth_adapter
  * @IBMVETH_STAT_RX_QSUM: per-queue u64, summed over rx_qstats[]
  * @IBMVETH_STAT_TX_QSUM: per-queue u64, summed over tx_qstats[]
+ * @IBMVETH_STAT_RX_NO_BUFFER: running total plus the value from the
+ *	queue's last replenish pass (see ibmveth_sum_rx_no_buffer())
  *
  * Counters live per queue so that queues never share a field.
  */
@@ -86,6 +88,7 @@ enum ibmveth_stat_src {
 	IBMVETH_STAT_ADAPTER,
 	IBMVETH_STAT_RX_QSUM,
 	IBMVETH_STAT_TX_QSUM,
+	IBMVETH_STAT_RX_NO_BUFFER,
 };
 
 struct ibmveth_stat {
@@ -120,7 +123,8 @@ static struct ibmveth_stat ibmveth_stats[] = {
 	IBMVETH_RXQ_STAT("replenish_add_buff_success",
 			 replenish_add_buff_success),
 	IBMVETH_RXQ_STAT("rx_invalid_buffer", invalid_buffers),
-	IBMVETH_RXQ_STAT("rx_no_buffer", no_buffer_drops),
+	/* off unused; summed in ibmveth_ethtool_adapter_stat() */
+	{ "rx_no_buffer", IBMVETH_STAT_RX_NO_BUFFER, 0 },
 	IBMVETH_ADAPTER_STAT("tx_map_failed", tx_map_failed),
 	IBMVETH_TXQ_STAT("tx_send_failed", send_failures),
 	IBMVETH_ADAPTER_STAT("fw_enabled_ipv4_csum", fw_ipv4_csum_support),
@@ -933,11 +937,45 @@ hcall_failure:
 static void ibmveth_update_rx_no_buffer(struct ibmveth_adapter *adapter,
 					int queue_index)
 {
+	struct ibmveth_rx_queue_stats *qstats;
 	__be64 *p;
+	u64 drops;
 
 	p = adapter->buffer_list_addr[queue_index] + 4096 - 8;
-	WRITE_ONCE(adapter->rx_qstats[queue_index].no_buffer_drops,
-		   be64_to_cpu(READ_ONCE(*p)));
+	drops = be64_to_cpu(READ_ONCE(*p));
+
+	qstats = &adapter->rx_qstats[queue_index];
+
+	/* PHYP's count only grows while the queue is registered, and the
+	 * free path retires it; if it ever reads lower, keep what was seen.
+	 */
+	if (drops < qstats->no_buffer_drops)
+		IBMVETH_STAT_ADD(qstats->no_buffer_retired,
+				 qstats->no_buffer_drops);
+	WRITE_ONCE(qstats->no_buffer_drops, drops);
+	WRITE_ONCE(qstats->no_buffer_total,
+		   qstats->no_buffer_retired + drops);
+}
+
+static u64 ibmveth_rx_no_buffer_total(struct ibmveth_adapter *adapter,
+				      int queue_index)
+{
+	return READ_ONCE(adapter->rx_qstats[queue_index].no_buffer_total);
+}
+
+/*
+ * Fold the last sample into retired once the queue is freed: the next
+ * registration restarts PHYP's counter at 0. The fold leaves
+ * no_buffer_total unchanged.
+ */
+static void ibmveth_retire_rx_no_buffer(struct ibmveth_adapter *adapter,
+					int queue_index)
+{
+	struct ibmveth_rx_queue_stats *qstats;
+
+	qstats = &adapter->rx_qstats[queue_index];
+	IBMVETH_STAT_ADD(qstats->no_buffer_retired, qstats->no_buffer_drops);
+	WRITE_ONCE(qstats->no_buffer_drops, 0);
 }
 
 /* replenish routine */
@@ -1389,15 +1427,25 @@ retry:
  * Issues one H_FREE_LOGICAL_LAN, which frees the logical LAN and every
  * RX queue registered under it. A failure is logged; the caller still
  * frees the RX memory, as close() always has.
+ *
+ * PHYP zeroes the buffer-list pages on free, so each queue's no-buffer
+ * counter is sampled before H_FREE_LOGICAL_LAN and retired after it.
  */
 static void ibmveth_free_all_queues(struct ibmveth_adapter *adapter)
 {
 	long lpar_rc;
+	int i;
+
+	for (i = 0; i < adapter->num_rx_queues; i++)
+		ibmveth_update_rx_no_buffer(adapter, i);
 
 	lpar_rc = ibmveth_free_logical_lan(adapter);
 	if (lpar_rc != H_SUCCESS)
 		netdev_err(adapter->netdev,
 			   "h_free_logical_lan failed: %ld\n", lpar_rc);
+
+	for (i = 0; i < adapter->num_rx_queues; i++)
+		ibmveth_retire_rx_no_buffer(adapter, i);
 }
 
 /**
@@ -1606,7 +1654,6 @@ out:
 static int ibmveth_close(struct net_device *netdev)
 {
 	struct ibmveth_adapter *adapter = netdev_priv(netdev);
-	int i;
 
 	/* change_mtu, pool sysfs, set_csum and set_tso call close() and
 	 * open() directly. If that open() fails, IFF_UP stays set and
@@ -1623,8 +1670,6 @@ static int ibmveth_close(struct net_device *netdev)
 	ibmveth_cleanup_rx_interrupts(adapter);
 
 	ibmveth_free_all_queues(adapter);
-	for (i = 0; i < adapter->num_rx_queues; i++)
-		ibmveth_update_rx_no_buffer(adapter, i);
 	ibmveth_free_buffer_pools(adapter);
 	ibmveth_cleanup_rx_resources(adapter);
 	ibmveth_free_filter_list(adapter);
@@ -1908,6 +1953,17 @@ static u64 ibmveth_sum_rx_qstat(struct ibmveth_adapter *adapter, size_t off)
 	return total;
 }
 
+static u64 ibmveth_sum_rx_no_buffer(struct ibmveth_adapter *adapter)
+{
+	u64 total = 0;
+	int i;
+
+	for (i = 0; i < IBMVETH_MAX_RX_QUEUES; i++)
+		total += ibmveth_rx_no_buffer_total(adapter, i);
+
+	return total;
+}
+
 static u64 ibmveth_sum_tx_qstat(struct ibmveth_adapter *adapter, size_t off)
 {
 	u64 total = 0;
@@ -1932,6 +1988,8 @@ static u64 ibmveth_ethtool_adapter_stat(struct ibmveth_adapter *adapter,
 		return ibmveth_sum_rx_qstat(adapter, stat->off);
 	case IBMVETH_STAT_TX_QSUM:
 		return ibmveth_sum_tx_qstat(adapter, stat->off);
+	case IBMVETH_STAT_RX_NO_BUFFER:
+		return ibmveth_sum_rx_no_buffer(adapter);
 	case IBMVETH_STAT_ADAPTER:
 		break;
 	}
@@ -2785,6 +2843,9 @@ static netdev_features_t ibmveth_features_check(struct sk_buff *skb,
  * @stats: rtnl link statistics storage
  *
  * Sums per-queue rx_qstats and tx_qstats into the rtnl counters.
+ * rx_missed_errors is the PHYP no-buffer sum (retired plus the value
+ * from the last replenish pass), which if_link.h counts separately
+ * from rx_dropped.
  * Walk the full allocated arrays (not the live queue count) so shrinking
  * channels cannot make the totals go backwards.
  */
@@ -2799,6 +2860,7 @@ static void ibmveth_get_stats64(struct net_device *dev,
 		stats->rx_bytes += READ_ONCE(adapter->rx_qstats[i].bytes);
 		stats->rx_dropped += READ_ONCE(adapter->rx_qstats[i].dropped);
 	}
+	stats->rx_missed_errors = ibmveth_sum_rx_no_buffer(adapter);
 
 	for (i = 0; i < IBMVETH_MAX_QUEUES; i++) {
 		stats->tx_packets += READ_ONCE(adapter->tx_qstats[i].packets);
