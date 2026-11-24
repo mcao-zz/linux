@@ -1192,6 +1192,7 @@ static long ibmveth_register_logical_lan(struct ibmveth_adapter *adapter,
 	unsigned long ua = adapter->vdev->unit_address;
 	unsigned long buf_dma = adapter->buffer_list_dma[0];
 	unsigned long filter_dma = adapter->filter_list_dma;
+	unsigned long qh0;
 
 	/*
 	 * After a kexec the adapter will still be open, so our attempt to
@@ -1199,8 +1200,23 @@ static long ibmveth_register_logical_lan(struct ibmveth_adapter *adapter,
 	 * try again, but only once.
 	 */
 retry:
-	rc = h_register_logical_lan(ua, buf_dma, rxq_desc.desc, filter_dma,
-				    mac_address);
+	/* In multi-queue mode, obtain a queue handle for queue 0 so all RX
+	 * queues, even a single one, use the per-queue buffer hypercalls.
+	 * multi_queue never changes after probe; PowerVM blocks LPM to a
+	 * host without MQ support, so these hypercalls do not go away.
+	 */
+	if (adapter->multi_queue) {
+		rc = h_register_logical_lan_with_handle(ua, buf_dma,
+							rxq_desc.desc,
+							filter_dma,
+							mac_address,
+							&qh0);
+		if (rc == H_SUCCESS)
+			adapter->queue_handle[0] = qh0;
+	} else {
+		rc = h_register_logical_lan(ua, buf_dma, rxq_desc.desc,
+					    filter_dma, mac_address);
+	}
 
 	if (rc != H_SUCCESS && try_again) {
 		rc = ibmveth_free_logical_lan(adapter);
@@ -1216,7 +1232,8 @@ retry:
  * ibmveth_free_all_queues - Free all RX queues at once
  * @adapter: ibmveth adapter structure
  *
- * Issues one H_FREE_LOGICAL_LAN. A failure is logged; the caller still
+ * Issues one H_FREE_LOGICAL_LAN, which frees the logical LAN and every
+ * RX queue registered under it. A failure is logged; the caller still
  * frees the RX memory, as close() always has.
  */
 static void ibmveth_free_all_queues(struct ibmveth_adapter *adapter)
