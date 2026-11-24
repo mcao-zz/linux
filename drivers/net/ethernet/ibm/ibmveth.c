@@ -866,7 +866,6 @@ static int ibmveth_alloc_queue_buffer_pools(struct ibmveth_adapter *adapter,
 				   queue, i,
 				   bpool->buff_size,
 				   bpool->size);
-			bpool->active = 0;
 			/* Undo the pools this queue already allocated; the
 			 * failed one freed its own partial allocation.
 			 */
