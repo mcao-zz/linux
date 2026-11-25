@@ -818,9 +818,10 @@ static void ibmveth_replenish_buffer_pool(struct ibmveth_adapter *adapter,
 			index = pool->free_map[free_index];
 			if (WARN_ON(index == IBM_VETH_INVALID_MAP)) {
 				ibmveth_count_add_fail(qstats, false);
-				netdev_info(adapter->netdev,
-					    "Invalid map index %u, reset\n",
-					    index);
+				if (net_ratelimit())
+					netdev_info(adapter->netdev,
+						    "RX free_map corrupt at slot %u, reset\n",
+						    free_index);
 				schedule_work(&adapter->work);
 				break;
 			}
@@ -956,7 +957,7 @@ hcall_failure:
 				    lpar_rc);
 			adapter->rx_buffers_per_hcall = 1;
 			netdev_info(adapter->netdev,
-				    "Next rx replesh will fall back to single-buffer hcall\n");
+				    "Next RX replenish will fall back to single-buffer hcall\n");
 		}
 		break;
 	}
@@ -1687,6 +1688,9 @@ static int ibmveth_open(struct net_device *netdev)
 
 	adapter->opened = true;
 	netdev_dbg(netdev, "open complete\n");
+	netdev_info(netdev, "opened %08x: %u RX, %u TX queues\n",
+		    adapter->vdev->unit_address, adapter->num_rx_queues,
+		    netdev->real_num_tx_queues);
 
 	return 0;
 
@@ -2110,11 +2114,26 @@ static int ibmveth_set_queue_counts(struct net_device *netdev,
 				    unsigned int rx, unsigned int tx)
 {
 	struct ibmveth_adapter *adapter = netdev_priv(netdev);
+	unsigned int old_rx = adapter->num_rx_queues;
+	unsigned int old_tx = netdev->real_num_tx_queues;
 	int rc;
 
 	rc = netif_set_real_num_queues(netdev, tx, rx);
-	if (!rc)
+	if (!rc) {
 		adapter->num_rx_queues = rx;
+		if (old_rx != rx || old_tx != tx) {
+			if (adapter->multi_queue)
+				netdev_info(netdev,
+					    "queues %08x: RX %u -> %u, TX %u -> %u\n",
+					    adapter->vdev->unit_address,
+					    old_rx, rx, old_tx, tx);
+			else if (old_tx != tx)
+				netdev_info(netdev,
+					    "queues %08x: TX %u -> %u (RX 1)\n",
+					    adapter->vdev->unit_address,
+					    old_tx, tx);
+		}
+	}
 	return rc;
 }
 
@@ -2948,8 +2967,7 @@ static int ibmveth_set_mac_addr(struct net_device *dev, void *p)
 	mac_address = ether_addr_to_u64(addr->sa_data);
 	rc = h_change_logical_lan_mac(adapter->vdev->unit_address, mac_address);
 	if (rc) {
-		netdev_err(adapter->netdev,
-			   "h_change_logical_lan_mac failed with rc=%d\n", rc);
+		netdev_err(adapter->netdev, "h_change_logical_lan_mac failed with rc=%d\n", rc);
 		return rc;
 	}
 
