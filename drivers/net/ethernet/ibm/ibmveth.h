@@ -30,6 +30,7 @@
 #define IbmVethMcastRemoveFilter     0x2UL
 #define IbmVethMcastClearFilterTable 0x3UL
 
+#define IBMVETH_ILLAN_RX_MULTI_QUEUE_SUPPORT	0x0000000000080000UL
 #define IBMVETH_ILLAN_RX_MULTI_BUFF_SUPPORT	0x0000000000040000UL
 #define IBMVETH_ILLAN_LRG_SR_ENABLED	0x0000000000010000UL
 #define IBMVETH_ILLAN_LRG_SND_SUPPORT	0x0000000000008000UL
@@ -226,8 +227,9 @@ static inline long h_illan_attributes(unsigned long unit_address,
 #define IBMVETH_MAX_TX_BUF_SIZE (1024 * 64)
 #define IBMVETH_MAX_QUEUES 16U
 #define IBMVETH_DEFAULT_QUEUES 8U
-#define IBMVETH_MAX_RX_QUEUES 1U
+#define IBMVETH_MAX_RX_QUEUES 16U
 #define IBMVETH_DEFAULT_RX_QUEUES 1U
+#define IBMVETH_MQ_DEFAULT_RX_QUEUES 8U
 #define IBMVETH_MAX_RX_REGULAR 8U
 #define IBMVETH_MAX_RX_PER_HCALL 12U
 
@@ -320,6 +322,7 @@ struct ibmveth_adapter {
 	 * queue 0 uses h_vio_signal(), so entry 0 is never read.
 	 */
 	unsigned long queue_hwirq[IBMVETH_MAX_RX_QUEUES];
+	char queue_irq_name[IBMVETH_MAX_RX_QUEUES][32];
 	bool multi_queue;
 	unsigned int num_rx_queues;
 	int rx_csum;
